@@ -137,9 +137,7 @@ class SelfAttention(torch.nn.Module):
         q, k, v = normalize(y, dim=-1).unbind(1) # pixel norm & split
         q, k = self.rope(q, k)
         # i = (h w)
-        q = einops.rearrange(q, ' b m t i c -> b m (t i) c')
-        k = einops.rearrange(k, ' b m t i c -> b m (t i) c')
-        v = einops.rearrange(v, ' b m t i c -> b m (t i) c')
+        v = einops.rearrange(v, ' b m t i c -> b m (t i) c') # q and k are already rearranged inside of rope
 
         y = F.scaled_dot_product_attention(q, k, v) # TODO: change it with flex-attention, and check the scale
         y = einops.rearrange(y, 'b m (t h w) c -> (b t) (c m) h w', b=batch_size, h=h, w=w)
