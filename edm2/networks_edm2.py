@@ -134,11 +134,11 @@ class SelfAttention(torch.nn.Module):
 
         h, w = x.shape[-2:]
         n_frames = x.shape[0]//(batch_size*2)
-        if self.block_mask is None:
+        if self.block_mask is None or self.last_x_shape != x.shape:
+            # This will trigger a recompilation of the flex_attention function
             self.block_mask = make_AR_BlockMask(batch_size=batch_size, num_heads=self.num_heads, n_frames=n_frames, image_size=h*w)
-            def attention(q, k, v):
-                return flex_attention(q, k, v, block_mask = self.block_mask)
-            self.flex_attention = torch.compile(attention)
+            self.last_x_shape = x.shape
+
         y = self.attn_qkv(x)
         # b:batch, t:time, m: multi-head, s: split, c: channels, h: height, w: width
         y = einops.rearrange(y, '(b t) (s m c) h w -> b s m t (h w) c', b=batch_size, s=3, m=self.num_heads)
@@ -147,13 +147,16 @@ class SelfAttention(torch.nn.Module):
         # i = (h w)
         v = einops.rearrange(v, ' b m t i c -> b m (t i) c') # q and k are already rearranged inside of rope
 
-        y = self.flex_attention(q, k, v) # TODO: i have to compile this
+        y = self.flex_attention(q, k, v)
         y = einops.rearrange(y, 'b m (t h w) c -> (b t) (c m) h w', b=batch_size, h=h, w=w)
 
         y = self.attn_proj(y)
         return mp_sum(x, y, t=self.attn_balance)
     
-        
+    @torch.compile
+    def flex_attention(self, q, k, v, block_mask=None): 
+        if block_mask is None: block_mask = self.block_mask
+        return flex_attention(q, k, v, block_mask = self.block_mask)
 #----------------------------------------------------------------------------
 # U-Net encoder/decoder block with optional self-attention (Figure 21).
 

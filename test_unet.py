@@ -27,3 +27,8 @@ y = unet.forward(x, noise_level, None)
 print(y.shape)
 
 # %%
+
+x = torch.randn(7, 16, 12, 64, 64, device="cuda", dtype=torch.float16)
+noise_level = torch.randn(1, device="cuda", dtype=torch.float16)
+y = unet.forward(x, noise_level, None)
+# %%
