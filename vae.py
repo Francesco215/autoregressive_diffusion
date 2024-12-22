@@ -28,7 +28,6 @@ for i, example in enumerate(dataset):
     v=torch.from_numpy(video)
     v = downsample_tensor(v, 256, 256).requires_grad_(False).to(torch.float16).cuda()
     v=v/255*2-1
-    v=v.unsqueeze(0)
 
     with torch.no_grad():
 

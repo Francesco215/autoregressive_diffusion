@@ -10,7 +10,11 @@
 
 import numpy as np
 import torch
+from torch.nn import functional as F
+import einops
+
 from . import misc
+from .RoPe import RotaryEmbedding
 
 #----------------------------------------------------------------------------
 # Normalize given tensor to unit magnitude with respect to the given
@@ -104,6 +108,46 @@ class MPConv(torch.nn.Module):
         assert w.ndim == 4
         return torch.nn.functional.conv2d(x, w, padding=(w.shape[-1]//2,))
 
+
+#----------------------------------------------------------------------------
+# Self-Attention module. It shouldn't need any extra to make it magniture-preserving
+
+class SelfAttention(torch.nn.Module):
+    def __init__(self, channels, num_heads, attn_balance = 0.3):
+        super().__init__()
+        self.channels = channels
+        self.num_heads = num_heads
+        self.attn_balance = attn_balance
+        if num_heads == 0:
+            return
+
+        self.attn_qkv = MPConv(channels, channels * 3, kernel=[1,1]) 
+        self.attn_proj = MPConv(channels, channels, kernel=[1,1]) 
+        self.rope = RotaryEmbedding(channels//num_heads)
+
+    def forward(self, x, batch_size):
+        if self.num_heads == 0:
+            return x
+
+        h, w = x.shape[-2:]
+
+        y = self.attn_qkv(x)
+        # b:batch, t:time, m: multi-head, s: split, c: channels, h: height, w: width
+        y = einops.rearrange(y, '(b t) (s m c) h w -> b s m t (h w) c', b=batch_size, s=3, m=self.num_heads)
+        q, k, v = normalize(y, dim=-1).unbind(1) # pixel norm & split
+        q, k = self.rope(q, k)
+        # i = (h w)
+        q = einops.rearrange(q, ' b m t i c -> b m (t i) c')
+        k = einops.rearrange(k, ' b m t i c -> b m (t i) c')
+        v = einops.rearrange(v, ' b m t i c -> b m (t i) c')
+
+        y = F.scaled_dot_product_attention(q, k, v) # TODO: change it with flex-attention, and check the scale
+        y = einops.rearrange(y, 'b m (t h w) c -> (b t) (c m) h w', b=batch_size, h=h, w=w)
+
+        y = self.attn_proj(y)
+        return mp_sum(x, y, t=self.attn_balance)
+        
+
 #----------------------------------------------------------------------------
 # U-Net encoder/decoder block with optional self-attention (Figure 21).
 
@@ -137,10 +181,9 @@ class Block(torch.nn.Module):
         self.emb_linear = MPConv(emb_channels, out_channels, kernel=[])
         self.conv_res1 = MPConv(out_channels, out_channels, kernel=[3,3])
         self.conv_skip = MPConv(in_channels, out_channels, kernel=[1,1]) if in_channels != out_channels else None
-        self.attn_qkv = MPConv(out_channels, out_channels * 3, kernel=[1,1]) if self.num_heads != 0 else None
-        self.attn_proj = MPConv(out_channels, out_channels, kernel=[1,1]) if self.num_heads != 0 else None
+        self.attn = SelfAttention(out_channels, self.num_heads, attn_balance)
 
-    def forward(self, x, emb):
+    def forward(self, x, emb, batch_size):
         # Main branch.
         x = resample(x, f=self.resample_filter, mode=self.resample_mode)
         if self.flavor == 'enc':
@@ -162,17 +205,7 @@ class Block(torch.nn.Module):
         x = mp_sum(x, y, t=self.res_balance)
 
         # Self-attention.
-        # Note: torch.nn.functional.scaled_dot_product_attention() could be used here,
-        # but we haven't done sufficient testing to verify that it produces identical results.
-        # TODO: i'll need to do some modifications to make it work with flex-attention
-        if self.num_heads != 0:
-            y = self.attn_qkv(x)
-            y = y.reshape(y.shape[0], self.num_heads, -1, 3, y.shape[2] * y.shape[3])
-            q, k, v = normalize(y, dim=2).unbind(3) # pixel norm & split
-            w = torch.einsum('nhcq,nhck->nhqk', q, k / np.sqrt(q.shape[2])).softmax(dim=3)
-            y = torch.einsum('nhqk,nhck->nhcq', w, v)
-            y = self.attn_proj(y.reshape(*x.shape))
-            x = mp_sum(x, y, t=self.attn_balance)
+        x = self.attn(x, batch_size)
 
         # Clip activations.
         if self.clip_act is not None:
@@ -243,6 +276,9 @@ class UNet(torch.nn.Module):
         self.out_conv = MPConv(cout, img_channels, kernel=[3,3])
 
     def forward(self, x, noise_labels, class_labels):
+        # x.shape = b t c h w
+        batch_size = x.shape[0]
+        x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
         # Embedding.
         emb = self.emb_noise(self.emb_fourier(noise_labels))
         if self.emb_label is not None:
@@ -253,15 +289,16 @@ class UNet(torch.nn.Module):
         x = torch.cat([x, torch.ones_like(x[:, :1])], dim=1)
         skips = []
         for name, block in self.enc.items():
-            x = block(x) if 'conv' in name else block(x, emb)
+            x = block(x) if 'conv' in name else block(x, emb, batch_size=batch_size)
             skips.append(x)
 
         # Decoder.
         for name, block in self.dec.items():
             if 'block' in name:
                 x = mp_cat(x, skips.pop(), t=self.concat_balance)
-            x = block(x, emb)
+            x = block(x, emb, batch_size=batch_size)
         x = self.out_conv(x, gain=self.out_gain)
+        x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
         return x
 
 #----------------------------------------------------------------------------
