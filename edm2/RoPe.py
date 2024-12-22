@@ -43,9 +43,13 @@ class RotaryEmbedding(nn.Module):
 
     def forward(self, q:Tensor, k:Tensor):
         # q,k shape = b m t (h w) c
+        
+        # split the context subspace from the prediction subspace
         q = einops.rearrange(q, 'b m (a t) i c -> b m a t i c', a=2)
         k = einops.rearrange(k, 'b m (a t) i c -> b m a t i c', a=2)
+
         pos,scale=self.get_rotary_embedding(q.shape[-3])
+
         q = (q * pos.cos() + rotate_half(q) * pos.sin())*scale
         k = (k * pos.cos() + rotate_half(k) * pos.sin())/scale
 

@@ -11,11 +11,12 @@
 import numpy as np
 import torch
 from torch.nn import functional as F
+from torch.nn.attention.flex_attention import flex_attention
 import einops
 
 from . import misc
 from .RoPe import RotaryEmbedding
-
+from .attention_masking import make_AR_BlockMask, causal_mask
 #----------------------------------------------------------------------------
 # Normalize given tensor to unit magnitude with respect to the given
 # dimensions. Default = all dimensions except the first.
@@ -124,12 +125,16 @@ class SelfAttention(torch.nn.Module):
         self.attn_qkv = MPConv(channels, channels * 3, kernel=[1,1]) 
         self.attn_proj = MPConv(channels, channels, kernel=[1,1]) 
         self.rope = RotaryEmbedding(channels//num_heads)
+        self.block_mask = None
 
     def forward(self, x, batch_size):
         if self.num_heads == 0:
             return x
 
         h, w = x.shape[-2:]
+        n_frames = x.shape[0]//(batch_size*2)
+        if self.block_mask is None:
+            self.block_mask = make_AR_BlockMask(batch_size=batch_size, num_heads=self.num_heads, n_frames=n_frames, image_size=h*w)
 
         y = self.attn_qkv(x)
         # b:batch, t:time, m: multi-head, s: split, c: channels, h: height, w: width
@@ -139,13 +144,12 @@ class SelfAttention(torch.nn.Module):
         # i = (h w)
         v = einops.rearrange(v, ' b m t i c -> b m (t i) c') # q and k are already rearranged inside of rope
 
-        y = F.scaled_dot_product_attention(q, k, v) # TODO: change it with flex-attention, and check the scale
+        y = flex_attention(q, k, v, block_mask = self.block_mask) # TODO: change it with flex-attention, and check the scale
         y = einops.rearrange(y, 'b m (t h w) c -> (b t) (c m) h w', b=batch_size, h=h, w=w)
 
         y = self.attn_proj(y)
         return mp_sum(x, y, t=self.attn_balance)
         
-
 #----------------------------------------------------------------------------
 # U-Net encoder/decoder block with optional self-attention (Figure 21).
 
@@ -180,6 +184,9 @@ class Block(torch.nn.Module):
         self.conv_res1 = MPConv(out_channels, out_channels, kernel=[3,3])
         self.conv_skip = MPConv(in_channels, out_channels, kernel=[1,1]) if in_channels != out_channels else None
         self.attn = SelfAttention(out_channels, self.num_heads, attn_balance)
+
+        if self.num_heads > 0: 
+            assert (out_channels & (out_channels - 1) == 0) and out_channels != 0, f"out_channels must be a power of 2, got {out_channels}"
 
     def forward(self, x, emb, batch_size):
         # Main branch.
@@ -219,7 +226,7 @@ class UNet(torch.nn.Module):
         img_channels,                       # Image channels.
         label_dim,                          # Class label dimensionality. 0 = unconditional.
         model_channels      = 192,          # Base multiplier for the number of channels.
-        channel_mult        = [1,2,3,4],    # Per-resolution multipliers for the number of channels.
+        channel_mult        = [1,2,2,4],    # Per-resolution multipliers for the number of channels.
         channel_mult_noise  = None,         # Multiplier for noise embedding dimensionality. None = select based on channel_mult.
         channel_mult_emb    = None,         # Multiplier for final embedding dimensionality. None = select based on channel_mult.
         num_blocks          = 3,            # Number of residual blocks per resolution.
