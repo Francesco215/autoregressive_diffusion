@@ -10,6 +10,7 @@
 
 import numpy as np
 import torch
+import copy
 from torch.nn import functional as F
 from torch.nn.attention.flex_attention import flex_attention
 import einops
@@ -112,7 +113,6 @@ class MPConv(torch.nn.Module):
 
 #----------------------------------------------------------------------------
 # Self-Attention module. It shouldn't need any extra to make it magniture-preserving
-
 class SelfAttention(torch.nn.Module):
     def __init__(self, channels, num_heads, attn_balance = 0.3):
         super().__init__()
@@ -126,6 +126,7 @@ class SelfAttention(torch.nn.Module):
         self.attn_proj = MPConv(channels, channels, kernel=[1,1]) 
         self.rope = RotaryEmbedding(channels//num_heads)
         self.block_mask = None
+        # self.flex_attention = torch.compile(copy.deepcopy(flex_attention))
 
     def forward(self, x, batch_size):
         if self.num_heads == 0:
@@ -135,7 +136,9 @@ class SelfAttention(torch.nn.Module):
         n_frames = x.shape[0]//(batch_size*2)
         if self.block_mask is None:
             self.block_mask = make_AR_BlockMask(batch_size=batch_size, num_heads=self.num_heads, n_frames=n_frames, image_size=h*w)
-
+            def attention(q, k, v):
+                return flex_attention(q, k, v, block_mask = self.block_mask)
+            self.flex_attention = torch.compile(attention)
         y = self.attn_qkv(x)
         # b:batch, t:time, m: multi-head, s: split, c: channels, h: height, w: width
         y = einops.rearrange(y, '(b t) (s m c) h w -> b s m t (h w) c', b=batch_size, s=3, m=self.num_heads)
@@ -144,11 +147,12 @@ class SelfAttention(torch.nn.Module):
         # i = (h w)
         v = einops.rearrange(v, ' b m t i c -> b m (t i) c') # q and k are already rearranged inside of rope
 
-        y = flex_attention(q, k, v, block_mask = self.block_mask) # TODO: change it with flex-attention, and check the scale
+        y = self.flex_attention(q, k, v) # TODO: i have to compile this
         y = einops.rearrange(y, 'b m (t h w) c -> (b t) (c m) h w', b=batch_size, h=h, w=w)
 
         y = self.attn_proj(y)
         return mp_sum(x, y, t=self.attn_balance)
+    
         
 #----------------------------------------------------------------------------
 # U-Net encoder/decoder block with optional self-attention (Figure 21).
