@@ -10,7 +10,7 @@
 
 import numpy as np
 import torch
-import copy
+from torch import nn, Tensor
 from torch.nn import functional as F
 from torch.nn.attention.flex_attention import flex_attention
 import einops
@@ -113,7 +113,7 @@ class MPConv(torch.nn.Module):
 
 #----------------------------------------------------------------------------
 # Self-Attention module. It shouldn't need any extra to make it magniture-preserving
-class SelfAttention(torch.nn.Module):
+class VideoSelfAttention(torch.nn.Module):
     def __init__(self, channels, num_heads, attn_balance = 0.3):
         super().__init__()
         self.channels = channels
@@ -126,37 +126,53 @@ class SelfAttention(torch.nn.Module):
         self.attn_proj = MPConv(channels, channels, kernel=[1,1]) 
         self.rope = RotaryEmbedding(channels//num_heads)
         self.block_mask = None
-        # self.flex_attention = torch.compile(copy.deepcopy(flex_attention))
 
     def forward(self, x, batch_size):
         if self.num_heads == 0:
             return x
 
+        assert x.shape[0]>= 2 * batch_size, f"we must have at least 1 frame"
         h, w = x.shape[-2:]
         n_frames = x.shape[0]//(batch_size*2)
         if self.block_mask is None or self.last_x_shape != x.shape:
             # This will trigger a recompilation of the flex_attention function
+            # use torch._logging.set_logs(dynamo=logging.INFO) to see the recompilation
             self.block_mask = make_AR_BlockMask(batch_size=batch_size, num_heads=self.num_heads, n_frames=n_frames, image_size=h*w)
             self.last_x_shape = x.shape
 
         y = self.attn_qkv(x)
+
         # b:batch, t:time, m: multi-head, s: split, c: channels, h: height, w: width
         y = einops.rearrange(y, '(b t) (s m c) h w -> b s m t (h w) c', b=batch_size, s=3, m=self.num_heads)
         q, k, v = normalize(y, dim=-1).unbind(1) # pixel norm & split
         q, k = self.rope(q, k)
+
         # i = (h w)
         v = einops.rearrange(v, ' b m t i c -> b m (t i) c') # q and k are already rearranged inside of rope
 
-        y = self.flex_attention(q, k, v)
+        y = self.flex_attention(q, k, v, self.block_mask)
         y = einops.rearrange(y, 'b m (t h w) c -> (b t) (c m) h w', b=batch_size, h=h, w=w)
 
         y = self.attn_proj(y)
         return mp_sum(x, y, t=self.attn_balance)
     
     @torch.compile
-    def flex_attention(self, q, k, v, block_mask=None): 
-        if block_mask is None: block_mask = self.block_mask
-        return flex_attention(q, k, v, block_mask = self.block_mask)
+    def flex_attention(self, q, k, v, block_mask): 
+        return flex_attention(q, k, v, block_mask = block_mask)
+
+    # def self_attention(self, x):
+    #     # this will be useful if we want to train the model on image denoising as well
+    #     h, w = x.shape[-2:]
+    #     y = self.attn_qkv(x)
+    #     y = einops.rearrange(y, 'b (s m c) h w -> b s m (h w) c')
+    #     q, k, v = normalize(y, dim=-1).unbind(1)
+        
+    #     y = F.scaled_dot_product_attention(q, k, v)
+    #     y = einops.rearrange(y, 'b m (h w) c -> b (m c) h w', h=h, w=w)
+    #     y = self.attn_proj(y)
+    #     return mp_sum(x, y, t=self.attn_balance)
+
+        
 #----------------------------------------------------------------------------
 # U-Net encoder/decoder block with optional self-attention (Figure 21).
 
@@ -190,7 +206,7 @@ class Block(torch.nn.Module):
         self.emb_linear = MPConv(emb_channels, out_channels, kernel=[])
         self.conv_res1 = MPConv(out_channels, out_channels, kernel=[3,3])
         self.conv_skip = MPConv(in_channels, out_channels, kernel=[1,1]) if in_channels != out_channels else None
-        self.attn = SelfAttention(out_channels, self.num_heads, attn_balance)
+        self.attn = VideoSelfAttention(out_channels, self.num_heads, attn_balance)
 
         if self.num_heads > 0: 
             assert (out_channels & (out_channels - 1) == 0) and out_channels != 0, f"out_channels must be a power of 2, got {out_channels}"
@@ -243,6 +259,9 @@ class UNet(torch.nn.Module):
         **block_kwargs,                     # Arguments for Block.
     ):
         super().__init__()
+        self.img_resolution = img_resolution
+        self.img_channels = img_channels
+        self.label_dim = label_dim
         cblock = [model_channels * x for x in channel_mult]
         cnoise = model_channels * channel_mult_noise if channel_mult_noise is not None else cblock[0]
         cemb = model_channels * channel_mult_emb if channel_mult_emb is not None else max(cblock)
@@ -287,13 +306,15 @@ class UNet(torch.nn.Module):
                 self.dec[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=(res in attn_resolutions), **block_kwargs)
         self.out_conv = MPConv(cout, img_channels, kernel=[3,3])
 
-    def forward(self, x, noise_labels, class_labels):
+    def forward(self, x, noise_labels, class_labels = None):
         # x.shape = b t c h w
         batch_size = x.shape[0]
         x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
+        noise_labels = einops.rearrange(noise_labels, 'b t ... -> (b t) ...')
         # Embedding.
         emb = self.emb_noise(self.emb_fourier(noise_labels))
         if self.emb_label is not None:
+            # TODO: might need to change this for when the class label is not none
             emb = mp_sum(emb, self.emb_label(class_labels * np.sqrt(class_labels.shape[1])), t=self.label_balance)
         emb = mp_silu(emb)
 
@@ -318,27 +339,25 @@ class UNet(torch.nn.Module):
 
 class Precond(torch.nn.Module):
     def __init__(self,
-        img_resolution,         # Image resolution.
-        img_channels,           # Image channels.
-        label_dim,              # Class label dimensionality. 0 = unconditional.
+        unet,                   # UNet model.
         use_fp16        = True, # Run the model at FP16 precision?
         sigma_data      = 0.5,  # Expected standard deviation of the training data.
         logvar_channels = 128,  # Intermediate dimensionality for uncertainty estimation.
-        **unet_kwargs,          # Keyword arguments for UNet.
     ):
         super().__init__()
-        self.img_resolution = img_resolution
-        self.img_channels = img_channels
-        self.label_dim = label_dim
+        self.unet = unet
+        self.img_resolution = unet.img_resolution
+        self.img_channels = unet.img_channels
+        self.label_dim = unet.label_dim
         self.use_fp16 = use_fp16
         self.sigma_data = sigma_data
-        self.unet = UNet(img_resolution=img_resolution, img_channels=img_channels, label_dim=label_dim, **unet_kwargs)
         self.logvar_fourier = MPFourier(logvar_channels)
         self.logvar_linear = MPConv(logvar_channels, 1, kernel=[])
 
-    def forward(self, x, sigma, class_labels=None, force_fp32=False, return_logvar=False, **unet_kwargs):
+    def forward(self, x:Tensor, sigma:Tensor, class_labels=None, force_fp32=False, return_logvar=False, **unet_kwargs):
         x = x.to(torch.float32)
-        sigma = sigma.to(torch.float32).reshape(-1, 1, 1, 1)
+        sigma = sigma.to(torch.float32)
+        sigma = einops.rearrange(sigma, '... -> ... 1 1 1') # TODO: make sure that this is the correct way of reshaping the tensor
         class_labels = None if self.label_dim == 0 else torch.zeros([1, self.label_dim], device=x.device) if class_labels is None else class_labels.to(torch.float32).reshape(-1, self.label_dim)
         dtype = torch.float16 if (self.use_fp16 and not force_fp32 and x.device.type == 'cuda') else torch.float32
 
@@ -346,7 +365,7 @@ class Precond(torch.nn.Module):
         c_skip = self.sigma_data ** 2 / (sigma ** 2 + self.sigma_data ** 2)
         c_out = sigma * self.sigma_data / (sigma ** 2 + self.sigma_data ** 2).sqrt()
         c_in = 1 / (self.sigma_data ** 2 + sigma ** 2).sqrt()
-        c_noise = sigma.flatten().log() / 4
+        c_noise = sigma.view(sigma.shape[:2]).log() / 4
 
         # Run the model.
         x_in = (c_in * x).to(dtype)
@@ -355,7 +374,7 @@ class Precond(torch.nn.Module):
 
         # Estimate uncertainty if requested.
         if return_logvar:
-            logvar = self.logvar_linear(self.logvar_fourier(c_noise)).reshape(-1, 1, 1, 1)
+            logvar = self.logvar_linear(self.logvar_fourier(c_noise.flatten())).flatten()
             return D_x, logvar # u(sigma) in Equation 21
         return D_x
 
