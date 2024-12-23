@@ -156,7 +156,8 @@ class VideoSelfAttention(torch.nn.Module):
         y = self.attn_proj(y)
         return mp_sum(x, y, t=self.attn_balance)
     
-    @torch.compile
+    # To log all recompilation reasons, use TORCH_LOGS="recompiles".
+    # @torch.compile
     def flex_attention(self, q, k, v, block_mask): 
         return flex_attention(q, k, v, block_mask = block_mask)
 
@@ -267,7 +268,7 @@ class UNet(torch.nn.Module):
         cemb = model_channels * channel_mult_emb if channel_mult_emb is not None else max(cblock)
         self.label_balance = label_balance
         self.concat_balance = concat_balance
-        self.out_gain = torch.nn.Parameter(torch.zeros([]))
+        self.out_gain = torch.nn.Parameter(torch.tensor([0.]))
 
         # Embedding.
         self.emb_fourier = MPFourier(cnoise)
@@ -364,8 +365,10 @@ class Precond(torch.nn.Module):
         # Preconditioning weights.
         c_skip = self.sigma_data ** 2 / (sigma ** 2 + self.sigma_data ** 2)
         c_out = sigma * self.sigma_data / (sigma ** 2 + self.sigma_data ** 2).sqrt()
+        c_out[sigma==0]=0
         c_in = 1 / (self.sigma_data ** 2 + sigma ** 2).sqrt()
         c_noise = sigma.view(sigma.shape[:2]).log() / 4
+        c_noise[c_noise==torch.tensor(-np.inf)] = -2
 
         # Run the model.
         x_in = (c_in * x).to(dtype)
@@ -374,7 +377,7 @@ class Precond(torch.nn.Module):
 
         # Estimate uncertainty if requested.
         if return_logvar:
-            logvar = self.logvar_linear(self.logvar_fourier(c_noise.flatten())).flatten()
+            logvar = self.logvar_linear(self.logvar_fourier(c_noise.flatten())).reshape(sigma.shape)
             return D_x, logvar # u(sigma) in Equation 21
         return D_x
 
