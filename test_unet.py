@@ -4,8 +4,8 @@ from edm2.networks_edm2 import UNet, Precond
 from edm2.training_loop import EDM2Loss
 import logging
 
-unet = UNet(img_resolution=32,
-            img_channels=12,
+unet = UNet(img_resolution=16,
+            img_channels=24,
             label_dim = 0,
             model_channels=32,
             channel_mult=[1,2,2,4],
@@ -14,10 +14,10 @@ unet = UNet(img_resolution=32,
             num_blocks=2,
             ).to("cuda").to(torch.float16)
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
-precond = Precond(unet, use_fp16=True, sigma_data=0.5, logvar_channels=128).to("cuda")
+precond = Precond(unet, use_fp16=True, sigma_data=1., logvar_channels=128).to("cuda")
 
 # %%
-x = torch.randn(2, 10, 12, 32, 32, device="cuda")
+x = torch.randn(4, 43, 24, 16, 16, device="cuda")
 # noise_level = torch.rand(2, 10, device="cuda")
 # y = unet.forward(x, noise_level, None)
 # y = precond.forward(x, noise_level, return_logvar=True)

@@ -25,7 +25,7 @@ import einops
 # paper "Analyzing and Improving the Training Dynamics of Diffusion Models".
 
 class EDM2Loss:
-    def __init__(self, P_mean=-0.4, P_std=1.0, sigma_data=1., context_noise_reduction=0.1):
+    def __init__(self, P_mean=2., P_std=1.0, sigma_data=1., context_noise_reduction=0.1):
         self.P_mean = P_mean
         self.P_std = P_std
         self.sigma_data = sigma_data
@@ -55,7 +55,6 @@ def learning_rate_schedule(cur_nimg, batch_size, ref_lr=100e-4, ref_batches=70e3
     if rampup_Mimg > 0:
         lr *= min(cur_nimg / (rampup_Mimg * 1e6), 1)
     return lr
-
 """
 #----------------------------------------------------------------------------
 # Main training loop.

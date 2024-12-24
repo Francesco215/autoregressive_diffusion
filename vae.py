@@ -1,44 +1,42 @@
 #%%
 import torch
 import mediapy
+import einops
+import os
+from tqdm import tqdm
 from diffusers import AutoencoderKLMochi
 from datasets import load_dataset
 from utils import downsample_tensor
-import os
 
+image_resolution=128
+save_dir = f"encoded_latents/{image_resolution}x{image_resolution}"
+dtype = torch.float32
 # Assuming video_tensor is [num_frames, height, width, channels] and you want to
-encoder = AutoencoderKLMochi.from_pretrained("genmo/mochi-1-preview", subfolder="vae", torch_dtype=torch.float16).encoder.to("cuda").requires_grad_(False)
+encoder = AutoencoderKLMochi.from_pretrained("genmo/mochi-1-preview", subfolder="vae", torch_dtype=dtype).encoder.to("cuda").requires_grad_(False)
 dataset = load_dataset("meta-ai-for-media-research/movie_gen_video_bench", split="test_with_generations", streaming=True)
 # Directory to save encoded latents
-save_dir = "encoded_latents"
+
 os.makedirs(save_dir, exist_ok=True)
-for i, example in enumerate(dataset):
-    print("data downloaded")
+for i, example in tqdm(enumerate(dataset)):
     #%%
     # to display Movie Gen generated video and the prompt on jupyter notebook
 
     with open("tmp.mp4", "wb") as f:
         f.write(example["video"])
-    print(example["prompt"])
+    # print(example["prompt"])
 
     video = mediapy.read_video("tmp.mp4")
 
     # %%
-    import torch
     v=torch.from_numpy(video)
-    v = downsample_tensor(v, 256, 256).requires_grad_(False).to(torch.float16).cuda()
-    v=v/255*2-1
 
     with torch.no_grad():
-
-        encoded=encoder(v)[0]
+        v = downsample_tensor(v, image_resolution, image_resolution).to(dtype).cuda()
+        v=v.unsqueeze(0)/255*2-1
+        encoded=encoder(v)[0][0]
+        encoded = einops.rearrange(encoded, 'c t h w -> t c h w')
 
     # Save encoded latents
     torch.save(encoded, os.path.join(save_dir, f"latent_{i+1}.pt"))
-    print(f"Saved latent for video {i+1}")
-
-    # Optional: Stop after encoding a certain number of videos for testing
-    # if i == 4:
-    #     break
 
 print("Encoding complete!")

@@ -45,18 +45,23 @@ class RotaryEmbedding(nn.Module):
         # q,k shape = b m t (h w) c
         
         # split the context subspace from the prediction subspace
-        q = einops.rearrange(q, 'b m (a t) i c -> b m a t i c', a=2)
-        k = einops.rearrange(k, 'b m (a t) i c -> b m a t i c', a=2)
+        if self.training:
+            q = einops.rearrange(q, 'b m (a t) i c -> b m a t i c', a=2)
+            k = einops.rearrange(k, 'b m (a t) i c -> b m a t i c', a=2)
 
         pos,scale=self.get_rotary_embedding(q.shape[-3])
 
         q = (q * pos.cos() + rotate_half(q) * pos.sin())*scale
         k = (k * pos.cos() + rotate_half(k) * pos.sin())/scale
 
-        q = einops.rearrange(q, 'b m a t i c -> b m (a t i) c')
-        k = einops.rearrange(k, 'b m a t i c -> b m (a t i) c')
-        return q,k
+        if self.training:
+            q = einops.rearrange(q, 'b m a t i c -> b m (a t i) c')
+            k = einops.rearrange(k, 'b m a t i c -> b m (a t i) c')
+        else:
+            q = einops.rearrange(q, 'b m t i c -> b m (t i) c')
+            k = einops.rearrange(k, 'b m t i c -> b m (t i) c')
 
+        return q, k
 def rotate_half(x):
     x1, x2 = x.chunk(2, dim=-1)
     return torch.cat((-x2, x1), dim=-1)

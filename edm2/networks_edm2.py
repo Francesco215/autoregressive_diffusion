@@ -132,6 +132,8 @@ class VideoSelfAttention(torch.nn.Module):
             return x
 
         assert x.shape[0]>= 2 * batch_size, f"we must have at least 1 frame"
+        assert self.training, f"inference is not supported"
+
         h, w = x.shape[-2:]
         n_frames = x.shape[0]//(batch_size*2)
         if self.block_mask is None or self.last_x_shape != x.shape:
@@ -157,7 +159,7 @@ class VideoSelfAttention(torch.nn.Module):
         return mp_sum(x, y, t=self.attn_balance)
     
     # To log all recompilation reasons, use TORCH_LOGS="recompiles".
-    # @torch.compile
+    @torch.compile
     def flex_attention(self, q, k, v, block_mask): 
         return flex_attention(q, k, v, block_mask = block_mask)
 
@@ -268,7 +270,7 @@ class UNet(torch.nn.Module):
         cemb = model_channels * channel_mult_emb if channel_mult_emb is not None else max(cblock)
         self.label_balance = label_balance
         self.concat_balance = concat_balance
-        self.out_gain = torch.nn.Parameter(torch.tensor([0.]))
+        self.out_gain = torch.nn.Parameter(torch.tensor([0.1]))
 
         # Embedding.
         self.emb_fourier = MPFourier(cnoise)
