@@ -1,9 +1,7 @@
-import torch
 import einops
+import warnings
+import torch
 from torch.nn.attention.flex_attention import flex_attention, create_block_mask, BlockMask, _DEFAULT_SPARSE_BLOCK_SIZE
-
-def causal_mask(b, h, q_idx, kv_idx):
-    return q_idx >= kv_idx
 
 def make_AR_BlockMask(batch_size, num_heads, n_frames, image_size):
     # image size is the number of pixels (height x width)
@@ -22,13 +20,15 @@ def make_AR_BlockMask(batch_size, num_heads, n_frames, image_size):
         return mask_towards_clean ^ self_mask_noisy ^ domain_attention_towards_clean
 
 
-    if image_size<_DEFAULT_SPARSE_BLOCK_SIZE: #TODO: test this!
-        if n_frames*image_size%_DEFAULT_SPARSE_BLOCK_SIZE!=0:
+    if image_size<_DEFAULT_SPARSE_BLOCK_SIZE:
+        if n_frames*image_size%_DEFAULT_SPARSE_BLOCK_SIZE!=0 or _DEFAULT_SPARSE_BLOCK_SIZE%n_frames*image_size!=0:
             sequence_length = n_frames*image_size*2
+            warnings.warn("The image size must be a divisor of the default block size")
             return create_block_mask(autoregressive_diffusion_mask, B=batch_size, H=num_heads, Q_LEN=sequence_length, KV_LEN=sequence_length) 
         n_frames = n_frames*image_size//_DEFAULT_SPARSE_BLOCK_SIZE
         image_size = _DEFAULT_SPARSE_BLOCK_SIZE
     
+    assert _DEFAULT_SPARSE_BLOCK_SIZE%n_frames*image_size==0, "The image size must be a divisor of the default block size"
     num_blocks_in_row = torch.arange(1, n_frames+1, dtype=torch.int32, device="cuda").repeat(2)
     num_blocks_in_row = einops.repeat(num_blocks_in_row, '... -> b h ...', b=batch_size, h=num_heads)
 
@@ -42,3 +42,32 @@ def make_AR_BlockMask(batch_size, num_heads, n_frames, image_size):
     col_indices = einops.repeat(col_indices, '... -> b h ...', b=batch_size, h=num_heads).cuda().to(torch.int32)
 
     return BlockMask.from_kv_blocks(num_blocks_in_row, col_indices, BLOCK_SIZE=image_size, mask_mod=autoregressive_diffusion_mask)
+
+
+def make_inference_masking(batch_size, num_heads, n_frames, image_size):
+    # image size is the number of pixels (height x width)
+
+    def diagonal_diffusion_mask(b, h, q_idx, kv_idx):
+        q_idx, kv_idx = q_idx // image_size, kv_idx // image_size
+        
+        return q_idx >= kv_idx
+
+    if image_size<_DEFAULT_SPARSE_BLOCK_SIZE:
+        if n_frames*image_size%_DEFAULT_SPARSE_BLOCK_SIZE!=0 or _DEFAULT_SPARSE_BLOCK_SIZE%n_frames*image_size!=0:
+            sequence_length = n_frames*image_size
+            warnings.warn("The image size must be a divisor of the default block size")
+            return create_block_mask(diagonal_diffusion_mask, B=batch_size, H=num_heads, Q_LEN=sequence_length, KV_LEN=sequence_length) 
+        n_frames = n_frames*image_size//_DEFAULT_SPARSE_BLOCK_SIZE
+        image_size = _DEFAULT_SPARSE_BLOCK_SIZE 
+
+    assert _DEFAULT_SPARSE_BLOCK_SIZE%n_frames*image_size==0, "The image size must be a divisor of the default block size"
+    num_blocks_in_row = torch.arange(1, n_frames+1, dtype=torch.int32, device="cuda")
+    num_blocks_in_row = einops.repeat(num_blocks_in_row, '... -> b h ...', b=batch_size, h=num_heads)
+
+    causal_mask = torch.tril(torch.ones(n_frames, n_frames))
+    col_indices = torch.arange(n_frames).expand(n_frames,n_frames) * causal_mask
+    col_indices = einops.repeat(col_indices, '... -> b h ...', b=batch_size, h=num_heads).cuda().to(torch.int32)
+
+    return BlockMask.from_kv_blocks(num_blocks_in_row, col_indices, BLOCK_SIZE=image_size, mask_mod=diagonal_diffusion_mask)
+    
+    
