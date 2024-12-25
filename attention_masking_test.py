@@ -9,10 +9,10 @@ import gc
 
 device= torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 # Your code (with modifications for sequence_length)
-batch_size = 4
+batch_size = 2
 num_heads = 8
-n_frames = 16
-image_size = 128  # this is the widthxheight
+n_frames = 4
+image_size = 600  # this is the widthxheight
 head_dim = 16
 sequence_length = 2 * n_frames * image_size # Removed multiplication by image_size
 
@@ -58,7 +58,10 @@ plt.imshow(block_mask_old.to_dense()[0,0].cpu())
 plt.show()
 plt.imshow(block_mask.to_dense()[0,0].cpu())
 plt.show()
-
+#%%
+from edm2.attention_masking import make_train_mask, make_AR_BlockMask_Inference
+block_mask_old = make_train_mask(batch_size, num_heads, n_frames, image_size)
+plt.imshow(block_mask_old.to_dense()[0,0].cpu())
 
 #%% 
 # step2: check that the two block masks lead to the same results
@@ -69,16 +72,44 @@ out1=flex_attention(q,k,v, block_mask=block_mask)
 out2=flex_attention(q,k,v, block_mask=block_mask_old)
 out = out1-out2 # it's equal to zero. it works.
 print((out==0).all()) #True
-
+#%%
+inference_mask=make_AR_BlockMask_Inference(batch_size, num_heads, n_frames, image_size)
+plt.imshow(inference_mask.to_dense()[0,0].cpu())
 
 #%%
 # step3: see if it compiles
-@torch.compile
+#%%
+import torch
+import time
+import einops
+from torch.nn.attention.flex_attention import flex_attention, create_block_mask, BlockMask, _DEFAULT_SPARSE_BLOCK_SIZE
+from matplotlib import pyplot as plt
+import numpy as np
+import gc
+
+batch_size = 2
+num_heads = 8
+n_frames = 5
+image_size = 16  # this is the widthxheight
+head_dim = 16
+sequence_length = n_frames * image_size # Removed multiplication by image_size
+
+device= torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+def diagonal_diffusion_mask(b, h, q_idx, kv_idx):
+    q_idx, kv_idx = q_idx // image_size, kv_idx // image_size
+    
+    return q_idx >= kv_idx
+
+ar_mask=create_block_mask(diagonal_diffusion_mask, B=batch_size, H=num_heads, Q_LEN=sequence_length, KV_LEN=sequence_length) 
+q = torch.randn(batch_size, num_heads, sequence_length, head_dim, device=device, dtype=torch.float16)*10
+k = torch.randn(batch_size, num_heads, sequence_length, head_dim, device=device, dtype=torch.float16)*10
+v = torch.randn(batch_size, num_heads, sequence_length, head_dim, device=device, dtype=torch.float16)*10
+# @torch.compile
 def autoregressive_diffusion_attention(q, k, v):
-    return flex_attention(q,k,v, block_mask=block_mask) 
+    return flex_attention(q,k,v, block_mask=ar_mask) 
 
 autoregressive_diffusion_attention(q,k,v)
-
+#%%
 del block_mask_old
 gc.collect()
 torch.cuda.empty_cache()

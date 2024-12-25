@@ -17,7 +17,7 @@ import einops
 
 from . import misc
 from .RoPe import RotaryEmbedding
-from .attention_masking import make_AR_BlockMask, causal_mask
+from .attention_masking import make_train_mask, make_infer_mask
 #----------------------------------------------------------------------------
 # Normalize given tensor to unit magnitude with respect to the given
 # dimensions. Default = all dimensions except the first.
@@ -112,7 +112,7 @@ class MPConv(torch.nn.Module):
 
 
 #----------------------------------------------------------------------------
-# Self-Attention module. It shouldn't need any extra to make it magniture-preserving
+# Self-Attention module. It shouldn't need anything extra to make it magniture-preserving
 class VideoSelfAttention(torch.nn.Module):
     def __init__(self, channels, num_heads, attn_balance = 0.3):
         super().__init__()
@@ -131,16 +131,19 @@ class VideoSelfAttention(torch.nn.Module):
         if self.num_heads == 0:
             return x
 
-        assert x.shape[0]>= 2 * batch_size, f"we must have at least 1 frame"
-        assert self.training, f"inference is not supported"
-
         h, w = x.shape[-2:]
-        n_frames = x.shape[0]//(batch_size*2)
-        if self.block_mask is None or self.last_x_shape != x.shape:
-            # This will trigger a recompilation of the flex_attention function
-            # use torch._logging.set_logs(dynamo=logging.INFO) to see the recompilation
-            self.block_mask = make_AR_BlockMask(batch_size=batch_size, num_heads=self.num_heads, n_frames=n_frames, image_size=h*w)
+        self.image_size = h*w
+        if self.block_mask is None or self.last_x_shape != x.shape or self.last_modality != self.training:
+            # This can trigger a recompilation of the flex_attention function
+            if self.training:
+                n_frames = x.shape[0]//(batch_size*2)
+                self.block_mask = make_train_mask(batch_size, self.num_heads, n_frames, image_size=h*w)
+            else:
+                n_frames = x.shape[0]//batch_size
+                self.block_mask = make_infer_mask(batch_size, self.num_heads, n_frames, image_size=h*w)
+
             self.last_x_shape = x.shape
+            self.last_modality = self.training
 
         y = self.attn_qkv(x)
 
@@ -158,10 +161,19 @@ class VideoSelfAttention(torch.nn.Module):
         y = self.attn_proj(y)
         return mp_sum(x, y, t=self.attn_balance)
     
-    # To log all recompilation reasons, use TORCH_LOGS="recompiles".
+    # To log all recompilation reasons, use TORCH_LOGS="recompiles" or torch._logging.set_logs(dynamo=logging.INFO)
     @torch.compile
-    def flex_attention(self, q, k, v, block_mask): 
-        return flex_attention(q, k, v, block_mask = block_mask)
+    def flex_attention(self, q, k, v, block_mask, score_mod = None): 
+        if block_mask == None:
+            if self.training:
+                raise NotImplementedError("Training mode not implemented")
+            else:
+                def causal_mask(score, b, h, q_idx, kv_idx):
+                    q_idx, kv_idx = q_idx // self.image_size, kv_idx // self.image_size
+                    return torch.where(q_idx >= kv_idx, score, -float("inf"))
+                score_mod = causal_mask
+
+        return flex_attention(q, k, v, score_mod, block_mask)
 
     # def self_attention(self, x):
     #     # this will be useful if we want to train the model on image denoising as well
@@ -367,10 +379,10 @@ class Precond(torch.nn.Module):
         # Preconditioning weights.
         c_skip = self.sigma_data ** 2 / (sigma ** 2 + self.sigma_data ** 2)
         c_out = sigma * self.sigma_data / (sigma ** 2 + self.sigma_data ** 2).sqrt()
-        c_out[sigma==0]=0
+        c_out[sigma==0]=0 # maybe comment this in the future 
         c_in = 1 / (self.sigma_data ** 2 + sigma ** 2).sqrt()
         c_noise = sigma.view(sigma.shape[:2]).log() / 4
-        c_noise[c_noise==torch.tensor(-np.inf)] = -2
+        c_noise[c_noise==torch.tensor(-np.inf)] = -2 # maybe comment this in the future
 
         # Run the model.
         x_in = (c_in * x).to(dtype)

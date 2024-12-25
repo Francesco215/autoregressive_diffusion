@@ -26,7 +26,8 @@ class EncodedVideoDataset(Dataset):
         return latent
 
 # Example usage:
-latent_dir = "encoded_latents/128x128"  # **Replace with your actual path**
+img_resolution = 128
+latent_dir = f"encoded_latents/{img_resolution}x{img_resolution}"  # **Replace with your actual path**
 batch_size = 16 
 num_workers = 4 
 
@@ -40,7 +41,7 @@ dataloader = DataLoader(
     drop_last=True # Important for training stability
 )
 
-unet = UNet(img_resolution=128, # Match your latent resolution
+unet = UNet(img_resolution=img_resolution, # Match your latent resolution
             img_channels=24,
             label_dim = 0,
             model_channels=64,
@@ -48,7 +49,7 @@ unet = UNet(img_resolution=128, # Match your latent resolution
             channel_mult_noise=None,
             channel_mult_emb=None,
             num_blocks=3,
-            ).to("cuda").to(torch.float16)
+            )
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
 precond = Precond(unet, use_fp16=True, sigma_data=1., logvar_channels=128).to("cuda")
 loss_fn = EDM2Loss(sigma_data=1.)
@@ -65,7 +66,7 @@ for epoch in range(num_epochs):
     for i, batch in enumerate(dataloader):
         optimizer.zero_grad()
 
-        batch = batch.to("cuda").to(torch.float16) / 3 # Scale down the latents
+        batch = batch.to("cuda") / 3 # Scale down the latents
 
         # Calculate loss
         loss = loss_fn(precond, batch)

@@ -3,7 +3,7 @@ import warnings
 import torch
 from torch.nn.attention.flex_attention import flex_attention, create_block_mask, BlockMask, _DEFAULT_SPARSE_BLOCK_SIZE
 
-def make_AR_BlockMask(batch_size, num_heads, n_frames, image_size):
+def make_train_mask(batch_size, num_heads, n_frames, image_size):
     # image size is the number of pixels (height x width)
 
     # I have to define this function here because it depends from image_size
@@ -20,15 +20,17 @@ def make_AR_BlockMask(batch_size, num_heads, n_frames, image_size):
         return mask_towards_clean ^ self_mask_noisy ^ domain_attention_towards_clean
 
 
+    if n_frames*image_size*2<_DEFAULT_SPARSE_BLOCK_SIZE:
+        warnings.warn(f"The masking matrix must be at least the size of the default block size,\ngot {n_frames*image_size} and the default block size is {_DEFAULT_SPARSE_BLOCK_SIZE}\n returning None")
+        return None
     if image_size<_DEFAULT_SPARSE_BLOCK_SIZE:
-        if n_frames*image_size%_DEFAULT_SPARSE_BLOCK_SIZE!=0 or _DEFAULT_SPARSE_BLOCK_SIZE%n_frames*image_size!=0:
+        if n_frames*image_size%_DEFAULT_SPARSE_BLOCK_SIZE!=0:
             sequence_length = n_frames*image_size*2
-            warnings.warn("The image size must be a divisor of the default block size")
+            warnings.warn(f"\nThe image size must be a divisor of the default block size ({_DEFAULT_SPARSE_BLOCK_SIZE}), got image_size:{image_size} and n_frames:{n_frames}\n using {(sequence_length**2 * batch_size * num_heads)/1e6}M of memory")
             return create_block_mask(autoregressive_diffusion_mask, B=batch_size, H=num_heads, Q_LEN=sequence_length, KV_LEN=sequence_length) 
         n_frames = n_frames*image_size//_DEFAULT_SPARSE_BLOCK_SIZE
         image_size = _DEFAULT_SPARSE_BLOCK_SIZE
     
-    assert _DEFAULT_SPARSE_BLOCK_SIZE%n_frames*image_size==0, "The image size must be a divisor of the default block size"
     num_blocks_in_row = torch.arange(1, n_frames+1, dtype=torch.int32, device="cuda").repeat(2)
     num_blocks_in_row = einops.repeat(num_blocks_in_row, '... -> b h ...', b=batch_size, h=num_heads)
 
@@ -44,7 +46,7 @@ def make_AR_BlockMask(batch_size, num_heads, n_frames, image_size):
     return BlockMask.from_kv_blocks(num_blocks_in_row, col_indices, BLOCK_SIZE=image_size, mask_mod=autoregressive_diffusion_mask)
 
 
-def make_inference_masking(batch_size, num_heads, n_frames, image_size):
+def make_infer_mask(batch_size, num_heads, n_frames, image_size):
     # image size is the number of pixels (height x width)
 
     def diagonal_diffusion_mask(b, h, q_idx, kv_idx):
@@ -52,15 +54,17 @@ def make_inference_masking(batch_size, num_heads, n_frames, image_size):
         
         return q_idx >= kv_idx
 
+    if n_frames*image_size<_DEFAULT_SPARSE_BLOCK_SIZE:
+        warnings.warn(f"The masking matrix must be at least the size of the default block size,\ngot {n_frames*image_size} and the default block size is {_DEFAULT_SPARSE_BLOCK_SIZE}\n returning None")
+        return None
     if image_size<_DEFAULT_SPARSE_BLOCK_SIZE:
-        if n_frames*image_size%_DEFAULT_SPARSE_BLOCK_SIZE!=0 or _DEFAULT_SPARSE_BLOCK_SIZE%n_frames*image_size!=0:
+        if n_frames*image_size%_DEFAULT_SPARSE_BLOCK_SIZE!=0:
             sequence_length = n_frames*image_size
-            warnings.warn("The image size must be a divisor of the default block size")
+            warnings.warn(f"\nThe image size must be a divisor of the default block size ({_DEFAULT_SPARSE_BLOCK_SIZE})\ngot image_size:{image_size} and n_frames:{n_frames}\n using {(sequence_length**2 * batch_size * num_heads)/1e6}M of memory")
             return create_block_mask(diagonal_diffusion_mask, B=batch_size, H=num_heads, Q_LEN=sequence_length, KV_LEN=sequence_length) 
         n_frames = n_frames*image_size//_DEFAULT_SPARSE_BLOCK_SIZE
         image_size = _DEFAULT_SPARSE_BLOCK_SIZE 
 
-    assert _DEFAULT_SPARSE_BLOCK_SIZE%n_frames*image_size==0, "The image size must be a divisor of the default block size"
     num_blocks_in_row = torch.arange(1, n_frames+1, dtype=torch.int32, device="cuda")
     num_blocks_in_row = einops.repeat(num_blocks_in_row, '... -> b h ...', b=batch_size, h=num_heads)
 

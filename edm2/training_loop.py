@@ -25,7 +25,7 @@ import einops
 # paper "Analyzing and Improving the Training Dynamics of Diffusion Models".
 
 class EDM2Loss:
-    def __init__(self, P_mean=2., P_std=1.0, sigma_data=1., context_noise_reduction=0.1):
+    def __init__(self, P_mean=-0.3, P_std=1.0, sigma_data=1., context_noise_reduction=0.1):
         self.P_mean = P_mean
         self.P_std = P_std
         self.sigma_data = sigma_data
