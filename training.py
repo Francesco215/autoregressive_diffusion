@@ -1,8 +1,10 @@
 #%%
+import os
 import einops
 import torch
 from torch.utils.data import Dataset, DataLoader
-import os
+from matplotlib import pyplot as plt
+
 from edm2.networks_edm2 import UNet, Precond
 from edm2.training_loop import EDM2Loss
 
@@ -55,9 +57,9 @@ precond = Precond(unet, use_fp16=True, sigma_data=1., logvar_channels=128).to("c
 loss_fn = EDM2Loss(sigma_data=1.)
 
 # Optimizer
-optimizer = torch.optim.AdamW(unet.parameters(), lr=1e-4, betas=(0.9, 0.999), eps=1e-4)
+optimizer = torch.optim.AdamW(precond.parameters(), lr=1e-2, betas=(0.9, 0.999), eps=1e-4)
 
-num_epochs = 10 # Adjust as needed
+num_epochs = 1000 # Adjust as needed
 
 #%%
 # torch.autograd.set_detect_anomaly(True, check_nan=True)
@@ -79,6 +81,16 @@ for epoch in range(num_epochs):
         # Logging
         if i % 10 == 0: # Print every 10 batches
             print(f"Epoch: {epoch+1}/{num_epochs}, Batch: {i+1}/{len(dataloader)}, Loss: {loss.item():.4f}")
+
+    if epoch%2 == 0 and epoch!=0:
+        c_noise = torch.linspace(0.1, 80, 128, device="cuda")
+        logvars = precond.logvar_linear(precond.logvar_fourier(c_noise)).flatten().cpu().detach().numpy()
+
+        plt.close()
+        plt.plot(c_noise.cpu().numpy(), logvars)
+        plt.savefig(f"logvars_epoch.png")
+        plt.show()
+
     # Save model checkpoint (optional)
     if (epoch + 1) % 10 == 0:  # Save every 10 epochs
          torch.save({

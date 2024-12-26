@@ -33,15 +33,16 @@ class EDM2Loss:
         assert context_noise_reduction >= 0 and context_noise_reduction <= 1, f"context_noise_reduction must be in [0,1], what are you doing? {context_noise_reduction}"
 
     def __call__(self, net, images, labels=None):
+        n_frames = images.shape[1]
         images = torch.cat((images,images),dim=1)
         rnd_normal = torch.randn(images.shape[:2], device=images.device)
         sigma = (rnd_normal * self.P_std + self.P_mean).exp()
-        sigma[:,:sigma.shape[-1]//2] *= self.context_noise_reduction # reducing significantly the noise of the context tokens
+        sigma[:,:n_frames] *= self.context_noise_reduction # reducing significantly the noise of the context tokens
         weight = (sigma ** 2 + self.sigma_data ** 2) / (sigma * self.sigma_data) ** 2
         noise = torch.randn_like(images) * einops.rearrange(sigma, '... -> ... 1 1 1')
         denoised, logvar = net(images + noise, sigma, labels, return_logvar=True)
         loss = (weight.view(logvar.shape) / logvar.exp()) * ((denoised - images) ** 2) + logvar
-        loss = loss[:, images.shape[1]//2:].mean()
+        loss = loss[:,n_frames:].mean()
         return loss
 
 #----------------------------------------------------------------------------

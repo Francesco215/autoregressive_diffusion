@@ -21,7 +21,7 @@ def make_train_mask(batch_size, num_heads, n_frames, image_size):
 
 
     if n_frames*image_size*2<_DEFAULT_SPARSE_BLOCK_SIZE:
-        warnings.warn(f"The masking matrix must be at least the size of the default block size,\ngot {n_frames*image_size} and the default block size is {_DEFAULT_SPARSE_BLOCK_SIZE}\n returning None")
+        warnings.warn(f"The masking matrix must be at least the size of the default block size,\ngot {n_frames*image_size*2} and the default block size is {_DEFAULT_SPARSE_BLOCK_SIZE}\n returning None")
         return None
     if image_size<_DEFAULT_SPARSE_BLOCK_SIZE:
         if n_frames*image_size%_DEFAULT_SPARSE_BLOCK_SIZE!=0:

@@ -379,11 +379,11 @@ class Precond(torch.nn.Module):
         # Preconditioning weights.
         c_skip = self.sigma_data ** 2 / (sigma ** 2 + self.sigma_data ** 2)
         c_out = sigma * self.sigma_data / (sigma ** 2 + self.sigma_data ** 2).sqrt()
-        c_out[sigma==0]=0 # maybe comment this in the future 
+        # c_out[sigma==0]=0 # maybe comment this in the future 
         c_in = 1 / (self.sigma_data ** 2 + sigma ** 2).sqrt()
         c_noise = sigma.view(sigma.shape[:2]).log() / 4
-        c_noise[c_noise==torch.tensor(-np.inf)] = -2 # maybe comment this in the future
-
+        # c_noise[c_noise==torch.tensor(-np.inf)] = -2 # maybe comment this in the future
+# 
         # Run the model.
         x_in = (c_in * x).to(dtype)
         F_x = self.unet(x_in, c_noise, class_labels, **unet_kwargs)
