@@ -175,18 +175,6 @@ class VideoSelfAttention(torch.nn.Module):
 
         return flex_attention(q, k, v, score_mod, block_mask)
 
-    # def self_attention(self, x):
-    #     # this will be useful if we want to train the model on image denoising as well
-    #     h, w = x.shape[-2:]
-    #     y = self.attn_qkv(x)
-    #     y = einops.rearrange(y, 'b (s m c) h w -> b s m (h w) c')
-    #     q, k, v = normalize(y, dim=-1).unbind(1)
-        
-    #     y = F.scaled_dot_product_attention(q, k, v)
-    #     y = einops.rearrange(y, 'b m (h w) c -> b (m c) h w', h=h, w=w)
-    #     y = self.attn_proj(y)
-    #     return mp_sum(x, y, t=self.attn_balance)
-
         
 #----------------------------------------------------------------------------
 # U-Net encoder/decoder block with optional self-attention (Figure 21).
@@ -237,7 +225,8 @@ class Block(torch.nn.Module):
         # Residual branch.
         y = self.conv_res0(mp_silu(x))
         c = self.emb_linear(emb, gain=self.emb_gain) + 1
-        y = mp_silu(y * c.unsqueeze(2).unsqueeze(3).to(y.dtype))
+        y = einops.einsum(y, c.to(y.dtype),'b c h w, b c -> b c h w') 
+        y = mp_silu(y)
         if self.training and self.dropout != 0:
             y = torch.nn.functional.dropout(y, p=self.dropout)
         y = self.conv_res1(y)

@@ -30,8 +30,8 @@ class EncodedVideoDataset(Dataset):
 # Example usage:
 img_resolution = 128
 latent_dir = f"encoded_latents/{img_resolution}x{img_resolution}"  # **Replace with your actual path**
-batch_size = 16 
-num_workers = 4 
+batch_size = 32 
+num_workers = 8 
 
 dataset = EncodedVideoDataset(latent_dir)
 dataloader = DataLoader(
@@ -57,7 +57,13 @@ precond = Precond(unet, use_fp16=True, sigma_data=1., logvar_channels=128).to("c
 loss_fn = EDM2Loss(sigma_data=1.)
 
 # Optimizer
-optimizer = torch.optim.AdamW(precond.parameters(), lr=1e-2, betas=(0.9, 0.999), eps=1e-4)
+logvar_params = [p for n, p in precond.named_parameters() if 'logvar' in n]
+unet_params = unet.parameters()  # Get parameters from self.unet
+
+optimizer = torch.optim.AdamW([
+    {'params': unet_params, 'lr': 1e-3},
+    {'params': logvar_params, 'lr': 1e-1}
+])
 
 num_epochs = 1000 # Adjust as needed
 
@@ -65,9 +71,17 @@ num_epochs = 1000 # Adjust as needed
 # torch.autograd.set_detect_anomaly(True, check_nan=True)
 # Training loop
 for epoch in range(num_epochs):
-    for i, batch in enumerate(dataloader):
-        optimizer.zero_grad()
+    if epoch%2 == 0:
+        c_noise = torch.linspace(0.1, 80, 128, device="cuda")
+        logvars = precond.logvar_linear(precond.logvar_fourier(c_noise)).flatten().cpu().detach().numpy()
 
+        plt.close()
+        plt.plot(c_noise.cpu().numpy(), logvars)
+        plt.savefig(f"logvars_epoch.png")
+        plt.show()   
+    for i, batch in enumerate(dataloader):
+
+        optimizer.zero_grad()
         batch = batch.to("cuda") / 3 # Scale down the latents
 
         # Calculate loss
@@ -78,21 +92,11 @@ for epoch in range(num_epochs):
         optimizer.step()
 
 
-        # Logging
-        if i % 10 == 0: # Print every 10 batches
-            print(f"Epoch: {epoch+1}/{num_epochs}, Batch: {i+1}/{len(dataloader)}, Loss: {loss.item():.4f}")
+    print(f"Epoch: {epoch+1}/{num_epochs}, Batch: {i+1}/{len(dataloader)}, Loss: {loss.item():.4f}")
 
-    if epoch%2 == 0 and epoch!=0:
-        c_noise = torch.linspace(0.1, 80, 128, device="cuda")
-        logvars = precond.logvar_linear(precond.logvar_fourier(c_noise)).flatten().cpu().detach().numpy()
-
-        plt.close()
-        plt.plot(c_noise.cpu().numpy(), logvars)
-        plt.savefig(f"logvars_epoch.png")
-        plt.show()
 
     # Save model checkpoint (optional)
-    if (epoch + 1) % 10 == 0:  # Save every 10 epochs
+    if (epoch + 1) % num_epochs//5 == 0:  # save every 20% of epochs
          torch.save({
             'epoch': epoch,
             'model_state_dict': precond.state_dict(),
