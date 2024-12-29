@@ -15,6 +15,8 @@ import psutil
 import numpy as np
 import torch
 import einops
+import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
 # import dnnlib
 # from torch_utils import distributed as dist
 # from torch_utils import training_stats
@@ -33,15 +35,16 @@ class EDM2Loss:
         assert context_noise_reduction >= 0 and context_noise_reduction <= 1, f"context_noise_reduction must be in [0,1], what are you doing? {context_noise_reduction}"
 
     def __call__(self, net, images, labels=None):
-        n_frames = images.shape[1]
+        batch_size, n_frames, channels, height, width = images.shape    
         images = torch.cat((images,images),dim=1)
         rnd_normal = torch.randn(images.shape[:2], device=images.device)
         sigma = (rnd_normal * self.P_std + self.P_mean).exp()
         sigma[:,:n_frames] *= self.context_noise_reduction # reducing significantly the noise of the context tokens
         weight = (sigma ** 2 + self.sigma_data ** 2) / (sigma * self.sigma_data) ** 2
-        noise = torch.randn_like(images) * einops.rearrange(sigma, '... -> ... 1 1 1')
+        noise = einops.einsum(sigma, torch.randn_like(images), 'b t, b t ... -> b t ...') 
         denoised, logvar = net(images + noise, sigma, labels, return_logvar=True)
-        loss = (weight.view(logvar.shape) / logvar.exp()) * ((denoised - images) ** 2) + logvar
+        return F.mse_loss(denoised[:,n_frames:], images[:,n_frames:])
+        loss = weight.view(logvar.shape) * (-logvar).exp() * (denoised - images) ** 2 + logvar
         loss = loss[:,n_frames:].mean()
         return loss
 
@@ -56,6 +59,93 @@ def learning_rate_schedule(cur_nimg, batch_size, ref_lr=100e-4, ref_batches=70e3
     if rampup_Mimg > 0:
         lr *= min(cur_nimg / (rampup_Mimg * 1e6), 1)
     return lr
+
+class MultiNoiseLoss:
+    def __init__(self, vertical_scaling = -0.9, x_min = 0.5, width = 1, vertical_offset = 1, min_loss = 0.005, std_dev_multiplier = 0.7, std_dev_shift = 2):
+        self.loss_mean_popt = [vertical_scaling, x_min, width, vertical_offset]
+        self.loss_std_popt =  [min_loss, std_dev_multiplier, std_dev_shift]
+
+    
+    def calculate_mean_loss_fn(self, sigma, vertical_scaling, x_min, width, vertical_offset):
+        """
+        Calculates the loss based on a parametric function.
+
+        Args:
+            sigma: Independent variable (noise level).
+            vertical_scaling: Controls the vertical scaling of the dip.
+            x_min: The log(sigma) value at which the minimum loss occurs.
+            width: Affects the width of the curve around the minimum.
+            vertical_offset: Vertical offset of the curve.
+
+        Returns:
+            The calculated loss value.
+        """
+        return vertical_scaling * np.exp(-((np.log(sigma) - x_min)**2) / (2 * width**2)) + vertical_offset
+
+    def calculate_mean_loss(self,sigma):
+        return self.calculate_mean_loss_fn(sigma, *self.loss_mean_popt)
+
+    def calculate_std_loss_fn(self, sigma, min_loss, std_dev_multiplier, std_dev_shift):
+        """
+        Calculates the standard deviation of the loss, which increases with sigma.
+
+        Args:
+            sigma: Independent variable (noise level).
+            min_loss: The minimum achievable loss (used to scale the standard deviation).
+            std_dev_multiplier: Controls the overall magnitude of the standard deviation.
+            std_dev_shift: Shifts the sigma value at which the standard deviation starts to increase rapidly.
+            vertical_scaling: Vertical scaling parameter of the loss function.
+            x_min: x_min parameter of the loss function.
+            width: Width parameter of the loss function.
+            vertical_offset: Vertical offset parameter of the loss function.
+
+        Returns:
+            The calculated standard deviation.
+        """
+
+        loss = self.calculate_mean_loss(sigma)
+        return (loss - min_loss) * std_dev_multiplier * sigma / (std_dev_shift + sigma)
+    
+    def calculate_std_loss(self, sigma):
+        return self.calculate_std_loss_fn(sigma, *self.loss_std_popt)
+
+    def find_mean_loss_popt(self, sigma_values, loss_values):
+        popt, _ = curve_fit(self.calculate_mean_loss_fn, sigma_values, loss_values, p0=self.loss_mean_popt, sigma=self.calculate_std_loss(sigma_values), absolute_sigma=True)
+        return popt
+
+    def find_std_loss_popt(self, sigma_values, loss_values):
+        loss_residuals = np.abs(loss_values - self.calculate_mean_loss(sigma_values))
+        popt, _ = curve_fit(self.calculate_std_loss_fn, sigma_values, loss_residuals, p0=self.loss_std_popt, sigma=self.calculate_std_loss(sigma_values), absolute_sigma=True)
+        return popt
+
+    def fit_loss_curve(self, sigma_values, loss_values):
+        self.loss_mean_popt = self.find_mean_loss_popt(sigma_values, loss_values)
+        self.loss_std_popt = self.find_std_loss_popt(sigma_values, loss_values)
+
+    def plot(self, save_path=None):
+        # --- Simulation Parameters ---
+        num_points = 200  # Number of data points along the sigma axis
+
+        # Generate logarithmically spaced sigma values
+        sigma_values = np.logspace(-2.3, 1.7, num_points)
+
+        # --- Plotting ---
+        plt.close()
+        plt.figure(figsize=(8, 6))
+        loss_means = self.calculate_mean_loss(sigma_values)
+        loss_stds = self.calculate_std_loss(sigma_values)
+        plt.plot(sigma_values, loss_means, label='CIFAR-10')
+        plt.fill_between(sigma_values, loss_means - loss_stds, loss_means + loss_stds, alpha=0.2)
+
+        plt.xscale('log')
+        plt.xlabel('σ (sigma)')
+        plt.ylabel('Loss')
+        plt.title('Simulated Loss Curves with Increasing Noise')
+        plt.legend()
+        plt.grid(True)
+        if save_path is not None: plt.savefig(save_path)
+        plt.show()
+        plt.close()
 """
 #----------------------------------------------------------------------------
 # Main training loop.
