@@ -54,7 +54,7 @@ class EDM2Loss:
             self.noise_weight.add_data(sigma[:,n_frames:], losses)
             if use_loss_weight:
                 mean_loss = self.noise_weight.calculate_mean_loss(sigma[:,n_frames:])
-                losses = losses / mean_loss + torch.log(mean_loss)
+                losses = losses / mean_loss**2 + 2*torch.log(mean_loss)
         return losses.mean()
 #----------------------------------------------------------------------------
 # Learning rate decay schedule used in the paper "Analyzing and Improving
