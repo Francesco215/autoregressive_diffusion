@@ -23,14 +23,16 @@ x = torch.randn(4, 43, 24, 16, 16, device="cuda")
 # y = precond.forward(x, noise_level, return_logvar=True)
 
 loss=EDM2Loss()
-loss(precond, x)
+y=loss(precond, x)
 
 # %%
 print(y.shape)
 
 # %%
 
-x = torch.randn(7, 16, 12, 64, 64, device="cuda", dtype=torch.float16)
-noise_level = torch.randn(7, 16, device="cuda", dtype=torch.float16)
+x = torch.randn(2, 16, 24, 64, 64, device="cuda", dtype=torch.float16)
+noise_level = torch.randn(x.shape[:2], device="cuda", dtype=torch.float16)
 y = unet.forward(x, noise_level, None)
+
+
 # %%
