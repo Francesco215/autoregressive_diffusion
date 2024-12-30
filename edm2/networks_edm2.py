@@ -271,7 +271,7 @@ class UNet(torch.nn.Module):
         cemb = model_channels * channel_mult_emb if channel_mult_emb is not None else max(cblock)
         self.label_balance = label_balance
         self.concat_balance = concat_balance
-        self.out_gain = torch.nn.Parameter(torch.tensor([0.1]))
+        self.out_gain = torch.nn.Parameter(torch.tensor([.0]))
 
         # Embedding.
         self.emb_fourier = MPFourier(cnoise)
@@ -367,7 +367,7 @@ class Precond(torch.nn.Module):
         c_out = sigma * self.sigma_data / (sigma ** 2 + self.sigma_data ** 2).sqrt()
         c_in = 1 / (self.sigma_data ** 2 + sigma ** 2).sqrt()
         c_noise = sigma.view(sigma.shape[:2]).log() / 4
-# 
+ 
         # Run the model.
         x_in = (c_in * x).to(dtype)
         F_x = self.unet(x_in, c_noise, class_labels, **unet_kwargs)

@@ -19,6 +19,7 @@ class EncodedVideoDataset(Dataset):
         self.latent_files = [f for f in os.listdir(latent_dir) if f.endswith('.pt')]
         self.latent_files.sort()
         self.scaling_factor = 3.32 # Not used currently
+        self.dataset_mean = -2.90
 
     def __len__(self):
         return len(self.latent_files)
@@ -26,7 +27,7 @@ class EncodedVideoDataset(Dataset):
     def __getitem__(self, idx):
         latent_path = os.path.join(self.latent_dir, self.latent_files[idx])
         latent = torch.load(latent_path, map_location='cpu').to(torch.float32)
-        return latent/self.scaling_factor
+        return (latent-self.dataset_mean)/self.scaling_factor 
 
 # Example usage:
 img_resolution = 128
@@ -48,27 +49,31 @@ unet = UNet(img_resolution=img_resolution, # Match your latent resolution
             img_channels=24,
             label_dim = 0,
             model_channels=16,
-            channel_mult=[1,2,4,8],
+            channel_mult=[1,2,4,4],
             channel_mult_noise=None,
             channel_mult_emb=None,
-            num_blocks=2,
+            num_blocks=1,
             )
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
 sigma_data = 1.
 precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to("cuda")
-loss_fn = EDM2Loss(P_std=1.5, sigma_data=sigma_data, noise_weight=MultiNoiseLoss())
+loss_fn = EDM2Loss(P_mean=1,P_std=2., sigma_data=sigma_data, noise_weight=MultiNoiseLoss())
+loss_fn.noise_weight.loss_mean_popt =[0.2,0,1,0,-2,1,1] 
+loss_fn.noise_weight.loss_std_popt = [10,0.01,1e-4]
 
-# Optimizer
+# this are vertical_scaling, x_min, width, vertical_offset, logistic_multiplier, logistic_offset
+# Optimizermolto più appassionati e meno frustrati degli altri, a mio avviso perchè avevano anche delle loro aziende
 logvar_params = [p for n, p in precond.named_parameters() if 'logvar' in n]
 unet_params = unet.parameters()  # Get parameters from self.unet
 
-optimizer = torch.optim.AdamW(precond.parameters(), lr=1e-3)
+optimizer = torch.optim.AdamW(precond.parameters(), lr=6e-4)
 
-num_epochs = 20 # Adjust as needed
+num_epochs = 50 # Adjust as needed
 
 #%%
 # torch.autograd.set_detect_anomaly(True, check_nan=True)
 # Training loop
+ulw=False
 for epoch in range(num_epochs):
     for i, batch in enumerate(dataloader):
 
@@ -76,19 +81,19 @@ for epoch in range(num_epochs):
         batch = batch.to("cuda") #Scale down the latents
 
         # Calculate loss    
-        loss = loss_fn(precond, batch)
+        loss = loss_fn(precond, batch, use_loss_weight=ulw)
 
         # Backpropagation and optimization
         loss.backward()
         optimizer.step()
 
-
     print(f"Epoch: {epoch+1}/{num_epochs}, Batch: {i+1}/{len(dataloader)}, Loss: {loss.item():.4f}")
 
-
     # Save model checkpoint (optional)
-    if epoch % (num_epochs // 5) == 0:  # save every 20% of epochs
+    if epoch % (num_epochs // 5) == 0 and epoch!=0:  # save every 20% of epochs
+        loss_fn.noise_weight.fit_loss_curve()
         loss_fn.noise_weight.plot()
+        ulw=True
         torch.save({
             'epoch': epoch,
             'model_state_dict': precond.state_dict(),
@@ -98,7 +103,8 @@ for epoch in range(num_epochs):
 
 
 print("Training finished!")
-# %%
+#%%
+
 
 # %%
 def calculate_average_std_from_dataloader(dataloader):
@@ -112,17 +118,20 @@ def calculate_average_std_from_dataloader(dataloader):
         The average standard deviation across all latents in the dataset.
     """
     all_stds = []
+    all_means = []
     for batch in dataloader:
       
         std = torch.std(batch, dim=(-1,-2,-3)).mean()
         all_stds.append(std.item())
+        all_means.append(torch.mean(batch).item())
+
         
 
     average_std = sum(all_stds) / len(all_stds)
-    return average_std
+    average_mean = sum(all_means) / len(all_means)
+    return average_mean,average_std
 
 # %%
-avg_std_dataloader = calculate_average_std_from_dataloader(dataloader)
-print(f"Average standard deviation of latents (from DataLoader): {avg_std_dataloader:.4f}")
-
+avg_mean_dataloader, avg_std_dataloader = calculate_average_std_from_dataloader(dataloader)
+print(f"Average mean: {avg_mean_dataloader:.4f}, Average std: {avg_std_dataloader:.4f}")
 # %%
