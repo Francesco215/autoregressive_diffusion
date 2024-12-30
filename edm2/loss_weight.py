@@ -13,11 +13,12 @@ class MultiNoiseLoss:
         self.sigmas = np.array([])
         self.losses = np.array([])
         self.positions = np.array([])
-    
+        self.history_size = 50_000
+
     def add_data(self, sigma, loss):
-        self.sigmas=np.append(self.sigmas,sigma.flatten().cpu().detach().numpy())
-        self.losses=np.append(self.losses,loss.flatten().cpu().detach().numpy())
-        self.positions=np.append(self.positions,np.arange(sigma.shape[0]*sigma.shape[1])%sigma.shape[1])
+        self.sigmas=np.append(self.sigmas,sigma.flatten().cpu().detach().numpy())[-self.history_size:]
+        self.losses=np.append(self.losses,loss.flatten().cpu().detach().numpy())[-self.history_size:]
+        self.positions=np.append(self.positions,np.arange(sigma.shape[0]*sigma.shape[1])%sigma.shape[1])[-self.history_size:]
 
     def calculate_mean_loss_fn(self, sigma, vertical_scaling, x_min, width, vertical_offset):
         """
@@ -83,7 +84,7 @@ class MultiNoiseLoss:
         num_points = 200  # Number of data points along the sigma axis
 
         # Generate logarithmically spaced sigma values
-        sigma_values = np.logspace(-2.3, 1.7, num_points)
+        sigma_values = np.logspace(-2.3, 2.7, num_points)
 
         # --- Plotting ---
         plt.close()
@@ -94,7 +95,7 @@ class MultiNoiseLoss:
 
         # Scatter plot of the data, colored by position using the viridis colormap
         if self.sigmas.size > 0: # Only plot collected data if there is any
-            scatter = ax.scatter(self.sigmas, self.losses, c=self.positions, cmap='viridis', norm=LogNorm(), alpha=0.7, label='Data Points')
+            scatter = ax.scatter(self.sigmas, self.losses, c=self.positions, cmap='viridis', norm=LogNorm(), alpha=0.7, label='Data Points', s=.5)
             fig.colorbar(scatter, ax=ax, label='Position')
 
         ax.plot(sigma_values, loss_means, label='CIFAR-10', color='red')

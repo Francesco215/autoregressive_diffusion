@@ -18,7 +18,7 @@ class EncodedVideoDataset(Dataset):
         self.latent_dir = latent_dir
         self.latent_files = [f for f in os.listdir(latent_dir) if f.endswith('.pt')]
         self.latent_files.sort()
-        self.scaling_factor = 1.15258426 # Not used currently
+        self.scaling_factor = 3.32 # Not used currently
 
     def __len__(self):
         return len(self.latent_files)
@@ -26,7 +26,7 @@ class EncodedVideoDataset(Dataset):
     def __getitem__(self, idx):
         latent_path = os.path.join(self.latent_dir, self.latent_files[idx])
         latent = torch.load(latent_path, map_location='cpu').to(torch.float32)
-        return latent
+        return latent/self.scaling_factor
 
 # Example usage:
 img_resolution = 128
@@ -47,26 +47,24 @@ dataloader = DataLoader(
 unet = UNet(img_resolution=img_resolution, # Match your latent resolution
             img_channels=24,
             label_dim = 0,
-            model_channels=32,
+            model_channels=16,
             channel_mult=[1,2,4,8],
             channel_mult_noise=None,
             channel_mult_emb=None,
-            num_blocks=3,
+            num_blocks=2,
             )
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
-precond = Precond(unet, use_fp16=True, sigma_data=5.343, logvar_channels=128).to("cuda")
-loss_fn = EDM2Loss(sigma_data=1., noise_weight=MultiNoiseLoss())
+sigma_data = 1.
+precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to("cuda")
+loss_fn = EDM2Loss(P_std=1.5, sigma_data=sigma_data, noise_weight=MultiNoiseLoss())
 
 # Optimizer
 logvar_params = [p for n, p in precond.named_parameters() if 'logvar' in n]
 unet_params = unet.parameters()  # Get parameters from self.unet
 
-optimizer = torch.optim.AdamW([
-    {'params': unet_params, 'lr': 1e-3},
-    {'params': logvar_params, 'lr': 1e-1}
-])
+optimizer = torch.optim.AdamW(precond.parameters(), lr=1e-3)
 
-num_epochs = 1000 # Adjust as needed
+num_epochs = 20 # Adjust as needed
 
 #%%
 # torch.autograd.set_detect_anomaly(True, check_nan=True)
@@ -77,7 +75,7 @@ for epoch in range(num_epochs):
         optimizer.zero_grad()
         batch = batch.to("cuda") #Scale down the latents
 
-        # Calculate loss
+        # Calculate loss    
         loss = loss_fn(precond, batch)
 
         # Backpropagation and optimization
@@ -89,18 +87,18 @@ for epoch in range(num_epochs):
 
 
     # Save model checkpoint (optional)
-    if (epoch + 1) % num_epochs//5 == 0:  # save every 20% of epochs
-         torch.save({
+    if epoch % (num_epochs // 5) == 0:  # save every 20% of epochs
+        loss_fn.noise_weight.plot()
+        torch.save({
             'epoch': epoch,
             'model_state_dict': precond.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'loss': loss,
         }, f"model_epoch_{epoch+1}.pt")
-    if epoch == 3:
-        break
+
+
 print("Training finished!")
 # %%
-loss_fn.noise_weight.plot()
 
 # %%
 def calculate_average_std_from_dataloader(dataloader):

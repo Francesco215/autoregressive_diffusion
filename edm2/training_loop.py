@@ -29,7 +29,7 @@ from .loss_weight import MultiNoiseLoss
 # paper "Analyzing and Improving the Training Dynamics of Diffusion Models".
 
 class EDM2Loss:
-    def __init__(self, P_mean=-0.3, P_std=1.0, sigma_data=1., context_noise_reduction=0.1, noise_weight:MultiNoiseLoss = None):
+    def __init__(self, P_mean=0.5, P_std=2., sigma_data=1., context_noise_reduction=0.1, noise_weight:MultiNoiseLoss = None):
         self.P_mean = P_mean
         self.P_std = P_std
         self.sigma_data = sigma_data
@@ -45,12 +45,11 @@ class EDM2Loss:
         sigma[:,:n_frames] *= self.context_noise_reduction # reducing significantly the noise of the context tokens
         weight = (sigma ** 2 + self.sigma_data ** 2) / (sigma * self.sigma_data) ** 2
         noise = einops.einsum(sigma, torch.randn_like(images), 'b t, b t ... -> b t ...') 
-        denoised, logvar = net(images + noise, sigma, labels, return_logvar=True)
+        denoised = net(images + noise, sigma, labels)
         losses = ((denoised[:,n_frames:] - images[:,n_frames:]) ** 2).mean(dim=(-1,-2,-3))
-        if self.noise_weight is None:
-            return losses.mean()
-
-        self.noise_weight.add_data(sigma[:,n_frames:], losses)
+        losses = losses * weight[:,n_frames:]
+        if self.noise_weight is not None:
+            self.noise_weight.add_data(sigma[:,n_frames:], losses)
 
         return losses.mean()
 #----------------------------------------------------------------------------

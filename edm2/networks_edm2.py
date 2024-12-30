@@ -346,7 +346,6 @@ class Precond(torch.nn.Module):
         unet,                   # UNet model.
         use_fp16        = True, # Run the model at FP16 precision?
         sigma_data      = 0.5,  # Expected standard deviation of the training data.
-        logvar_channels = 128,  # Intermediate dimensionality for uncertainty estimation.
     ):
         super().__init__()
         self.unet = unet
@@ -355,10 +354,8 @@ class Precond(torch.nn.Module):
         self.label_dim = unet.label_dim
         self.use_fp16 = use_fp16
         self.sigma_data = sigma_data
-        self.logvar_fourier = MPFourier(logvar_channels)
-        self.logvar_linear = MPConv(logvar_channels, 1, kernel=[])
 
-    def forward(self, x:Tensor, sigma:Tensor, class_labels=None, force_fp32=False, return_logvar=False, **unet_kwargs):
+    def forward(self, x:Tensor, sigma:Tensor, class_labels=None, force_fp32=False, **unet_kwargs):
         x = x.to(torch.float32)
         sigma = sigma.to(torch.float32)
         sigma = einops.rearrange(sigma, '... -> ... 1 1 1') # TODO: make sure that this is the correct way of reshaping the tensor
@@ -368,20 +365,14 @@ class Precond(torch.nn.Module):
         # Preconditioning weights.
         c_skip = self.sigma_data ** 2 / (sigma ** 2 + self.sigma_data ** 2)
         c_out = sigma * self.sigma_data / (sigma ** 2 + self.sigma_data ** 2).sqrt()
-        # c_out[sigma==0]=0 # maybe comment this in the future 
         c_in = 1 / (self.sigma_data ** 2 + sigma ** 2).sqrt()
         c_noise = sigma.view(sigma.shape[:2]).log() / 4
-        # c_noise[c_noise==torch.tensor(-np.inf)] = -2 # maybe comment this in the future
 # 
         # Run the model.
         x_in = (c_in * x).to(dtype)
         F_x = self.unet(x_in, c_noise, class_labels, **unet_kwargs)
         D_x = c_skip * x + c_out * F_x.to(torch.float32)
 
-        # Estimate uncertainty if requested.
-        if return_logvar:
-            logvar = self.logvar_linear(self.logvar_fourier(c_noise.flatten())).reshape(sigma.shape)
-            return D_x, logvar # u(sigma) in Equation 21
         return D_x
 
 #----------------------------------------------------------------------------
