@@ -7,7 +7,7 @@ from torch.utils.data import Dataset, DataLoader
 from matplotlib import pyplot as plt
 
 from edm2.networks_edm2 import UNet, Precond
-from edm2.training_loop import EDM2Loss
+from edm2.loss import EDM2Loss
 from edm2.loss_weight import MultiNoiseLoss
 
 os.environ['DISABLE_ADDMM_CUDA_LT'] = '1' 

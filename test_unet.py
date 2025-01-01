@@ -1,7 +1,7 @@
 #%%
 import torch
 from edm2.networks_edm2 import UNet, Precond
-from edm2.training_loop import EDM2Loss
+from edm2.loss import EDM2Loss
 import logging
 
 unet = UNet(img_resolution=16,
