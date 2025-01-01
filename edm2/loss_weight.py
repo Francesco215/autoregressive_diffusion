@@ -5,8 +5,8 @@ from matplotlib.colors import LogNorm
 from scipy.optimize import curve_fit
 
 class MultiNoiseLoss:
-    def __init__(self, vertical_scaling=0, x_min=0., width=0., vertical_offset=0., logistic_k=-2., logistic_x0=1, logistic_L=1, min_loss=0.005, std_dev_multiplier=0.7, std_dev_shift=2):
-        self.loss_mean_popt = [vertical_scaling, x_min, width, vertical_offset, logistic_k, logistic_x0, logistic_L]
+    def __init__(self, vertical_scaling=0, x_min=0., width=0., vertical_offset=0., min_loss=0.005, std_dev_multiplier=0.7, std_dev_shift=2):
+        self.loss_mean_popt = [vertical_scaling, x_min, width, vertical_offset]
         self.loss_std_popt = [min_loss, std_dev_multiplier, std_dev_shift]
 
         self.sigmas = np.array([])
@@ -20,8 +20,7 @@ class MultiNoiseLoss:
         self.positions = np.append(self.positions, np.arange(sigma.shape[0] * sigma.shape[1]) % sigma.shape[1])[
                        -self.history_size:]
 
-    def calculate_mean_loss_fn(self, sigma, vertical_scaling, x_min, width, vertical_offset, logistic_k, logistic_x0,
-                             logistic_L):
+    def calculate_mean_loss_fn(self, sigma, vertical_scaling, x_min, width, vertical_offset):
         """
         Calculates the loss based on a parametric function combining Gaussian and Logistic.
 
@@ -45,8 +44,8 @@ class MultiNoiseLoss:
             sigma_np = sigma
             
         gaussian_part = -vertical_scaling * np.exp(-((np.log(sigma_np) - x_min) ** 2) / (2 * width ** 2))
-        logistic_part = logistic_L / (1 + np.exp(-logistic_k * (np.log(sigma_np) - logistic_x0)))
-        result = gaussian_part + logistic_part + vertical_offset
+        # logistic_part = logistic_L / (1 + np.exp(-logistic_k * (np.log(sigma_np) - logistic_x0)))
+        result = gaussian_part + vertical_offset
         
         # Convert back to tensor if input was a tensor
         if isinstance(sigma, torch.Tensor):
@@ -147,6 +146,6 @@ class MultiNoiseLoss:
         ax.legend()
         ax.grid(True)
         if save_path is not None:
-            plt.savefig(save_path)
+            plt.savefig(save_path, dpi=600)
         plt.show()
         plt.close()

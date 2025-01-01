@@ -37,12 +37,12 @@ class EDM2Loss:
         self.noise_weight = noise_weight
         assert context_noise_reduction >= 0 and context_noise_reduction <= 1, f"context_noise_reduction must be in [0,1], what are you doing? {context_noise_reduction}"
 
-    def __call__(self, net, images, labels=None, use_loss_weight=True):
+    def __call__(self, net, images, labels=None, use_loss_weight=False):
         batch_size, n_frames, channels, height, width = images.shape    
         images = torch.cat((images,images),dim=1)
 
         sigma_targets = (torch.randn(batch_size,n_frames,device=images.device) * self.P_std + self.P_mean).exp()
-        sigma_context = torch.rand(batch_size,1,device=images.device).expand(-1,n_frames).clone() # reducing significantly the noise of the context tokens
+        sigma_context = torch.rand(batch_size,1,device=images.device).expand(-1,n_frames).clone()*self.context_noise_reduction # reducing significantly the noise of the context tokens
         sigma = torch.cat((sigma_context,sigma_targets),dim=1)
 
         weight = (sigma ** 2 + self.sigma_data ** 2) / (sigma * self.sigma_data) ** 2

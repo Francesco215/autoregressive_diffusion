@@ -271,7 +271,7 @@ class UNet(torch.nn.Module):
         cemb = model_channels * channel_mult_emb if channel_mult_emb is not None else max(cblock)
         self.label_balance = label_balance
         self.concat_balance = concat_balance
-        self.out_gain = torch.nn.Parameter(torch.tensor([.0]))
+        self.out_gain = torch.nn.Parameter(torch.tensor([1.]))
 
         # Embedding.
         self.emb_fourier = MPFourier(cnoise)
