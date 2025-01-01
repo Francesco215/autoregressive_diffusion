@@ -96,7 +96,6 @@ class MultiNoiseLoss:
 
         popt, _ = curve_fit(self.calculate_mean_loss_fn, sigma_values_np, loss_values_np, p0=self.loss_mean_popt,
                               maxfev=10000)
-        self.loss_mean_popt = popt
         return popt
 
     def find_std_loss_popt(self, sigma_values, loss_values):
@@ -108,14 +107,16 @@ class MultiNoiseLoss:
         
         popt, _ = curve_fit(self.calculate_std_loss_fn, sigma_values_np, loss_residuals, p0=self.loss_std_popt,
                             maxfev=10000)
-        self.loss_std_popt = popt
         return popt
 
     def fit_loss_curve(self, sigma_values=None, loss_values=None):
         if sigma_values is None: sigma_values = torch.tensor(self.sigmas)
         if loss_values is None: loss_values = torch.tensor(self.losses)
-        self.loss_mean_popt = self.find_mean_loss_popt(sigma_values, loss_values)
-        self.loss_std_popt = self.find_std_loss_popt(sigma_values, loss_values)
+        try:
+            self.loss_mean_popt = self.find_mean_loss_popt(sigma_values, loss_values)
+            self.loss_std_popt = self.find_std_loss_popt(sigma_values, loss_values)
+        except :
+            print("fit failed")    
 
     def plot(self, save_path=None):
         # --- Simulation Parameters ---
