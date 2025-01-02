@@ -3,31 +3,41 @@ import warnings
 import torch
 from torch.nn.attention.flex_attention import flex_attention, create_block_mask, BlockMask, _DEFAULT_SPARSE_BLOCK_SIZE
 
-def make_train_mask(batch_size, num_heads, n_frames, image_size):
-    # image size is the number of pixels (height x width)
 
-    # I have to define this function here because it depends from image_size
-    # TODO: check if this can be turned into an external class
-    def autoregressive_diffusion_mask(b, h, q_idx, kv_idx):
-        q_idx, kv_idx = q_idx // image_size, kv_idx // image_size
+class AutoregressiveDiffusionMask:
+
+    def __init__(self, n_frames, image_size):
+        self.n_frames = n_frames
+        self.image_size = image_size
+
+
+    def __call__(self, b, h, q_idx, kv_idx):
+        q_idx, kv_idx = q_idx // self.image_size, kv_idx // self.image_size
         
         causal_mask_clean = q_idx >= kv_idx
-        causal_mask_noisy = q_idx - n_frames > kv_idx 
-        domain_attention_towards_clean = kv_idx < n_frames
-        mask_towards_clean = (causal_mask_clean ^ causal_mask_noisy ^ (q_idx < n_frames)) & domain_attention_towards_clean
+        causal_mask_noisy = q_idx - self.n_frames > kv_idx 
+        domain_attention_towards_clean = kv_idx < self.n_frames
+        mask_towards_clean = (causal_mask_clean ^ causal_mask_noisy ^ (q_idx < self.n_frames)) & domain_attention_towards_clean
 
-        self_mask_noisy = (kv_idx >= n_frames) & (q_idx == kv_idx)
+        self_mask_noisy = (kv_idx >= self.n_frames) & (q_idx == kv_idx)
         return mask_towards_clean ^ self_mask_noisy ^ domain_attention_towards_clean
 
+
+def make_train_mask(batch_size, num_heads, n_frames, image_size):
+    # image size is the number of pixels (height x width)
+    autoregressive_diffusion_mask = AutoregressiveDiffusionMask(n_frames, image_size)
 
     if n_frames*image_size*2<_DEFAULT_SPARSE_BLOCK_SIZE:
         warnings.warn(f"The masking matrix must be at least the size of the default block size,\ngot {n_frames*image_size*2} and the default block size is {_DEFAULT_SPARSE_BLOCK_SIZE}\n returning None")
         return None
     if image_size<_DEFAULT_SPARSE_BLOCK_SIZE:
         if n_frames*image_size%_DEFAULT_SPARSE_BLOCK_SIZE!=0:
-            sequence_length = n_frames*image_size*2
-            warnings.warn(f"\nThe image size must be a divisor of the default block size ({_DEFAULT_SPARSE_BLOCK_SIZE}), got image_size:{image_size} and n_frames:{n_frames}\n using {(sequence_length**2 * batch_size * num_heads)/1e6}M of memory")
-            return create_block_mask(autoregressive_diffusion_mask, B=batch_size, H=num_heads, Q_LEN=sequence_length, KV_LEN=sequence_length) 
+            warnings.warn("The image size must be a divisor of the default block size ({_DEFAULT_SPARSE_BLOCK_SIZE}), got image_size:{image_size} and n_frames:{n_frames}\n returning None")
+            return None
+
+            # sequence_length = n_frames*image_size*2
+            # warnings.warn(f"\nThe image size must be a divisor of the default block size ({_DEFAULT_SPARSE_BLOCK_SIZE}), got image_size:{image_size} and n_frames:{n_frames}\n using {(sequence_length**2 * batch_size * num_heads)/1e6}M of memory")
+            # return create_block_mask(autoregressive_diffusion_mask, B=batch_size, H=num_heads, Q_LEN=sequence_length, KV_LEN=sequence_length) 
         n_frames = n_frames*image_size//_DEFAULT_SPARSE_BLOCK_SIZE
         image_size = _DEFAULT_SPARSE_BLOCK_SIZE
     
@@ -46,13 +56,18 @@ def make_train_mask(batch_size, num_heads, n_frames, image_size):
     return BlockMask.from_kv_blocks(num_blocks_in_row, col_indices, BLOCK_SIZE=image_size, mask_mod=autoregressive_diffusion_mask)
 
 
+class DiagonalDiffusionMask:
+    def __init__(self, image_size):
+        self.image_size = image_size
+
+    def __call__(self, b, h, q_idx, kv_idx):
+        q_idx, kv_idx = q_idx // self.image_size, kv_idx // self.image_size
+        return q_idx >= kv_idx
+
 def make_infer_mask(batch_size, num_heads, n_frames, image_size):
     # image size is the number of pixels (height x width)
 
-    def diagonal_diffusion_mask(b, h, q_idx, kv_idx):
-        q_idx, kv_idx = q_idx // image_size, kv_idx // image_size
-        
-        return q_idx >= kv_idx
+    diagonal_diffusion_mask = DiagonalDiffusionMask(image_size)
 
     if n_frames*image_size<_DEFAULT_SPARSE_BLOCK_SIZE:
         warnings.warn(f"The masking matrix must be at least the size of the default block size,\ngot {n_frames*image_size} and the default block size is {_DEFAULT_SPARSE_BLOCK_SIZE}\n returning None")

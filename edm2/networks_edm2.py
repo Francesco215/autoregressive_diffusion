@@ -17,7 +17,7 @@ import einops
 
 from . import misc
 from .RoPe import RotaryEmbedding
-from .attention_masking import make_train_mask, make_infer_mask
+from .attention_masking import make_train_mask, make_infer_mask, AutoregressiveDiffusionMask
 #----------------------------------------------------------------------------
 # Normalize given tensor to unit magnitude with respect to the given
 # dimensions. Default = all dimensions except the first.
@@ -102,7 +102,7 @@ class MPConv(torch.nn.Module):
         if self.training:
             with torch.no_grad():
                 self.weight.copy_(normalize(w)) # forced weight normalization
-        w = normalize(w) # traditional weight normalization. why doing it twice?
+        w = normalize(w) # traditional weight normalization. for the gradients 
         w = w * (gain / np.sqrt(w[0].numel())) # magnitude-preserving scaling
         w = w.to(x.dtype)
         if w.ndim == 2:
@@ -126,6 +126,8 @@ class VideoSelfAttention(torch.nn.Module):
         self.attn_proj = MPConv(channels, channels, kernel=[1,1]) 
         self.rope = RotaryEmbedding(channels//num_heads)
         self.block_mask = None
+        self.training_mask = None        
+    
 
     def forward(self, x, batch_size):
         if self.num_heads == 0:
@@ -133,10 +135,11 @@ class VideoSelfAttention(torch.nn.Module):
 
         h, w = x.shape[-2:]
         self.image_size = h*w
-        if self.block_mask is None or self.last_x_shape != x.shape or self.last_modality != self.training:
+        if (self.training_mask is None and self.block_mask is None) or self.last_x_shape != x.shape or self.last_modality != self.training:
             # This can trigger a recompilation of the flex_attention function
             if self.training:
                 n_frames = x.shape[0]//(batch_size*2)
+                self.training_mask = AutoregressiveDiffusionMask(n_frames, self.image_size)
                 self.block_mask = make_train_mask(batch_size, self.num_heads, n_frames, image_size=h*w)
             else:
                 n_frames = x.shape[0]//batch_size
@@ -163,15 +166,19 @@ class VideoSelfAttention(torch.nn.Module):
     
     # To log all recompilation reasons, use TORCH_LOGS="recompiles" or torch._logging.set_logs(dynamo=logging.INFO)
     @torch.compile
-    def flex_attention(self, q, k, v, block_mask, score_mod = None): 
+    def flex_attention(self, q, k, v, block_mask): 
+        score_mod = None
         if block_mask == None:
             if self.training:
-                raise NotImplementedError("Training mode not implemented")
+                def causal_mask(score, b, h, q_idx, kv_idx):
+                    return torch.where(self.training_mask(b, h, q_idx, kv_idx), score, -float("inf"))
+                score_mod = causal_mask
             else:
                 def causal_mask(score, b, h, q_idx, kv_idx):
                     q_idx, kv_idx = q_idx // self.image_size, kv_idx // self.image_size
                     return torch.where(q_idx >= kv_idx, score, -float("inf"))
                 score_mod = causal_mask
+        assert score_mod is not None or block_mask is not None, "Either block_mask or score_mod must be defined"
 
         return flex_attention(q, k, v, score_mod, block_mask)
 
@@ -271,7 +278,7 @@ class UNet(torch.nn.Module):
         cemb = model_channels * channel_mult_emb if channel_mult_emb is not None else max(cblock)
         self.label_balance = label_balance
         self.concat_balance = concat_balance
-        self.out_gain = torch.nn.Parameter(torch.tensor([1.]))
+        # self.out_gain = torch.nn.Parameter(torch.tensor([1.], requires_grad=False))
 
         # Embedding.
         self.emb_fourier = MPFourier(cnoise)
@@ -334,7 +341,7 @@ class UNet(torch.nn.Module):
             if 'block' in name:
                 x = mp_cat(x, skips.pop(), t=self.concat_balance)
             x = block(x, emb, batch_size=batch_size)
-        x = self.out_conv(x, gain=self.out_gain)
+        x = self.out_conv(x)
         x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
         return x
 

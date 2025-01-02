@@ -122,7 +122,7 @@ class MultiNoiseLoss:
         num_points = 200  # Number of data points along the sigma axis
 
         # Generate logarithmically spaced sigma values
-        sigma_values = np.logspace(-2.3, 2.7, num_points)
+        sigma_values = np.logspace(-2., 2., num_points)
 
         # --- Plotting ---
         plt.close()

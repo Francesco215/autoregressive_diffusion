@@ -39,21 +39,24 @@ class EDM2Loss:
 
     def __call__(self, net, images, labels=None, use_loss_weight=False):
         batch_size, n_frames, channels, height, width = images.shape    
-        images = torch.cat((images,images),dim=1)
+        cat_images = torch.cat((images,images),dim=1).clone()
 
         sigma_targets = (torch.randn(batch_size,n_frames,device=images.device) * self.P_std + self.P_mean).exp()
         sigma_context = torch.rand(batch_size,1,device=images.device).expand(-1,n_frames).clone()*self.context_noise_reduction # reducing significantly the noise of the context tokens
         sigma = torch.cat((sigma_context,sigma_targets),dim=1)
 
-        weight = (sigma ** 2 + self.sigma_data ** 2) / (sigma * self.sigma_data) ** 2
-        noise = einops.einsum(sigma, torch.randn_like(images), 'b t, b t ... -> b t ...') 
-        denoised = net(images + noise, sigma, labels)
-        losses = ((denoised[:,n_frames:] - images[:,n_frames:]) ** 2).mean(dim=(-1,-2,-3))
-        losses = losses * weight[:,n_frames:]
+        noise = einops.einsum(sigma, torch.randn_like(cat_images), 'b t, b t ... -> b t ...') 
+        denoised = net(cat_images + noise, sigma, labels)[:,n_frames:]
+        losses = ((denoised - images) ** 2).mean(dim=(-1,-2,-3))
+
+        sigma = sigma[:,n_frames:]
+        weight = 0.5*(sigma ** 2 + self.sigma_data ** 2) / (sigma * self.sigma_data) ** 2
+        losses = losses * weight
+
         if self.noise_weight is not None:
-            self.noise_weight.add_data(sigma[:,n_frames:], losses)
+            self.noise_weight.add_data(sigma, losses)
             if use_loss_weight:
-                mean_loss = self.noise_weight.calculate_mean_loss(sigma[:,n_frames:])
+                mean_loss = self.noise_weight.calculate_mean_loss(sigma)
                 losses = losses / mean_loss**2 + 2*torch.log(mean_loss)
         return losses.mean()
 #----------------------------------------------------------------------------
