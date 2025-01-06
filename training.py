@@ -9,6 +9,7 @@ from matplotlib import pyplot as plt
 from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss
 from edm2.loss_weight import MultiNoiseLoss
+from edm2.mars import MARS
 
 os.environ['DISABLE_ADDMM_CUDA_LT'] = '1' 
 os.environ['TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL'] = '1'
@@ -73,9 +74,9 @@ loss_fn.noise_weight.loss_std_popt = [10,0.01,1e-4]
 logvar_params = [p for n, p in precond.named_parameters() if 'logvar' in n]
 unet_params = unet.parameters()  # Get parameters from self.unet
 
-optimizer = torch.optim.AdamW(precond.parameters(), lr=1e-3)
+optimizer = MARS(precond.parameters(), lr=1e-3, eps = 1e-4)
 
-num_epochs = 500 # Adjust as needed
+num_epochs = 50 # Adjust as needed
 
 #%%
 # torch.autograd.set_detect_anomaly(True, check_nan=True)
@@ -102,7 +103,6 @@ for epoch in range(num_epochs):
         loss_fn.noise_weight.plot('plot.png')
         loss_fn.noise_weight.fit_loss_curve()
     if epoch % (num_epochs // 5) == 0 and epoch!=0:  # save every 20% of epochs
-        ulw=True
         torch.save({
             'epoch': epoch,
             'model_state_dict': precond.state_dict(),
@@ -112,6 +112,25 @@ for epoch in range(num_epochs):
 
 
 print("Training finished!")
+
+# %%
+
+import torch
+from edm2.sampler import edm_sampler
+
+# %%
+precond.eval()
+x = next(iter(dataloader)).to("cuda")[:,:-10]
+# %%
+for _ in range(10):
+    y=edm_sampler(precond, x)
+    print(x.shape,y.shape)
+    y[:,:-1]=x
+    x=y.clone()
+
+
+# %%
+torch.save(y, "sampled_latents.pt")
 
 # %%
 def calculate_average_std_from_dataloader(dataloader):
