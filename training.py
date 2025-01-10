@@ -11,8 +11,6 @@ from edm2.loss import EDM2Loss
 from edm2.loss_weight import MultiNoiseLoss
 from edm2.mars import MARS
 
-os.environ['DISABLE_ADDMM_CUDA_LT'] = '1' 
-os.environ['TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL'] = '1'
 class EncodedVideoDataset(Dataset):
     """
     Dataset for loading encoded video latents.

@@ -11,4 +11,6 @@ dependencies = [
     "matplotlib",
     "moviepy",
     "scipy",
+    "diffusers>=0.32.1",
+    "datasets>=3.2.0",
 ]
