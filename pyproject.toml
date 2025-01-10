@@ -1,0 +1,14 @@
+[project]
+name = "autoregressive-diffusion"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+dependencies = [
+    "torch>=2.5",
+    "einops",
+    "ipykernel",
+    "ipywidgets",
+    "matplotlib",
+    "moviepy",
+    "scipy",
+]

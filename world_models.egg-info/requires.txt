@@ -1,0 +1,7 @@
+torch>=2.5
+einops
+ipykernel
+ipywidgets
+matplotlib
+moviepy
+scipy
