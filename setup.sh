@@ -9,14 +9,14 @@ uv venv
 uv pip install -e .
 
 
-extensions=(
-    "ms-python.python"
-    "github.copilot"
-    "ms-toolsai.jupyter"
-    "tamasfe.even-better-toml"
-)
+# extensions=(
+#     "ms-python.python"
+#     "github.copilot"
+#     "ms-toolsai.jupyter"
+#     "tamasfe.even-better-toml"
+# )
 
-# Install each extension
-for extension in "${extensions[@]}"; do
-    code --install-extension "$extension"
-done
+# # Install each extension
+# for extension in "${extensions[@]}"; do
+#     code --install-extension "$extension"
+# done
