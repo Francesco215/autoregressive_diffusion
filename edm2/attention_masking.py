@@ -38,6 +38,7 @@ def make_train_mask(batch_size, num_heads, n_frames, image_size):
             # sequence_length = n_frames*image_size*2
             # warnings.warn(f"\nThe image size must be a divisor of the default block size ({_DEFAULT_SPARSE_BLOCK_SIZE}), got image_size:{image_size} and n_frames:{n_frames}\n using {(sequence_length**2 * batch_size * num_heads)/1e6}M of memory")
             # return create_block_mask(autoregressive_diffusion_mask, B=batch_size, H=num_heads, Q_LEN=sequence_length, KV_LEN=sequence_length) 
+        # TODO: this causes wierd errors
         n_frames = n_frames*image_size//_DEFAULT_SPARSE_BLOCK_SIZE
         image_size = _DEFAULT_SPARSE_BLOCK_SIZE
     
