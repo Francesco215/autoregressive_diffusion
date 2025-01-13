@@ -10,49 +10,21 @@ from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss
 from edm2.loss_weight import MultiNoiseLoss
 from edm2.mars import MARS
+from data.dataloading import OpenVidDataloader
 
-class EncodedVideoDataset(Dataset):
-    """
-    Dataset for loading encoded video latents.
-    """
-    def __init__(self, latent_dir):
-        self.latent_dir = latent_dir
-        self.latent_files = [f for f in os.listdir(latent_dir) if f.endswith('.pt')]
-        self.latent_files.sort()
+from datasets import load_dataset
 
-        self.scaling_factor = 1.15
-    def __len__(self):
-        return len(self.latent_files)
-
-    def __getitem__(self, idx):
-        latent_path = os.path.join(self.latent_dir, self.latent_files[idx])
-        latent = torch.load(latent_path, map_location='cpu').to(torch.float32)
-        means, logvar = torch.split(latent,12,dim=1)
-        # means = means * self.scaling_factor/ self.latents_std + self.latents_mean
-        stds = (torch.randn_like(logvar) * torch.exp(0.5*logvar))
-
-        out = means + stds
-        out = out / self.scaling_factor
-        return out#-out.mean()
 
 # Example usage:
-img_resolution = 128
-latent_dir = f"encoded_latents/{img_resolution}x{img_resolution}"  # **Replace with your actual path**
-batch_size = 16 
+batch_size = 2 
 num_workers = 8 
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
-dataset = EncodedVideoDataset(latent_dir)
-dataloader = DataLoader(
-    dataset,
-    batch_size=batch_size,
-    shuffle=True,
-    num_workers=num_workers,
-    pin_memory=True,
-    drop_last=True # Important for training stability
-)
+dataloader = OpenVidDataloader(batch_size, num_workers, device)
 
-unet = UNet(img_resolution=img_resolution, # Match your latent resolution
-            img_channels=12, # Match your latent channels
+
+unet = UNet(img_resolution=64, # Match your latent resolution
+            img_channels=16, # Match your latent channels
             label_dim = 0,
             model_channels=64,
             channel_mult=[1,2,4,8],
@@ -82,12 +54,12 @@ num_epochs = 50 # Adjust as needed
 ulw=False
 for epoch in range(num_epochs):
     for i, batch in enumerate(dataloader):
-
+        latents = batch['latents']
         optimizer.zero_grad()
-        batch = batch.to("cuda") #Scale down the latents
+        latents = latents.to("cuda") 
 
         # Calculate loss    
-        loss = loss_fn(precond, batch, use_loss_weight=ulw)
+        loss = loss_fn(precond, latents, use_loss_weight=ulw)
 
 
         # Backpropagation and optimization
