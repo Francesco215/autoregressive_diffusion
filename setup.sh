@@ -7,3 +7,16 @@ alias auv='uv venv; . .venv/bin/activate'
 uv venv 
 . .venv/bin/activate
 uv pip install -e .
+
+
+extensions=(
+    "ms-python.python"
+    "github.copilot"
+    "ms-toolsai.jupyter"
+    "tamasfe.even-better-toml"
+)
+
+# Install each extension
+for extension in "${extensions[@]}"; do
+    code --install-extension "$extension"
+done
