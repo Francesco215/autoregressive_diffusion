@@ -25,7 +25,6 @@ def deserialize_tensor(
 class OpenVidDataset(IterableDataset):
     def __init__(self):
         self.dataset = load_dataset("fal/cosmos-openvid-1m", data_dir="continuous", split="train", streaming=True)
-        self.device = "cuda"
 
         self.mean, self.std = 0.051, 0.434
     def __iter__(self):
@@ -44,6 +43,6 @@ class OpenVidDataloader(DataLoader):
     @abstractmethod
     def collate_fn(self, batch):
         latents, caption = zip(*batch)
-        latents = torch.stack(latents).to(self.device)
+        latents = torch.stack(latents)
         caption = list(caption)
         return {"latents": latents, "captions": caption}
