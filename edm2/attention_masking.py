@@ -33,7 +33,7 @@ def make_train_mask(batch_size, num_heads, n_frames, image_size):
     if image_size<_DEFAULT_SPARSE_BLOCK_SIZE:
         if n_frames*image_size%_DEFAULT_SPARSE_BLOCK_SIZE!=0:
             warnings.warn("The image size must be a divisor of the default block size ({_DEFAULT_SPARSE_BLOCK_SIZE}), got image_size:{image_size} and n_frames:{n_frames}\n returning None")
-            return None
+            # return None
 
             # sequence_length = n_frames*image_size*2
             # warnings.warn(f"\nThe image size must be a divisor of the default block size ({_DEFAULT_SPARSE_BLOCK_SIZE}), got image_size:{image_size} and n_frames:{n_frames}\n using {(sequence_length**2 * batch_size * num_heads)/1e6}M of memory")

@@ -46,20 +46,3 @@ class OpenVidDataloader(DataLoader):
         latents = torch.stack(latents)
         caption = list(caption)
         return {"latents": latents, "captions": caption}
-
-
-class RandomDataloader(DataLoader):
-    def __init__(self, n_frames, channels, height, width, batch_size, num_workers, device):
-        self.device = device
-        dataset_length = 10  # Define the length of the random dataset
-        self.dataset = torch.randn(dataset_length, n_frames, channels, height, width)  # Random dataset with shape (length, channels, height, width)
-        self.captions = ["Random caption"] * dataset_length  # Dummy captions
-
-        super().__init__(self.dataset, batch_size=batch_size, num_workers=num_workers, collate_fn=self.collate_fn)
-
-    @abstractmethod
-    def collate_fn(self, batch):
-        latents = torch.stack(batch)
-        captions = ["Random caption"] * len(batch)
-        return {"latents": latents, "captions": captions}
-    
