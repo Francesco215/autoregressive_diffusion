@@ -13,7 +13,7 @@ device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 batch_size = 2
 num_heads = 8
 n_frames = 12
-image_size = 256  # this is the widthxheight
+image_size = 64  # this is the widthxheight
 head_dim = 16
 sequence_length = 2 * n_frames * image_size 
 

@@ -7,8 +7,8 @@ from torch.nn.attention.flex_attention import flex_attention, create_block_mask,
 class AutoregressiveDiffusionMask:
 
     def __init__(self, n_frames, image_size):
-        self.n_frames = n_frames
-        self.image_size = image_size
+        self.n_frames = torch.tensor(n_frames, device="cuda")
+        self.image_size = torch.tensor(image_size, device = "cuda")
 
 
     def __call__(self, b, h, q_idx, kv_idx):

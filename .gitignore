@@ -6,3 +6,4 @@ encoded_latents/
 uv.lock
 .venv/
 autoregressive_diffusion.egg-info/
+.vscode/
