@@ -11,9 +11,9 @@ from edm2.attention_masking import make_train_mask, AutoregressiveDiffusionMask
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 # Your code (with modifications for sequence_length)
 batch_size = 2
-num_heads = 8
-n_frames = 12
-image_size = 64  # this is the widthxheight
+num_heads = 4
+n_frames = 64
+image_size = 128  # this is the widthxheight
 head_dim = 16
 sequence_length = 2 * n_frames * image_size 
 
@@ -72,9 +72,9 @@ def uncompiled_standard_attention(q, k, v):
 
 #%%
 # Benchmarking function
-def benchmark(attn_func, num_iterations=100):
+def benchmark(attn_func, num_iterations=1000):
     # Warmup
-    for _ in range(10):
+    for _ in range(50):
         q = torch.randn(batch_size, num_heads, sequence_length, head_dim, device=device, dtype=torch.float16)
         k = torch.randn(batch_size, num_heads, sequence_length, head_dim, device=device, dtype=torch.float16)
         v = torch.randn(batch_size, num_heads, sequence_length, head_dim, device=device, dtype=torch.float16)
@@ -118,7 +118,7 @@ print(f"Compiled Karras FlexAttention: Max Memory Allocated: {ar_memory_allocate
 standard_time, standard_memory_allocated, standard_memory_reserved = benchmark(standard_attention)
 print(f"Compiled Standard Attention: {standard_time:.6f} seconds per iteration")
 print(f"Compiled Standard Attention: Max Memory Allocated: {standard_memory_allocated:.2f} MB, Max Memory Reserved: {standard_memory_reserved:.2f} MB")
-
+#%%
 # UNCOMPILED
 # Benchmark AR diffusion attention
 ar_time, ar_memory_allocated, ar_memory_reserved = benchmark(uncompiled_autoregressive_diffusion_attention)

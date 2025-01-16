@@ -7,8 +7,8 @@ from torch.nn.attention.flex_attention import flex_attention, create_block_mask,
 class AutoregressiveDiffusionMask:
 
     def __init__(self, n_frames, image_size):
-        self.n_frames = torch.tensor(n_frames, device="cuda")
-        self.image_size = torch.tensor(image_size, device = "cuda")
+        self.n_frames = torch.tensor(n_frames, dtype = torch.int32, device="cuda")
+        self.image_size = torch.tensor(image_size, dtype = torch.int32, device = "cuda")
 
 
     def __call__(self, b, h, q_idx, kv_idx):
@@ -24,21 +24,14 @@ class AutoregressiveDiffusionMask:
 
 
 def make_train_mask(batch_size, num_heads, n_frames, image_size):
-    # image size is the number of pixels (height x width)
+    # image_size is the number of pixels (height x width)
     autoregressive_diffusion_mask = AutoregressiveDiffusionMask(n_frames, image_size)
 
-    if n_frames*image_size*2<_DEFAULT_SPARSE_BLOCK_SIZE:
-        warnings.warn(f"The masking matrix must be at least the size of the default block size,\ngot {n_frames*image_size*2} and the default block size is {_DEFAULT_SPARSE_BLOCK_SIZE}\n returning None")
-        return None
     if image_size<_DEFAULT_SPARSE_BLOCK_SIZE:
         if n_frames*image_size%_DEFAULT_SPARSE_BLOCK_SIZE!=0:
             warnings.warn("The image size must be a divisor of the default block size ({_DEFAULT_SPARSE_BLOCK_SIZE}), got image_size:{image_size} and n_frames:{n_frames}\n returning None")
-            # return None
+            return None
 
-            # sequence_length = n_frames*image_size*2
-            # warnings.warn(f"\nThe image size must be a divisor of the default block size ({_DEFAULT_SPARSE_BLOCK_SIZE}), got image_size:{image_size} and n_frames:{n_frames}\n using {(sequence_length**2 * batch_size * num_heads)/1e6}M of memory")
-            # return create_block_mask(autoregressive_diffusion_mask, B=batch_size, H=num_heads, Q_LEN=sequence_length, KV_LEN=sequence_length) 
-        # TODO: this causes wierd errors
         n_frames = n_frames*image_size//_DEFAULT_SPARSE_BLOCK_SIZE
         image_size = _DEFAULT_SPARSE_BLOCK_SIZE
     
