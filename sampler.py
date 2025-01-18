@@ -1,4 +1,6 @@
 #%%
+import io
+from typing import Optional
 import torch
 import numpy as np
 from edm2.sampler import edm_sampler

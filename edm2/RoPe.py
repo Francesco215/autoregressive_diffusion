@@ -62,6 +62,9 @@ class RotaryEmbedding(nn.Module):
             k = einops.rearrange(k, 'b m t i c -> b m (t i) c')
 
         return q, k
+
+        
+
 def rotate_half(x):
     x1, x2 = x.chunk(2, dim=-1)
     return torch.cat((-x2, x1), dim=-1)

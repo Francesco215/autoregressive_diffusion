@@ -6,47 +6,20 @@ from torch.nn.attention.flex_attention import flex_attention, create_block_mask,
 from matplotlib import pyplot as plt
 import numpy as np
 import gc
+from edm2.attention_masking import make_train_mask, AutoregressiveDiffusionMask
 
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 # Your code (with modifications for sequence_length)
 batch_size = 2
-num_heads = 8
-n_frames = 32
+num_heads = 4
+n_frames = 16
 image_size = 128  # this is the widthxheight
 head_dim = 16
 sequence_length = 2 * n_frames * image_size 
 
-# q = Tensor[batch_size, num_heads, sequence_length, head_dim]
-# però sequence_length = 2 x number_frames x image_size
-def autoregressive_diffusion_mask(b, h, q_idx, kv_idx):
-    q_idx, kv_idx = q_idx // image_size, kv_idx // image_size
 
-    causal_mask_clean = q_idx >= kv_idx
-    causal_mask_noisy = q_idx - n_frames > kv_idx
-    domain_attention_towards_clean = kv_idx < n_frames
-    mask_towards_clean = (causal_mask_clean ^ causal_mask_noisy ^ (q_idx < n_frames)) & domain_attention_towards_clean
-
-    self_mask_noisy = (kv_idx >= n_frames) & (q_idx == kv_idx)
-    return mask_towards_clean ^ self_mask_noisy ^ domain_attention_towards_clean
-
-def make_ARBlockMask(n_frames, image_size, mask_mod=autoregressive_diffusion_mask):
-    block_size = image_size 
-    num_blocks_in_row = torch.arange(1, n_frames + 1, dtype=torch.int32, device=device).repeat(2)
-    num_blocks_in_row = einops.repeat(num_blocks_in_row, '... -> b h ...', b=batch_size, h=num_heads)
-
-    causal_mask = torch.tril(torch.ones(n_frames, n_frames))
-    col_indices1 = torch.arange(n_frames).expand(n_frames, n_frames) * causal_mask
-    col_indices2 = torch.arange(n_frames).expand(n_frames, n_frames) * causal_mask
-    col_indices2 = col_indices2 + torch.diag(torch.ones(n_frames)) * n_frames
-
-    col_indices = torch.cat((col_indices1, col_indices2))
-    col_indices = torch.cat((col_indices, torch.zeros_like(col_indices)), dim=1)
-    col_indices = einops.repeat(col_indices, '... -> b h ...', b=batch_size, h=num_heads).cuda().to(torch.int32)
-
-    return BlockMask.from_kv_blocks(num_blocks_in_row, col_indices, BLOCK_SIZE=block_size, mask_mod=mask_mod)
-
-# define the two functions
-block_mask = make_ARBlockMask(n_frames, image_size)
+autoregressive_diffusion_mask = AutoregressiveDiffusionMask(n_frames, image_size)
+block_mask = make_train_mask(batch_size, num_heads, n_frames, image_size)
 block_mask_old = create_block_mask(autoregressive_diffusion_mask, B=batch_size, H=num_heads, Q_LEN=sequence_length, KV_LEN=sequence_length)
 
 
@@ -99,9 +72,9 @@ def uncompiled_standard_attention(q, k, v):
 
 #%%
 # Benchmarking function
-def benchmark(attn_func, num_iterations=100):
+def benchmark(attn_func, num_iterations=1000):
     # Warmup
-    for _ in range(10):
+    for _ in range(50):
         q = torch.randn(batch_size, num_heads, sequence_length, head_dim, device=device, dtype=torch.float16)
         k = torch.randn(batch_size, num_heads, sequence_length, head_dim, device=device, dtype=torch.float16)
         v = torch.randn(batch_size, num_heads, sequence_length, head_dim, device=device, dtype=torch.float16)
@@ -145,7 +118,7 @@ print(f"Compiled Karras FlexAttention: Max Memory Allocated: {ar_memory_allocate
 standard_time, standard_memory_allocated, standard_memory_reserved = benchmark(standard_attention)
 print(f"Compiled Standard Attention: {standard_time:.6f} seconds per iteration")
 print(f"Compiled Standard Attention: Max Memory Allocated: {standard_memory_allocated:.2f} MB, Max Memory Reserved: {standard_memory_reserved:.2f} MB")
-
+#%%
 # UNCOMPILED
 # Benchmark AR diffusion attention
 ar_time, ar_memory_allocated, ar_memory_reserved = benchmark(uncompiled_autoregressive_diffusion_attention)
