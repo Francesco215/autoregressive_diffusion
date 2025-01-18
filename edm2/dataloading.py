@@ -2,6 +2,7 @@
 
 import os
 import io
+import einops
 
 import torch
 from torch.utils.data import DataLoader, IterableDataset
@@ -37,6 +38,7 @@ class OpenVidDataloader(DataLoader):
     def __init__(self, batch_size, num_workers, device):
         self.dataset = OpenVidDataset()
         self.device = device
+        self.mean, self.std, self.channel_wise_std = -0.010, 2.08, 69
         
         super().__init__(self.dataset, batch_size=batch_size, num_workers=num_workers, collate_fn=self.collate_fn)
     
@@ -44,5 +46,6 @@ class OpenVidDataloader(DataLoader):
     def collate_fn(self, batch):
         latents, caption = zip(*batch)
         latents = torch.stack(latents)
+        latents = einops.rearrange(latents, 'b c t h w -> b t c h w')
         caption = list(caption)
-        return {"latents": latents, "captions": caption}
+        return {"latents": latents/self.std, "captions": caption}

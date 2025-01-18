@@ -1,23 +1,21 @@
 #%%
-from abc import abstractmethod
-import os
-import einops
+from tqdm import tqdm
 import torch
-from torch.utils.data import Dataset, DataLoader
 from matplotlib import pyplot as plt
 
 from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss
 from edm2.loss_weight import MultiNoiseLoss
 from edm2.mars import MARS
-from data.dataloading import OpenVidDataloader
+from edm2.dataloading import OpenVidDataloader
 
-from datasets import load_dataset
 
+# import logging
+# torch._logging.set_logs(dynamo=logging.INFO)
 
 # Example usage:
-batch_size = 2 
-num_workers = 8 
+batch_size = 12 
+num_workers = 32 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 dataloader = OpenVidDataloader(batch_size, num_workers, device)
@@ -44,7 +42,7 @@ loss_fn.noise_weight.loss_std_popt = [10,0.01,1e-4]
 logvar_params = [p for n, p in precond.named_parameters() if 'logvar' in n]
 unet_params = unet.parameters()  # Get parameters from self.unet
 
-optimizer = MARS(precond.parameters(), lr=1e-3, eps = 1e-4)
+optimizer = MARS(precond.parameters(), lr=1e-4, eps = 1e-4)
 
 num_epochs = 50 # Adjust as needed
 
@@ -52,33 +50,31 @@ num_epochs = 50 # Adjust as needed
 # torch.autograd.set_detect_anomaly(True, check_nan=True)
 # Training loop
 ulw=False
-for epoch in range(num_epochs):
-    for i, batch in enumerate(dataloader):
-        latents = batch['latents']
-        optimizer.zero_grad()
-        latents = latents.to("cuda") 
+for i, batch in tqdm(enumerate(dataloader)):
+    latents = batch['latents']
+    optimizer.zero_grad()
+    latents = latents.to("cuda") 
 
-        # Calculate loss    
-        loss = loss_fn(precond, latents, use_loss_weight=ulw)
+    # Calculate loss    
+    loss = loss_fn(precond, latents, use_loss_weight=ulw)
 
 
-        # Backpropagation and optimization
-        loss.backward()
-        optimizer.step()
-
-    print(f"Epoch: {epoch+1}/{num_epochs}, Batch: {i+1}/{len(dataloader)}, Loss: {loss.item():.4f}")
+    # Backpropagation and optimization
+    loss.backward()
+    optimizer.step()
+    tqdm.write(f"Batch: {i}, Loss: {loss.item():.4f}")
 
     # Save model checkpoint (optional)
-    if epoch % 3 == 0:
+    if i % 50 == 0:
         loss_fn.noise_weight.plot('plot.png')
         loss_fn.noise_weight.fit_loss_curve()
-    if epoch % (num_epochs // 5) == 0 and epoch!=0:  # save every 20% of epochs
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': precond.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'loss': loss,
-        }, f"model_epoch_{epoch+1}.pt")
+    # if i % 500 and i!=0:  # save every 20% of epochs
+    #     torch.save({
+    #         'batch': i,
+    #         'model_state_dict': precond.state_dict(),
+    #         'optimizer_state_dict': optimizer.state_dict(),
+    #         'loss': loss,
+    #     }, f"model_batch_{i+1}.pt")
 
 
 print("Training finished!")

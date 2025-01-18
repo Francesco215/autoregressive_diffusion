@@ -3,26 +3,26 @@ import io
 import torch
 from typing import Optional
 from datasets import load_dataset
-# %%
-ds = load_dataset("fal/cosmos-openvid-1m", split="train", streaming=True)
-# %%
-for i, example in enumerate(ds):
-    print(example)
-    if i==10:
+from edm2.dataloading import OpenVidDataloader
+
+batch_size = 16
+dataloader = OpenVidDataloader(batch_size=batch_size, num_workers=32, device="cuda")
+
+mean_sum = 0
+std_sum = 0
+num_batches = 0
+
+for i, data in enumerate(dataloader):
+    images = data["latents"].to("cuda")
+    mean_sum += images.mean()
+    std_sum += images.std()#dim=-3).mean()
+    num_batches += i
+    if i == 20:
         break
 
-# %%
-def deserialize_tensor(
-    serialized_tensor: bytes, device: Optional[str] = None
-) -> torch.Tensor:
-    return torch.load(
-        io.BytesIO(serialized_tensor),
-        weights_only=True,
-        map_location=torch.device(device) if device else None,
-    )
+mean = mean_sum / num_batches
+std = std_sum / num_batches
 
-asd=deserialize_tensor(example['serialized_latent'])
-# %%
-asd.shape
+print(f"Mean: {mean}, Std: {std}")
 
 # %%

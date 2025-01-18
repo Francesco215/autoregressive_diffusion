@@ -3,6 +3,11 @@ import torch
 from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss
 import logging
+import os
+os.environ['TORCH_LOGS']='recompiles'
+os.environ['TORCH_COMPILE_MAX_AUTOTUNE_RECOMPILE_LIMIT']='100000'
+torch._dynamo.config.recompile_limit = 100000
+torch._logging.set_logs(dynamo=logging.INFO)
 
 img_resolution = 64
 img_channels = 16
