@@ -43,17 +43,15 @@ logvar_params = [p for n, p in precond.named_parameters() if 'logvar' in n]
 unet_params = unet.parameters()  # Get parameters from self.unet
 
 optimizer = MARS(precond.parameters(), lr=1e-4, eps = 1e-4)
+optimizer.zero_grad()
 
-num_epochs = 50 # Adjust as needed
 
 #%%
 # torch.autograd.set_detect_anomaly(True, check_nan=True)
 # Training loop
 ulw=False
 for i, batch in tqdm(enumerate(dataloader)):
-    latents = batch['latents']
-    optimizer.zero_grad()
-    latents = latents.to("cuda") 
+    latents = batch['latents'].to(device)
 
     # Calculate loss    
     loss = loss_fn(precond, latents, use_loss_weight=ulw)
@@ -61,11 +59,14 @@ for i, batch in tqdm(enumerate(dataloader)):
 
     # Backpropagation and optimization
     loss.backward()
-    optimizer.step()
-    tqdm.write(f"Batch: {i}, Loss: {loss.item():.4f}")
+    if i % 8 == 0:
+        #microbatching
+        optimizer.step()
+        optimizer.zero_grad()
+        tqdm.write(f"Batch: {i}, Loss: {loss.item():.4f}")
 
     # Save model checkpoint (optional)
-    if i % 50 == 0:
+    if i % 50*8 == 0:
         loss_fn.noise_weight.plot('plot.png')
         loss_fn.noise_weight.fit_loss_curve()
     # if i % 500 and i!=0:  # save every 20% of epochs
@@ -86,7 +87,7 @@ from edm2.sampler import edm_sampler
 
 # %%
 precond.eval()
-x = next(iter(dataloader)).to("cuda")[:,:-10]
+x = next(iter(dataloader)).to("cuda")[0,:-10]
 # %%
 for _ in range(10):
     y=edm_sampler(precond, x)
