@@ -4,11 +4,11 @@ import torch
 from matplotlib import pyplot as plt
 
 from edm2.networks_edm2 import UNet, Precond
-from edm2.loss import EDM2Loss
+from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.loss_weight import MultiNoiseLoss
 from edm2.mars import MARS
 from edm2.dataloading import OpenVidDataloader
-
+from edm2.phema import PowerFunctionEMA
 
 # import logging
 # torch._logging.set_logs(dynamo=logging.INFO)
@@ -17,8 +17,10 @@ from edm2.dataloading import OpenVidDataloader
 micro_batch_size = 12 
 accumulation_steps = 8
 batch_size = micro_batch_size * accumulation_steps
-
 total_number_of_batches = 1000
+total_number_of_steps = total_number_of_batches * accumulation_steps
+
+
 num_workers = 32 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -46,39 +48,49 @@ loss_fn.noise_weight.loss_std_popt = [10,0.01,1e-4]
 logvar_params = [p for n, p in precond.named_parameters() if 'logvar' in n]
 unet_params = unet.parameters()  # Get parameters from self.unet
 
-optimizer = MARS(precond.parameters(), lr=1e-4, eps = 1e-4)
+ref_lr = 1e-2
+optimizer = MARS(precond.parameters(), lr=ref_lr, eps = 1e-4)
 optimizer.zero_grad()
 
+ema_tracker = PowerFunctionEMA(precond, stds=[0.050, 0.100])
 
 #%%
 # torch.autograd.set_detect_anomaly(True, check_nan=True)
 # Training loop
 ulw=False
-total_number_of_steps = total_number_of_batches * accumulation_steps
+loss_tracking = 0
 for i, micro_batch in tqdm(enumerate(dataloader),total=total_number_of_steps):
     latents = micro_batch['latents'].to(device)
 
     # Calculate loss    
     loss = loss_fn(precond, latents, use_loss_weight=ulw)
+    loss_tracking += loss.item()
 
 
     # Backpropagation and optimization
     loss.backward()
-    if i % accumulation_steps == 0:
+    if i % accumulation_steps == 0 and i!=0:
         #microbatching
         optimizer.step()
         optimizer.zero_grad()
-        tqdm.write(f"Batch: {i}, Loss: {loss.item():.4f}")
+        tqdm.write(f"Batch: {i}, Loss: {loss_tracking/accumulation_steps:.4f}")
+        loss_tracking = 0
+        ema_tracker.update(cur_nimg= i * batch_size, batch_size=batch_size)
+
+        for g in optimizer.param_groups:
+            g['lr'] = learning_rate_schedule(i//accumulation_steps, ref_lr, total_number_of_batches/2, total_number_of_batches/10)
 
     # Save model checkpoint (optional)
     if i % 50 * accumulation_steps == 0:
         loss_fn.noise_weight.plot('plot.png')
         loss_fn.noise_weight.fit_loss_curve()
+
     if i % (total_number_of_steps//5) == 0 and i!=0:  # save every 20% of epochs
         torch.save({
             'batch': i,
             'model_state_dict': precond.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
+            'ema_state_dict': ema_tracker.state_dict(),
             'loss': loss,
         }, f"model_batch_{i+1}.pt")
     if i == total_number_of_steps:
