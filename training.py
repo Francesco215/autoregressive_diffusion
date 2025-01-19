@@ -14,11 +14,15 @@ from edm2.dataloading import OpenVidDataloader
 # torch._logging.set_logs(dynamo=logging.INFO)
 
 # Example usage:
-batch_size = 12 
+micro_batch_size = 12 
+accumulation_steps = 8
+batch_size = micro_batch_size * accumulation_steps
+
+total_number_of_batches = 1000
 num_workers = 32 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-dataloader = OpenVidDataloader(batch_size, num_workers, device)
+dataloader = OpenVidDataloader(micro_batch_size, num_workers, device)
 
 
 unet = UNet(img_resolution=64, # Match your latent resolution
@@ -50,8 +54,9 @@ optimizer.zero_grad()
 # torch.autograd.set_detect_anomaly(True, check_nan=True)
 # Training loop
 ulw=False
-for i, batch in tqdm(enumerate(dataloader)):
-    latents = batch['latents'].to(device)
+total_number_of_steps = total_number_of_batches * accumulation_steps
+for i, micro_batch in tqdm(enumerate(dataloader),total=total_number_of_steps):
+    latents = micro_batch['latents'].to(device)
 
     # Calculate loss    
     loss = loss_fn(precond, latents, use_loss_weight=ulw)
@@ -59,24 +64,25 @@ for i, batch in tqdm(enumerate(dataloader)):
 
     # Backpropagation and optimization
     loss.backward()
-    if i % 8 == 0:
+    if i % accumulation_steps == 0:
         #microbatching
         optimizer.step()
         optimizer.zero_grad()
         tqdm.write(f"Batch: {i}, Loss: {loss.item():.4f}")
 
     # Save model checkpoint (optional)
-    if i % 50*8 == 0:
+    if i % 50 * accumulation_steps == 0:
         loss_fn.noise_weight.plot('plot.png')
         loss_fn.noise_weight.fit_loss_curve()
-    # if i % 500 and i!=0:  # save every 20% of epochs
-    #     torch.save({
-    #         'batch': i,
-    #         'model_state_dict': precond.state_dict(),
-    #         'optimizer_state_dict': optimizer.state_dict(),
-    #         'loss': loss,
-    #     }, f"model_batch_{i+1}.pt")
-
+    if i % (total_number_of_steps//5) == 0 and i!=0:  # save every 20% of epochs
+        torch.save({
+            'batch': i,
+            'model_state_dict': precond.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'loss': loss,
+        }, f"model_batch_{i+1}.pt")
+    if i == total_number_of_steps:
+        break
 
 print("Training finished!")
 
@@ -98,33 +104,3 @@ for _ in range(10):
 
 # %%
 torch.save(y, "sampled_latents.pt")
-
-# %%
-def calculate_average_std_from_dataloader(dataloader):
-    """
-    Calculates the average standard deviation of encoded video latents directly from a DataLoader.
-
-    Args:
-        dataloader: The DataLoader providing batches of encoded latents.
-
-    Returns:
-        The average standard deviation across all latents in the dataset.
-    """
-    all_stds = []
-    all_means = []
-    for batch in dataloader:
-      
-        std = torch.std(batch, dim=(-1,-2,-3)).mean()
-        all_stds.append(std.item())
-        all_means.append(torch.mean(batch).item())
-
-        
-
-    average_std = sum(all_stds) / len(all_stds)
-    average_mean = sum(all_means) / len(all_means)
-    return average_mean,average_std
-
-# %%
-avg_mean_dataloader, avg_std_dataloader = calculate_average_std_from_dataloader(dataloader)
-print(f"Average mean: {avg_mean_dataloader:.4f}, Average std: {avg_std_dataloader:.4f}")
-# %%
