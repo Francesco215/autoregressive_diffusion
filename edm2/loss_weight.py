@@ -136,7 +136,7 @@ class MultiNoiseLoss:
                                  alpha=0.3, label='Data Points', s=.5)
             fig.colorbar(scatter, ax=ax, label='Position')
 
-        ax.plot(sigma_values, loss_means, label='CIFAR-10', color='red')
+        ax.plot(sigma_values, loss_means, label='best fit', color='red')
         ax.fill_between(sigma_values, loss_means - loss_stds, loss_means + loss_stds, color='red', alpha=0.2)
 
         ax.set_xscale('log')

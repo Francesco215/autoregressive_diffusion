@@ -1,4 +1,5 @@
 #%%
+import sys
 from tqdm import tqdm
 import torch
 from matplotlib import pyplot as plt
@@ -78,10 +79,10 @@ for i, micro_batch in tqdm(enumerate(dataloader),total=total_number_of_steps):
         ema_tracker.update(cur_nimg= i * batch_size, batch_size=batch_size)
 
         for g in optimizer.param_groups:
-            g['lr'] = learning_rate_schedule(i//accumulation_steps, ref_lr, total_number_of_batches/2, total_number_of_batches/10)
+            g['lr'] = learning_rate_schedule(i//accumulation_steps, ref_lr, total_number_of_batches/2, 0)
 
     # Save model checkpoint (optional)
-    if i % 50 * accumulation_steps == 0:
+    if i % 200 * accumulation_steps == 0:
         loss_fn.noise_weight.plot('plot.png')
         loss_fn.noise_weight.fit_loss_curve()
 
@@ -93,6 +94,7 @@ for i, micro_batch in tqdm(enumerate(dataloader),total=total_number_of_steps):
             'ema_state_dict': ema_tracker.state_dict(),
             'loss': loss,
         }, f"model_batch_{i+1}.pt")
+
     if i == total_number_of_steps:
         break
 
