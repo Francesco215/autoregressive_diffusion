@@ -7,3 +7,5 @@ uv.lock
 .venv/
 autoregressive_diffusion.egg-info/
 .vscode/
+aws/
+pretrained_ckpts/

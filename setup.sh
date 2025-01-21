@@ -1,5 +1,10 @@
 apt update
-apt install btop tmux -y
+apt install btop tmux unzip ffmpeguv  -y
+
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+
 pip install swig uv nvitop 
 git config --global user.email "f.sacco@protonmail.com"
 git config --global user.name "Francesco215"

@@ -24,7 +24,7 @@ total_number_of_batches = 1000
 total_number_of_steps = total_number_of_batches * accumulation_steps
 
 
-num_workers = 32 
+num_workers = 8 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 dataloader = OpenVidDataloader(micro_batch_size, num_workers, device)
@@ -55,7 +55,7 @@ ref_lr = 1e-2
 optimizer = MARS(precond.parameters(), lr=ref_lr, eps = 1e-4)
 optimizer.zero_grad()
 
-# ema_tracker = PowerFunctionEMA(precond, stds=[0.050, 0.100])
+ema_tracker = PowerFunctionEMA(precond, stds=[0.050, 0.100])
 
 #%%
 # torch.autograd.set_detect_anomaly(True, check_nan=True)
@@ -64,6 +64,7 @@ ulw=False
 losses = []
 pbar = tqdm(enumerate(dataloader),total=total_number_of_steps)
 for i, micro_batch in pbar:
+    if i==0: print("Downloaded first batch and starting training loop")
     latents = micro_batch['latents'].to(device)
 
     # Calculate loss    
@@ -79,7 +80,7 @@ for i, micro_batch in pbar:
         optimizer.step()
         optimizer.zero_grad()
         loss_tracking = 0
-        # ema_tracker.update(cur_nimg= i * batch_size, batch_size=batch_size)
+        ema_tracker.update(cur_nimg= i * batch_size, batch_size=batch_size)
 
         for g in optimizer.param_groups:
             g['lr'] = learning_rate_schedule(i//accumulation_steps, ref_lr, total_number_of_batches/2, 0)
@@ -97,12 +98,12 @@ for i, micro_batch in pbar:
         plt.show()
         plt.close()
 
-    if i % (total_number_of_steps//5) == 0 and i!=0:  # save every 20% of epochs
+    if i % (total_number_of_steps//20) == 0 and i!=0:  # save every 20% of epochs
         torch.save({
             'batch': i,
             'model_state_dict': precond.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
-            # 'ema_state_dict': ema_tracker.state_dict(),
+            'ema_state_dict': ema_tracker.state_dict(),
             'loss': loss,
         }, f"model_batch_{i+1}.pt")
 
@@ -116,10 +117,13 @@ print("Training finished!")
 import torch
 from edm2.sampler import edm_sampler
 
-# %%
+precond.load_state_dict(torch.load("model_batch_11201.pt", weights_only=False)['model_state_dict'])
+
 precond.eval()
-x = next(iter(dataloader)).to("cuda")[0,:-10]
+#%%
+samples = next(iter(dataloader))
 # %%
+x = samples["latents"][0:4,:-10].to("cuda")
 for _ in range(10):
     y=edm_sampler(precond, x)
     print(x.shape,y.shape)
@@ -129,3 +133,4 @@ for _ in range(10):
 
 # %%
 torch.save(y, "sampled_latents.pt")
+# %%
