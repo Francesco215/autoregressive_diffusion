@@ -151,8 +151,8 @@ class VideoSelfAttention(torch.nn.Module):
         y = self.attn_qkv(x)
 
         # b:batch, t:time, m: multi-head, s: split, c: channels, h: height, w: width
-        y = einops.rearrange(y, '(b t) (s m c) h w -> b s m t (h w) c', b=batch_size, s=3, m=self.num_heads)
-        q, k, v = normalize(y, dim=-1).unbind(1) # pixel norm & split
+        y = einops.rearrange(y, '(b t) (s m c) h w -> s b m t (h w) c', b=batch_size, s=3, m=self.num_heads)
+        q, k, v = normalize(y, dim=-1).unbind(0) # pixel norm & split 
         q, k = self.rope(q, k)
 
         # i = (h w)
@@ -289,7 +289,7 @@ class UNet(torch.nn.Module):
         self.enc = torch.nn.ModuleDict()
         cout = img_channels + 1
         for level, channels in enumerate(cblock):
-            res = img_resolution >> level #bitwise right shift. it divides by 2
+            res = img_resolution >> level #bitwise right shift. it divides by 2 (img_resolution // 2)
             if level == 0:
                 cin = cout
                 cout = channels
@@ -365,7 +365,7 @@ class Precond(torch.nn.Module):
     def forward(self, x:Tensor, sigma:Tensor, class_labels=None, force_fp32=False, **unet_kwargs):
         x = x.to(torch.float32)
         sigma = sigma.to(torch.float32)
-        sigma = einops.rearrange(sigma, '... -> ... 1 1 1') # TODO: make sure that this is the correct way of reshaping the tensor
+        sigma = einops.rearrange(sigma, '... -> ... 1 1 1')
         class_labels = None if self.label_dim == 0 else torch.zeros([1, self.label_dim], device=x.device) if class_labels is None else class_labels.to(torch.float32).reshape(-1, self.label_dim)
         dtype = torch.float16 if (self.use_fp16 and not force_fp32 and x.device.type == 'cuda') else torch.float32
 

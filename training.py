@@ -17,7 +17,7 @@ from edm2.phema import PowerFunctionEMA
 
 torch._dynamo.config.recompile_limit = 100
 # Example usage:
-micro_batch_size = 4 
+micro_batch_size = 2 
 batch_size = 128
 accumulation_steps = batch_size//micro_batch_size
 total_number_of_batches = 1000
@@ -38,6 +38,7 @@ unet = UNet(img_resolution=64, # Match your latent resolution
             channel_mult_noise=None,
             channel_mult_emb=None,
             num_blocks=3,
+            attn_resolutions=[32,16,8]
             )
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
 sigma_data = 1.
