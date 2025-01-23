@@ -33,8 +33,7 @@ x = torch.randn(4, 10, img_channels, img_resolution, img_resolution, device="cud
 loss=EDM2Loss()
 y=loss(precond, x)
 
-# # %%
-print(y.shape)
+print(y,y.shape)
 
 # %%
 

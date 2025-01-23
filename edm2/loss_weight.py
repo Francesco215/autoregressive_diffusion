@@ -133,8 +133,8 @@ class MultiNoiseLoss:
         # --- Plotting ---
         plt.close()
         fig, ax = plt.subplots(figsize=(8, 6))
-        loss_means = self.calculate_mean_loss(sigma_values)
-        loss_stds = self.calculate_std_loss(sigma_values)
+        # loss_means = self.calculate_mean_loss(sigma_values)
+        # loss_stds = self.calculate_std_loss(sigma_values)
 
         # Scatter plot of the data, colored by position using the viridis colormap
         if self.sigmas.size > 0:  # Only plot collected data if there is any
@@ -142,8 +142,8 @@ class MultiNoiseLoss:
                                  alpha=0.3, label='Data Points', s=.5)
             fig.colorbar(scatter, ax=ax, label='Position')
 
-        ax.plot(sigma_values, loss_means, label='best fit', color='red')
-        ax.fill_between(sigma_values, loss_means - loss_stds, loss_means + loss_stds, color='red', alpha=0.2)
+        # ax.plot(sigma_values, loss_means, label='best fit', color='red')
+        # ax.fill_between(sigma_values, loss_means - loss_stds, loss_means + loss_stds, color='red', alpha=0.2)
 
         ax.set_xscale('log')
         ax.set_xlabel('σ (sigma)')

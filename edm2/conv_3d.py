@@ -26,11 +26,11 @@ class MPCausal3DConv(torch.nn.Module):
 
         if self.training:
             # Warning: to understand this, read first how it works during inference
-            # Warning: This is probably inefficiend, but I don't think there is a better way with current hardware.
+            # Warning: This is probably inefficient, but I don't think there is a better way with current hardware.
 
-            # this convolution is hard to do because each frame to be denoised has to do the concolution with the previous frames of the context
-            # so we need to either have a really large kernel with lots of zeros in between (bad)
-            # or we use the fact that the conv layers are linear (good). 
+            # this convolution is hard to do because each frame to be denoised has to do the convolution with the previous frames of the context
+            # so we need to either have a really large kernel with lots of zeros in between (bad and dumb)
+            # or we exploit linearity of the conv layers (good and smart). 
             
             # we do the 2d convolutions over the last frames
             last_frame_conv = torch.nn.functional.conv2d(x, w[:,:,-1],  padding=padding[1:])
@@ -52,7 +52,7 @@ class MPCausal3DConv(torch.nn.Module):
 
         # during inference is much simpler
         x = einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
-        x = torch.cat(causal_pad, x, dim = 1)
+        x = torch.cat(causal_pad, x, dim=-3)
         x = torch.nn.functional.conv3d(x, w, padding=padding)
 
         x = einops.rearrange(x, 'b c t h w -> (b t) c h w')

@@ -89,7 +89,7 @@ class MPConv(torch.nn.Module):
         self.out_channels = out_channels
         self.weight = torch.nn.Parameter(torch.randn(out_channels, in_channels, *kernel))
 
-    def forward(self, x, gain=1):
+    def forward(self, x, gain=1, batch_size=None):
         w = self.weight.to(torch.float32)
         if self.training:
             with torch.no_grad():
@@ -144,7 +144,9 @@ class VideoSelfAttention(torch.nn.Module):
 
         # b:batch, t:time, m: multi-head, s: split, c: channels, h: height, w: width
         y = einops.rearrange(y, '(b t) (s m c) h w -> s b m t (h w) c', b=batch_size, s=3, m=self.num_heads)
-        q, k, v = normalize(y, dim=-1).unbind(0) # pixel norm & split 
+        # q, k, v = normalize(y, dim=-1).unbind(0) # pixel norm & split 
+        q, k, v = y.unbind(0) # pixel norm & split 
+
         q, k = self.rope(q, k)
 
         # i = (h w)
@@ -204,9 +206,14 @@ class Block(torch.nn.Module):
         self.attn_balance = attn_balance
         self.clip_act = clip_act
         self.emb_gain = torch.nn.Parameter(torch.zeros([]))
-        self.conv_res0 = MPCausal3DConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3,3])
         self.emb_linear = MPConv(emb_channels, out_channels, kernel=[])
+        # if attention:
+        self.conv_res0 = MPCausal3DConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3,3])
         self.conv_res1 = MPCausal3DConv(out_channels, out_channels, kernel=[3,3,3])
+        # else:
+        #     self.conv_res0 = MPConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3])
+        #     self.conv_res1 = MPConv(out_channels, out_channels, kernel=[3,3])
+
         self.conv_skip = MPConv(in_channels, out_channels, kernel=[1,1]) if in_channels != out_channels else None
         self.attn = VideoSelfAttention(out_channels, self.num_heads, attn_balance)
 
