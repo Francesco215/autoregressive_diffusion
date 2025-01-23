@@ -32,24 +32,22 @@ class MPCausal3DConv(torch.nn.Module):
             # so we need to either have a really large kernel with lots of zeros in between (bad)
             # or we use the fact that the conv layers are linear (good). 
             
-            # split the context and the frames to denoise
-            context, denoise = einops.rearrange(x, '(b s t) c h w -> s b c t h w', b=batch_size, s=2).unbind(0)
-
             # we do the 2d convolutions over the last frames
-            last_component_context = torch.nn.functional.conv2d(context, w=w[:,:,-1],  padding=w.shape[-1]//2)
-            denoise = torch.nn.functional.conv2d(denoise, w=w[:,:,-1],  padding=w.shape[-1]//2)
+            last_frame_conv = torch.nn.functional.conv2d(context, w=w[:,:,-1],  padding=w.shape[-1]//2)
 
+            # we just take the context frames
+            context, _ = einops.rearrange(x, '(b s t) c h w -> s b c t h w', b=batch_size, s=2).unbind(0)
             #pad context along the time dimention to make sure that it's causal
             context = torch.cat(causal_pad, context, dim = 1)
+
             # now we do the 3d convolutions over the previous frames of the context
             context = torch.nn.functional.conv3d(context, w=w[:,:,:-1], padding=padding)[:,:,:-1]
+            # we concatenate the results and reshape them to sum them back to the 2d convolutions
+            context = torch.cat((context, context), dim = 0)
+            context = einops.rearrange(context, 's b c t h w -> (b s t) c h w')
 
-            # we use the fact that convolution is linear to sum the results of the 2d and 3d convolutions
-            denoise = context + denoise
-            context = context + last_component_context
-            
-            x = torch.cat((context, denoise), dim = 0)
-            x = einops.rearrange(x, 's b c t h w -> (b s t) c h w')
+            # we use the fact that the convolution is linear to sum the results of the 2d and 3d convolutions
+            x = context + last_frame_conv
             return x
 
         # during inference is much simpler
