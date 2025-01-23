@@ -25,6 +25,9 @@ class MPCausal3DConv(torch.nn.Module):
         causal_pad = torch.ones(batch_size, w.shape[2]-1, *context.shape[2:], device=x.device, dtype=x.dtype)
 
         if self.training:
+            # Warning: to understand this, read first how it works during inference
+            # Warning: This is probably inefficiend, but I don't think there is a better way with current hardware.
+
             # this convolution is hard to do because each frame to be denoised has to do the concolution with the previous frames of the context
             # so we need to either have a really large kernel with lots of zeros in between (bad)
             # or we use the fact that the conv layers are linear (good). 
@@ -49,10 +52,11 @@ class MPCausal3DConv(torch.nn.Module):
             x = einops.rearrange(x, 's b c t h w -> (b s t) c h w')
             return x
 
-        # else:
-        #     x = einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
-        #     x = torch.cat(causal_pad, x, dim = 1)
-        #     x = torch.nn.functional.conv3d(x, w, padding=padding)
+        # during inference is much simpler
+        x = einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
+        x = torch.cat(causal_pad, x, dim = 1)
+        x = torch.nn.functional.conv3d(x, w, padding=padding)
 
-        # x = einops.r
+        x = einops.rearrange(x, 'b c t h w -> (b t) c h w')
+        return x
 
