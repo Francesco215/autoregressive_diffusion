@@ -99,7 +99,7 @@ for i, micro_batch in pbar:
         plt.show()
         plt.close()
 
-    if i % (total_number_of_steps//20) == 0 and i!=0:  # save every 20% of epochs
+    if i % (total_number_of_steps//10) == 0 and i!=0:  # save every 20% of epochs
         torch.save({
             'batch': i,
             'model_state_dict': precond.state_dict(),
@@ -118,7 +118,7 @@ print("Training finished!")
 import torch
 from edm2.sampler import edm_sampler
 
-precond.load_state_dict(torch.load("model_batch_11201.pt", weights_only=False)['model_state_dict'])
+# precond.load_state_dict(torch.load("model_batch_11201.pt", weights_only=False)['model_state_dict'])
 
 precond.eval()
 #%%

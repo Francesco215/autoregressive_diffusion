@@ -3,11 +3,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from scipy.optimize import curve_fit
+import warnings
 
 class MultiNoiseLoss:
     def __init__(self, vertical_scaling=0, x_min=0., width=0., vertical_offset=0., min_loss=0.005, std_dev_multiplier=0.7, std_dev_shift=2):
         self.loss_mean_popt = [vertical_scaling, x_min, width, vertical_offset]
         self.loss_std_popt = [min_loss, std_dev_multiplier, std_dev_shift]
+
+        self.original_loss_mean_popt = self.loss_mean_popt.copy()
+        self.original_loss_std_popt = self.loss_std_popt.copy()
 
         self.sigmas = np.array([])
         self.losses = np.array([])
@@ -115,7 +119,9 @@ class MultiNoiseLoss:
             self.loss_mean_popt = self.find_mean_loss_popt(sigma_values, loss_values)
             self.loss_std_popt = self.find_std_loss_popt(sigma_values, loss_values)
         except :
-            print("fit failed")    
+            warnings.warn("fit failed", RuntimeWarning)
+            self.loss_mean_popt = self.original_loss_mean_popt
+            self.loss_std_popt = self.original_loss_std_popt
 
     def plot(self, save_path=None):
         # --- Simulation Parameters ---
