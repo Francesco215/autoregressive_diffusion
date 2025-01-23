@@ -41,6 +41,8 @@ decoder_dtype = next(iter(decoder.parameters())).dtype
 #%%
 y = einops.rearrange(x,'b t c h w -> b c t h w').to(decoder_dtype)
 # %%
+output_dir = "output"
+os.makedirs(output_dir, exist_ok=True)
 video = unclamp_video(decoder.decode(y))
 for i in range(video.shape[0]):
     output_dir = "output"

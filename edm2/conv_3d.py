@@ -52,7 +52,7 @@ class MPCausal3DConv(torch.nn.Module):
 
         # during inference is much simpler
         x = einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
-        x = torch.cat(causal_pad, x, dim=-3)
+        x = torch.cat((causal_pad, x), dim=-3)
         x = torch.nn.functional.conv3d(x, w, padding=padding)
 
         x = einops.rearrange(x, 'b c t h w -> (b t) c h w')

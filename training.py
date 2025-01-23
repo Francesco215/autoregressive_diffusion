@@ -45,7 +45,7 @@ unet_params = sum(p.numel() for p in unet.parameters())//1e6
 print(f"Number of UNet parameters: {unet_params}M")
 sigma_data = 1.
 precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to("cuda")
-loss_fn = EDM2Loss(P_mean=-.4,P_std=1, sigma_data=sigma_data, noise_weight=MultiNoiseLoss())
+loss_fn = EDM2Loss(P_mean=0.1,P_std=1, sigma_data=sigma_data, noise_weight=MultiNoiseLoss())
 loss_fn.noise_weight.loss_mean_popt =[0.2,0,1,0] 
 loss_fn.noise_weight.loss_std_popt = [10,0.01,1e-4]
 
@@ -81,7 +81,7 @@ for i, micro_batch in pbar:
         ema_tracker.update(cur_nimg= i * batch_size, batch_size=batch_size)
 
         for g in optimizer.param_groups:
-            current_lr = learning_rate_schedule(i, ref_lr, total_number_of_steps/1000, 0)
+            current_lr = learning_rate_schedule(i, ref_lr, total_number_of_steps/50, 0)
             g['lr'] = current_lr
 
     # Save model checkpoint (optional)
@@ -102,7 +102,7 @@ for i, micro_batch in pbar:
         plt.show()
         plt.close()
 
-    if i % (total_number_of_steps//10) == 0 and i!=0:  # save every 20% of epochs
+    if i % (total_number_of_steps//10) == 0 and i!=0:  # save every 10% of epochs
         torch.save({
             'batch': i,
             'model_state_dict': precond.state_dict(),
@@ -121,7 +121,7 @@ print("Training finished!")
 import torch
 from edm2.sampler import edm_sampler
 
-# precond.load_state_dict(torch.load("model_batch_11201.pt", weights_only=False)['model_state_dict'])
+precond.load_state_dict(torch.load("model_batch_5001.pt", weights_only=False)['model_state_dict'])
 
 precond.eval()
 #%%
