@@ -18,16 +18,8 @@ import einops
 from . import misc
 from .RoPe import RotaryEmbedding
 from .attention_masking import make_train_mask, make_infer_mask, AutoregressiveDiffusionMask
-#----------------------------------------------------------------------------
-# Normalize given tensor to unit magnitude with respect to the given
-# dimensions. Default = all dimensions except the first.
-
-def normalize(x, dim=None, eps=1e-4):
-    if dim is None:
-        dim = list(range(1, x.ndim))
-    norm = torch.linalg.vector_norm(x, dim=dim, keepdim=True, dtype=torch.float32)
-    norm = torch.add(eps, norm, alpha=np.sqrt(norm.numel() / x.numel()))
-    return x / norm.to(x.dtype)
+from .utils import normalize
+from .conv_3d import MPCausal3DConv
 
 #----------------------------------------------------------------------------
 # Upsample or downsample the given tensor with the given filter,
@@ -212,9 +204,9 @@ class Block(torch.nn.Module):
         self.attn_balance = attn_balance
         self.clip_act = clip_act
         self.emb_gain = torch.nn.Parameter(torch.zeros([]))
-        self.conv_res0 = MPConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3])
+        self.conv_res0 = MPCausal3DConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3,3])
         self.emb_linear = MPConv(emb_channels, out_channels, kernel=[])
-        self.conv_res1 = MPConv(out_channels, out_channels, kernel=[3,3])
+        self.conv_res1 = MPCausal3DConv(out_channels, out_channels, kernel=[3,3,3])
         self.conv_skip = MPConv(in_channels, out_channels, kernel=[1,1]) if in_channels != out_channels else None
         self.attn = VideoSelfAttention(out_channels, self.num_heads, attn_balance)
 
@@ -230,13 +222,13 @@ class Block(torch.nn.Module):
             x = normalize(x, dim=1) # pixel norm
 
         # Residual branch.
-        y = self.conv_res0(mp_silu(x))
+        y = self.conv_res0(mp_silu(x),batch_size=batch_size)
         c = self.emb_linear(emb, gain=self.emb_gain) + 1
         y = einops.einsum(y, c.to(y.dtype),'b c h w, b c -> b c h w') 
         y = mp_silu(y)
         if self.training and self.dropout != 0:
             y = torch.nn.functional.dropout(y, p=self.dropout)
-        y = self.conv_res1(y)
+        y = self.conv_res1(y, batch_size=batch_size)
 
         # Connect the branches.
         if self.flavor == 'dec' and self.conv_skip is not None:

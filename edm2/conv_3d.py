@@ -1,7 +1,7 @@
 import einops
 import torch
 import numpy as np
-from .networks_edm2 import normalize
+from .utils import normalize
 # Magnitude-preserving convolution or fully-connected layer (Equation 47)
 # with force weight normalization (Equation 66).
 
@@ -21,8 +21,8 @@ class MPCausal3DConv(torch.nn.Module):
         w = w.to(x.dtype)
         assert w.ndim == 5
 
-        padding = (0, w.shape[1]//2, w.shape[2]//2)
-        causal_pad = torch.ones(batch_size, w.shape[2]-1, *context.shape[2:], device=x.device, dtype=x.dtype)
+        padding = (0, w.shape[-2]//2, w.shape[-1]//2)
+        causal_pad = torch.ones(batch_size, x.shape[1], w.shape[2]-1, *x.shape[2:], device=x.device, dtype=x.dtype)
 
         if self.training:
             # Warning: to understand this, read first how it works during inference
@@ -33,17 +33,17 @@ class MPCausal3DConv(torch.nn.Module):
             # or we use the fact that the conv layers are linear (good). 
             
             # we do the 2d convolutions over the last frames
-            last_frame_conv = torch.nn.functional.conv2d(context, w=w[:,:,-1],  padding=w.shape[-1]//2)
+            last_frame_conv = torch.nn.functional.conv2d(x, w[:,:,-1],  padding=padding[1:])
 
             # we just take the context frames
             context, _ = einops.rearrange(x, '(b s t) c h w -> s b c t h w', b=batch_size, s=2).unbind(0)
             #pad context along the time dimention to make sure that it's causal
-            context = torch.cat(causal_pad, context, dim = 1)
+            context = torch.cat((causal_pad, context), dim=-3)
 
             # now we do the 3d convolutions over the previous frames of the context
-            context = torch.nn.functional.conv3d(context, w=w[:,:,:-1], padding=padding)[:,:,:-1]
+            context = torch.nn.functional.conv3d(context, w[:,:,:-1], padding=padding)[:,:,:-1]
             # we concatenate the results and reshape them to sum them back to the 2d convolutions
-            context = torch.cat((context, context), dim = 0)
+            context = torch.stack((context, context), dim=0)
             context = einops.rearrange(context, 's b c t h w -> (b s t) c h w')
 
             # we use the fact that the convolution is linear to sum the results of the 2d and 3d convolutions

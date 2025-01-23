@@ -37,8 +37,8 @@ unet = UNet(img_resolution=64, # Match your latent resolution
             channel_mult=[1,2,2,4],
             channel_mult_noise=None,
             channel_mult_emb=None,
-            num_blocks=3,
-            attn_resolutions=[32,16,8]
+            num_blocks=2,
+            attn_resolutions=[16,8]
             )
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
 sigma_data = 1.
