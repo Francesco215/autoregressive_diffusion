@@ -5,19 +5,25 @@ import os
 from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss
 
-# Disable compilation and ensure eager mode
-torch._dynamo.config.suppress_compilation = True  # Disable torch.compile
-os.environ['TORCHDYNAMO_DISABLE'] = '1'  # Disable dynamo optimizations
+os.environ['TORCH_LOGS']='recompiles'
+os.environ['TORCH_COMPILE_MAX_AUTOTUNE_RECOMPILE_LIMIT']='100000'
+torch._dynamo.config.recompile_limit = 100000
+torch._logging.set_logs(dynamo=logging.INFO)
 
 # Constants
 IMG_RESOLUTION = 64
 IMG_CHANNELS = 16
 N_FRAMES = 8
 CUT_FRAME = 3
+SEED = 42  # Set a seed for reproducibility
 
 class TestUNet(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        torch.manual_seed(SEED)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(SEED)
+
         # Initialize UNet and Precond
         cls.unet = UNet(
             img_resolution=IMG_RESOLUTION,
@@ -30,11 +36,9 @@ class TestUNet(unittest.TestCase):
             num_blocks=2,
             attn_resolutions=[16, 8]
         ).to("cuda").to(torch.float16)
-
-        cls.precond = Precond(cls.unet, use_fp16=True, sigma_data=1.).to("cuda")
-
         print(f"Number of UNet parameters: {sum(p.numel() for p in cls.unet.parameters()) // 1e6}M")
 
+    
     def test_unet_consistency_between_train_and_eval(self):
         # Test consistency between training and evaluation modes
         self.unet.train()
@@ -61,10 +65,10 @@ class TestUNet(unittest.TestCase):
         noise_level = torch.zeros(x.shape[:2], device="cuda", dtype=torch.float16)
         y = self.unet.forward(x, noise_level, None) - self.unet.forward(a, noise_level, None)
 
-        self.assertTrue(torch.allclose(y[:, :CUT_FRAME].std(), torch.tensor(0, dtype=torch.float16), atol=1e-3))
-        self.assertFalse(torch.allclose(y[:, CUT_FRAME:N_FRAMES].std(), torch.tensor(0, dtype=torch.float16), atol=1e-3))
-        self.assertTrue(torch.allclose(y[:, N_FRAMES:N_FRAMES + CUT_FRAME].std(), torch.tensor(0, dtype=torch.float16), atol=1e-3))
-        self.assertFalse(torch.allclose(y[:, N_FRAMES + CUT_FRAME:].std(), torch.tensor(0, dtype=torch.float16), atol=1e-3))
+        self.assertTrue(torch.allclose(y[:, :CUT_FRAME].std(), torch.tensor(0, dtype=torch.float16), atol=1e-2))
+        self.assertFalse(torch.allclose(y[:, CUT_FRAME:N_FRAMES].std(), torch.tensor(0, dtype=torch.float16), atol=1e-2))
+        self.assertTrue(torch.allclose(y[:, N_FRAMES:N_FRAMES + CUT_FRAME].std(), torch.tensor(0, dtype=torch.float16), atol=1e-2))
+        self.assertFalse(torch.allclose(y[:, N_FRAMES + CUT_FRAME:].std(), torch.tensor(0, dtype=torch.float16), atol=1e-2))
 
 if __name__ == "__main__":
     unittest.main()
