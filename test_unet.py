@@ -36,26 +36,8 @@ y=loss(precond, x)
 print(y,y.shape)
 
 # %%
+#this is to test if the unet is causal
 
-x = torch.zeros(2, 8, img_channels, img_resolution, img_resolution, device="cuda", dtype=torch.float16)
-r = torch.randn(2, 8, img_channels, img_resolution, img_resolution, device="cuda", dtype=torch.float16)
-a = torch.cat((x,r),dim=1)
-x[0,4]=torch.randn(img_channels, img_resolution, img_resolution, device="cuda", dtype=torch.float16)
-x = torch.cat((x,r),dim=1)
-noise_level = torch.zeros(x.shape[:2], device="cuda", dtype=torch.float16)
-y = unet.forward(x, noise_level, None)-unet.forward(a, noise_level, None)
-
-
-
-# %%
-# x = torch.randn(2, 16, img_channels, img_resolution, img_resolution, device="cuda", dtype=torch.float16)
-x = torch.zeros(2, 8, img_channels, img_resolution, img_resolution, device="cuda", dtype=torch.float16)
-r = torch.randn(2, 8, img_channels, img_resolution, img_resolution, device="cuda", dtype=torch.float16)
-a = torch.cat((x,r),dim=1)
-x = torch.randn(2, 8, img_channels, img_resolution, img_resolution, device="cuda", dtype=torch.float16)
-x = torch.cat((x,r),dim=1)
-noise_level = torch.zeros(x.shape[:2], device="cuda", dtype=torch.float16)
-y = unet.forward(x, noise_level, None)-unet.forward(a, noise_level, None)
 
 
 # %%
