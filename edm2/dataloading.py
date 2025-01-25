@@ -35,8 +35,8 @@ class OpenVidDataset(IterableDataset):
             yield latent, caption
 
 class OpenVidDataloader(DataLoader):
-    def __init__(self, batch_size, num_workers, device):
-        self.dataset = OpenVidDataset()
+    def __init__(self, batch_size, num_workers, device, dataset = OpenVidDataset()):
+        self.dataset = dataset
         self.device = device
         self.mean, self.std, self.channel_wise_std = -0.010, 2.08, 69
         

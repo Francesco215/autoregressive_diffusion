@@ -3,6 +3,7 @@ from tqdm import tqdm
 import numpy as np
 
 import torch
+from torch.utils.data import IterableDataset
 from matplotlib import pyplot as plt
 
 from edm2.networks_edm2 import UNet, Precond
@@ -28,7 +29,19 @@ total_number_of_steps = total_number_of_batches * accumulation_steps
 num_workers = 8 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-dataloader = OpenVidDataloader(micro_batch_size, num_workers, device)
+class RandomDataset(IterableDataset):
+    def __init__(self, clip_length, clip_shape):
+        self.clip_length = clip_length
+        self.clip_shape = clip_shape
+        self.mean, self.std = 0.051, 0.434
+        self.channel_wise_std = 69
+
+    def __iter__(self):
+        while True:
+            latents = torch.randn(self.clip_length, *self.clip_shape)
+            yield latents, "random_caption"
+random_dataset = RandomDataset(16, (16, 64, 64))
+dataloader = OpenVidDataloader(micro_batch_size, num_workers, device, dataset = random_dataset)
 
 
 unet = UNet(img_resolution=64, # Match your latent resolution
