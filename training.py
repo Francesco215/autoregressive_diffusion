@@ -41,7 +41,7 @@ class RandomDataset(IterableDataset):
             latents = torch.randn(self.clip_length, *self.clip_shape)
             yield latents, "random_caption"
 random_dataset = RandomDataset(16, (16, 64, 64))
-dataloader = OpenVidDataloader(micro_batch_size, num_workers, device, dataset = random_dataset)
+dataloader = OpenVidDataloader(micro_batch_size, num_workers, device)
 
 
 unet = UNet(img_resolution=64, # Match your latent resolution
@@ -56,6 +56,7 @@ unet = UNet(img_resolution=64, # Match your latent resolution
             )
 unet_params = sum(p.numel() for p in unet.parameters())//1e6
 print(f"Number of UNet parameters: {unet_params}M")
+# sigma_data = 0.434
 sigma_data = 1.
 precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to("cuda")
 loss_fn = EDM2Loss(P_mean=0.5,P_std=1.5, sigma_data=sigma_data, noise_weight=MultiNoiseLoss())
@@ -99,8 +100,8 @@ for i, micro_batch in pbar:
 
     # Save model checkpoint (optional)
     if i % 200 * accumulation_steps == 0:
+        # loss_fn.noise_weight.fit_loss_curve()
         loss_fn.noise_weight.plot('plot.png')
-        loss_fn.noise_weight.fit_loss_curve()
         n_clips = np.linspace(0, i * micro_batch_size, len(losses))
         plt.plot(n_clips, losses, label='Loss', color='blue', alpha=0.5)
         if len(losses) >= 100:

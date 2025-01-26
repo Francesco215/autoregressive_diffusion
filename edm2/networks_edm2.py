@@ -18,89 +18,9 @@ import einops
 from . import misc
 from .RoPe import RotaryEmbedding
 from .attention_masking import make_train_mask, make_infer_mask, AutoregressiveDiffusionMask
-from .utils import normalize
-from .conv_3d import MPCausal3DConv
+from .utils import normalize, resample, mp_silu, mp_sum, mp_cat, MPFourier
+from .conv import MPCausal3DConv, MPConv
 
-#----------------------------------------------------------------------------
-# Upsample or downsample the given tensor with the given filter,
-# or keep it as is.
-
-def resample(x, f=[1,1], mode='keep'):
-    if mode == 'keep':
-        return x
-    f = np.float32(f)
-    assert f.ndim == 1 and len(f) % 2 == 0
-    pad = (len(f) - 1) // 2
-    f = f / f.sum()
-    f = np.outer(f, f)[np.newaxis, np.newaxis, :, :]
-    f = misc.const_like(x, f)
-    c = x.shape[1]
-    if mode == 'down':
-        return torch.nn.functional.conv2d(x, f.tile([c, 1, 1, 1]), groups=c, stride=2, padding=(pad,))
-    assert mode == 'up'
-    return torch.nn.functional.conv_transpose2d(x, (f * 4).tile([c, 1, 1, 1]), groups=c, stride=2, padding=(pad,))
-
-#----------------------------------------------------------------------------
-# Magnitude-preserving SiLU (Equation 81).
-
-def mp_silu(x):
-    return torch.nn.functional.silu(x) / 0.596
-
-#----------------------------------------------------------------------------
-# Magnitude-preserving sum (Equation 88).
-
-def mp_sum(a, b, t=0.5):
-    return a.lerp(b, t) / np.sqrt((1 - t) ** 2 + t ** 2)
-
-#----------------------------------------------------------------------------
-# Magnitude-preserving concatenation (Equation 103).
-
-def mp_cat(a, b, dim=1, t=0.5):
-    Na = a.shape[dim]
-    Nb = b.shape[dim]
-    C = np.sqrt((Na + Nb) / ((1 - t) ** 2 + t ** 2))
-    wa = C / np.sqrt(Na) * (1 - t)
-    wb = C / np.sqrt(Nb) * t
-    return torch.cat([wa * a , wb * b], dim=dim)
-
-#----------------------------------------------------------------------------
-# Magnitude-preserving Fourier features (Equation 75).
-
-class MPFourier(torch.nn.Module):
-    def __init__(self, num_channels, bandwidth=1):
-        super().__init__()
-        self.register_buffer('freqs', 2 * np.pi * torch.randn(num_channels) * bandwidth)
-        self.register_buffer('phases', 2 * np.pi * torch.rand(num_channels))
-
-    def forward(self, x):
-        y = x.to(torch.float32)
-        y = y.ger(self.freqs.to(torch.float32))
-        y = y + self.phases.to(torch.float32)
-        y = y.cos() * np.sqrt(2)
-        return y.to(x.dtype)
-
-#----------------------------------------------------------------------------
-# Magnitude-preserving convolution or fully-connected layer (Equation 47)
-# with force weight normalization (Equation 66).
-
-class MPConv(torch.nn.Module):
-    def __init__(self, in_channels, out_channels, kernel):
-        super().__init__()
-        self.out_channels = out_channels
-        self.weight = torch.nn.Parameter(torch.randn(out_channels, in_channels, *kernel))
-
-    def forward(self, x, gain=1, batch_size=None):
-        w = self.weight.to(torch.float32)
-        if self.training:
-            with torch.no_grad():
-                self.weight.copy_(normalize(w)) # forced weight normalization
-        w = normalize(w) # traditional weight normalization. for the gradients 
-        w = w * (gain / np.sqrt(w[0].numel())) # magnitude-preserving scaling
-        w = w.to(x.dtype)
-        if w.ndim == 2:
-            return x @ w.t()
-        assert w.ndim == 4
-        return torch.nn.functional.conv2d(x, w, padding=(w.shape[-1]//2,))
 
 
 #----------------------------------------------------------------------------
@@ -208,11 +128,11 @@ class Block(torch.nn.Module):
         self.emb_gain = torch.nn.Parameter(torch.zeros([]))
         self.emb_linear = MPConv(emb_channels, out_channels, kernel=[])
         # if attention:
-        # self.conv_res0 = MPCausal3DConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3,3])
-        # self.conv_res1 = MPCausal3DConv(out_channels, out_channels, kernel=[3,3,3])
+        self.conv_res0 = MPCausal3DConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3,3])
+        self.conv_res1 = MPCausal3DConv(out_channels, out_channels, kernel=[3,3,3])
         # else:
-        self.conv_res0 = MPConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3])
-        self.conv_res1 = MPConv(out_channels, out_channels, kernel=[3,3])
+        # self.conv_res0 = MPConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3])
+        # self.conv_res1 = MPConv(out_channels, out_channels, kernel=[3,3])
 
         self.conv_skip = MPConv(in_channels, out_channels, kernel=[1,1]) if in_channels != out_channels else None
         self.attn = VideoSelfAttention(out_channels, self.num_heads, attn_balance)
@@ -277,7 +197,7 @@ class UNet(torch.nn.Module):
         cemb = model_channels * channel_mult_emb if channel_mult_emb is not None else max(cblock)
         self.label_balance = label_balance
         self.concat_balance = concat_balance
-        # self.out_gain = torch.nn.Parameter(torch.tensor([1.], requires_grad=False))
+        self.out_gain = torch.nn.Parameter(torch.tensor([1.], requires_grad=True))
 
         # Embedding.
         self.emb_fourier = MPFourier(cnoise)
@@ -340,7 +260,7 @@ class UNet(torch.nn.Module):
             if 'block' in name:
                 x = mp_cat(x, skips.pop(), t=self.concat_balance)
             x = block(x, emb, batch_size=batch_size)
-        x = self.out_conv(x)
+        x = self.out_conv(x, gain=self.out_gain)
         x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
         return x
 

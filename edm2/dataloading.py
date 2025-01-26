@@ -48,4 +48,4 @@ class OpenVidDataloader(DataLoader):
         latents = torch.stack(latents)
         latents = einops.rearrange(latents, 'b c t h w -> b t c h w')
         caption = list(caption)
-        return {"latents": latents, "captions": caption}
+        return {"latents": latents/self.std, "captions": caption}
