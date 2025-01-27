@@ -35,10 +35,51 @@ class OpenVidDataset(IterableDataset):
             yield latent, caption
 
 class OpenVidDataloader(DataLoader):
-    def __init__(self, batch_size, num_workers, device, dataset = OpenVidDataset()):
-        self.dataset = dataset
+    def __init__(self, batch_size, num_workers, device):
+        self.dataset = OpenVidDataset()
         self.device = device
         self.mean, self.std, self.channel_wise_std = -0.010, 2.08, 69
+        
+        super().__init__(self.dataset, batch_size=batch_size, num_workers=num_workers, collate_fn=self.collate_fn, prefetch_factor=4)
+    
+    @abstractmethod
+    def collate_fn(self, batch):
+        latents, caption = zip(*batch)
+        latents = torch.stack(latents)
+        latents = einops.rearrange(latents, 'b c t h w -> b t c h w')
+        caption = list(caption)
+        return {"latents": latents/self.std, "captions": caption}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# useful for debugging
+class RandomDataset(IterableDataset):
+    def __init__(self, clip_length, clip_shape):
+        self.clip_length = clip_length
+        self.clip_shape = clip_shape
+        self.mean, self.std = 0.051, 0.434
+        self.channel_wise_std = 69
+
+    def __iter__(self):
+        while True:
+            latents = torch.randn(self.clip_length, *self.clip_shape)
+            yield latents, "random_caption"
+class RandomDataloader(DataLoader):
+    def __init__(self, batch_size, num_workers, device):
+        self.dataset = RandomDataset(16, (16, 64, 64))
+        self.device = device
+        self.mean, self.std, self.channel_wise_std = 0, 1., 1.
         
         super().__init__(self.dataset, batch_size=batch_size, num_workers=num_workers, collate_fn=self.collate_fn, prefetch_factor=4)
     

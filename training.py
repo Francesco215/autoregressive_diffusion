@@ -19,7 +19,7 @@ from edm2.phema import PowerFunctionEMA
 torch._dynamo.config.recompile_limit = 100
 # Example usage:
 n_clips = 100_000
-micro_batch_size = 4 
+micro_batch_size = 2 
 batch_size = 32
 accumulation_steps = batch_size//micro_batch_size
 total_number_of_batches = n_clips // batch_size
@@ -29,18 +29,6 @@ total_number_of_steps = total_number_of_batches * accumulation_steps
 num_workers = 8 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-class RandomDataset(IterableDataset):
-    def __init__(self, clip_length, clip_shape):
-        self.clip_length = clip_length
-        self.clip_shape = clip_shape
-        self.mean, self.std = 0.051, 0.434
-        self.channel_wise_std = 69
-
-    def __iter__(self):
-        while True:
-            latents = torch.randn(self.clip_length, *self.clip_shape)
-            yield latents, "random_caption"
-random_dataset = RandomDataset(16, (16, 64, 64))
 dataloader = OpenVidDataloader(micro_batch_size, num_workers, device)
 
 
@@ -58,7 +46,7 @@ unet_params = sum(p.numel() for p in unet.parameters())//1e6
 print(f"Number of UNet parameters: {unet_params}M")
 # sigma_data = 0.434
 sigma_data = 1.
-precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to("cuda")
+precond = Precond(unet, use_fp16=False, sigma_data=sigma_data).to("cuda")
 loss_fn = EDM2Loss(P_mean=0.5,P_std=1.5, sigma_data=sigma_data, noise_weight=MultiNoiseLoss())
 loss_fn.noise_weight.loss_mean_popt =[0.2,0,1,0] 
 loss_fn.noise_weight.loss_std_popt = [10,0.01,1e-4]

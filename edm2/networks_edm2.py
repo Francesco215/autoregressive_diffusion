@@ -93,7 +93,6 @@ class VideoSelfAttention(torch.nn.Module):
         #             return torch.where(q_idx >= kv_idx, score, -float("inf"))
         #         score_mod = causal_mask
         assert score_mod is not None or block_mask is not None, "Either block_mask or score_mod must be defined"
-
         return flex_attention(q, k, v, score_mod, block_mask)
 
         
