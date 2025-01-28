@@ -1,92 +1,80 @@
 #%%
-import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
-def l(x):
-    return (1-torch.exp(-x**2))-x*0.1
+class FourierSeriesFit:
+    def __init__(self, interval_min, interval_max, num_terms=8):
 
-def fourier_function(x, c_cos, c_sin, freqs):
-    cos = torch.cos(freqs*x)
-    sin = torch.sin(freqs*x)
-    return (c_cos@cos + c_sin@sin)
-    
-x = torch.randn(300)
-interval_size = 8
-x = x[(x > -interval_size) & (x < interval_size)]
-y = l(x)+ torch.randn_like(x)*0.1
+        self.interval_min = interval_min
+        self.interval_max = interval_max
+        self.L = (interval_max - interval_min) / 2  # Half-interval length
+        self.num_terms = num_terms
+        self.coefficients = None
 
-fourier_frequencies = 2
+    def fourier_series(self, x):
 
-fourier_coefficient = 2*np.pi/(interval_size/2)
-freqs = torch.arange(0, fourier_frequencies, device=x.device)
-freqs = freqs.unsqueeze(1)*fourier_coefficient
+        # Shift and scale x to the interval [-L, L]
+        x_scaled = (x - self.interval_min) * (2 * torch.pi / (self.interval_max - self.interval_min)) - torch.pi
 
-s = x.repeat(fourier_frequencies, 1)
-cos = torch.cos(freqs*s)
-sin = torch.sin(freqs*s)
+        basis = [torch.ones_like(x) * 0.5]  # a0/2 term
+        for n in range(1, self.num_terms):
+            basis.append(torch.cos(n * x_scaled))
+            basis.append(torch.sin(n * x_scaled))
+        return torch.stack(basis, dim=1)
 
+    def fit_data(self, X, Y):
+        # Ensure data is within the interval [min, max]
+        mask = (X >= self.interval_min) & (X <= self.interval_max)
+        X, Y = X[mask], Y[mask]
 
-c_cos = (y * cos).mean(dim=-1)
-c_sin = (y * sin).mean(dim=-1)
+        # Create Fourier basis matrix
+        X_basis = self.fourier_series(X)
 
-X = torch.linspace(-interval_size/2, interval_size/2, 100, device=x.device)
-Y = fourier_function(X, c_cos, c_sin, freqs)
-plt.plot(x,y,'.')
-plt.plot(X,Y)
-# %%
-import torch
-import matplotlib.pyplot as plt
+        # Solve for coefficients using least squares
+        self.coefficients = torch.linalg.lstsq(X_basis, Y.unsqueeze(1)).solution
 
-def l(x):
-    return (1-torch.exp(-x**2)) - x*0.1
+    def predict(self, x):
+        if self.coefficients is None:
+            raise ValueError("Model has not been fitted yet. Call fit_data first.")
+        basis = self.fourier_series(x)
+        return basis @ self.coefficients
 
-# Corrected Fourier series implementation
-def fourier_series(x, L, num_terms):
-    """
-    x: input tensor
-    L: half-interval length (full interval [-L, L])
-    num_terms: number of Fourier terms (n=0 to num_terms-1)
-    """
-    # Basis functions
-    basis = [torch.ones_like(x) * 0.5]  # a0/2 term
-    for n in range(1, num_terms):
-        basis.append(torch.cos(n * torch.pi * x / L))
-        basis.append(torch.sin(n * torch.pi * x / L))
-    return torch.stack(basis, dim=1)
+    def plot(self, X, Y, X_grid=None, num_points=300):
+        if self.coefficients is None:
+            raise ValueError("Model has not been fitted yet. Call fit_data first.")
 
-# Parameters
-interval_size = 8  # Total interval [-4, 4] would be size=8
-L = interval_size / 2  # Half-interval length = 4
-num_terms = 5  # Includes DC term + 4 pairs of sin/cos
+        if X_grid is None:
+            X_grid = torch.linspace(self.interval_min, self.interval_max, num_points)
 
-# Generate data (keep within [-L, L])
-x = torch.randn(1000)
-x = x[(x > -L) & (x < L)]
-y = l(x) + torch.randn_like(x)*0.1
+        Y_pred = self.predict(X_grid)
 
-# Create Fourier basis matrix
-X_basis = fourier_series(x, L, num_terms)
+        plt.figure(figsize=(10, 6))
+        plt.scatter(X.numpy(), Y.numpy(), alpha=0.3, label='Data')
+        plt.plot(X_grid.numpy(), Y_pred.squeeze().numpy(), 
+                 'r', linewidth=2, label=f'Fourier Fit ({self.num_terms} terms)')
+        plt.xlabel('x'), plt.ylabel('y'), plt.legend()
+        plt.title("Fourier Series Fit")
+        plt.grid(True)
+        plt.show()
 
-# Solve for coefficients using least squares
-coefficients = torch.linalg.lstsq(X_basis, y.unsqueeze(1)).solution
+# Example usage
+if __name__ == "__main__":
+    # Define the function to fit
+    def l(x):
+        return (1 - torch.exp(-x**2)) - x * 0.1
 
-# Reconstruction function
-def fourier_recon(x, coeffs, L, num_terms):
-    basis = fourier_series(x, L, num_terms)
-    return basis @ coeffs
+    # Generate data
+    x = torch.randn(1000)
+    y = l(x) + torch.randn_like(x) * 0.1
 
-# Generate prediction points
-X_grid = torch.linspace(-L, L, 300)
-Y_pred = fourier_recon(X_grid, coefficients, L, num_terms)
+    # Define the interval [min, max]
+    interval_min = -3.0
+    interval_max = 3.0
 
-# Plotting
-plt.figure(figsize=(10, 6))
-plt.scatter(x.numpy(), y.numpy(), alpha=0.3, label='Data')
-plt.plot(X_grid.numpy(), Y_pred.squeeze().numpy(), 
-         'r', linewidth=2, label=f'Fourier Fit ({num_terms} terms)')
-plt.xlabel('x'), plt.ylabel('y'), plt.legend()
-plt.title("Corrected Fourier Series Fit")
-plt.grid(True)
-plt.show()
+    # Initialize and fit the Fourier series
+    fourier_fitter = FourierSeriesFit(interval_min=interval_min, interval_max=interval_max, num_terms=8)
+    fourier_fitter.fit_data(x, y)
+
+    # Plot the results
+    fourier_fitter.plot(x, y)
 # %%
