@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from scipy.interpolate import make_splrep
+import einops
 import warnings
 
 class MultiNoiseLoss:
@@ -11,7 +12,7 @@ class MultiNoiseLoss:
         self.sigmas = torch.tensor([], dtype=torch.float32)
         self.losses = torch.tensor([], dtype=torch.float32)
         self.positions = torch.tensor([], dtype=torch.int64)
-        self.history_size = 50_000
+        self.history_size = 1000
         self.fourier_approximator = FourierSeriesFit(-torch.pi, torch.pi, num_terms=8)
 
     torch.no_grad()
@@ -76,7 +77,6 @@ class FourierSeriesFit:
     def fourier_series(self, x):
 
         x=torch.log10(x)
-        print(x.min(),x.max())
         # Shift and scale x to the interval [-pi, pi]
         # x = (x - self.interval_min) * (2 * torch.pi / (self.interval_max - self.interval_min)) - torch.pi
         basis = [torch.ones_like(x) * 0.5]  # a0/2 term
@@ -100,5 +100,9 @@ class FourierSeriesFit:
         if self.coefficients is None:
             return torch.ones_like(x)
             raise ValueError("Model has not been fitted yet. Call fit_data first.")
+        if x.dim() == 2:
+            b = x.shape[0]
+            x = einops.rearrange(x, 'b t -> (b t)')
+            return einops.rearrange(self.predict(x).squeeze(1), '(b t) -> b t', b=b)
         basis = self.fourier_series(x)
-        return basis @ self.coefficients
+        return basis @ self.coefficients.to(basis.device)

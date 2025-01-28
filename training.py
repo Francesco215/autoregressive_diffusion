@@ -104,6 +104,8 @@ for i, micro_batch in pbar:
         plt.savefig('losses.png')
         plt.show()
         plt.close()
+        ulw=True
+
 
     if i % (total_number_of_steps//10) == 0 and i!=0:  # save every 10% of epochs
         torch.save({
