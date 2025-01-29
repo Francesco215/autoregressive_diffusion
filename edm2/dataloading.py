@@ -40,7 +40,7 @@ class OpenVidDataloader(DataLoader):
         self.device = device
         self.mean, self.std, self.channel_wise_std = -0.010, 2.08, 69
         
-        super().__init__(self.dataset, batch_size=batch_size, num_workers=num_workers, collate_fn=self.collate_fn, prefetch_factor=4)
+        super().__init__(self.dataset, batch_size=batch_size, num_workers=num_workers, collate_fn=self.collate_fn, prefetch_factor=16)
     
     @abstractmethod
     def collate_fn(self, batch):

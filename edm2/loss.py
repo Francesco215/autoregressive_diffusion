@@ -50,15 +50,17 @@ class EDM2Loss:
         losses = ((denoised - images) ** 2).mean(dim=(-1,-2,-3))
 
         sigma = sigma[:,n_frames:]
-        weight = 0.5*(sigma ** 2 + self.sigma_data ** 2) / (sigma * self.sigma_data) ** 2 # the 0.5 factor is because the Karras paper is wrong
+        weight = (sigma ** 2 + self.sigma_data ** 2) / (sigma * self.sigma_data) ** 2 # the 0.5 factor is because the Karras paper is wrong
         losses = losses * weight
+
+        un_weighted_avg_loss = losses.mean().item()
 
         if self.noise_weight is not None:
             self.noise_weight.add_data(sigma, losses)
             if use_loss_weight:
                 mean_loss = self.noise_weight.calculate_mean_loss(sigma)
-                losses = losses / mean_loss**2 + 2*torch.log(mean_loss)
-        return losses.mean()
+                losses = losses / mean_loss#**2 + 2*torch.log(mean_loss)
+        return losses.mean(), un_weighted_avg_loss
 #----------------------------------------------------------------------------
 # Learning rate decay schedule used in the paper "Analyzing and Improving
 # the Training Dynamics of Diffusion Models".

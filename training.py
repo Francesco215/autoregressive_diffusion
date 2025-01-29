@@ -1,4 +1,5 @@
 #%%
+import gc
 from tqdm import tqdm
 import numpy as np
 
@@ -12,6 +13,7 @@ from edm2.loss_weight import MultiNoiseLoss
 from edm2.mars import MARS
 from edm2.dataloading import OpenVidDataloader, RandomDataloader
 from edm2.phema import PowerFunctionEMA
+from edm2.sampler import edm_sampler
 
 # import logging
 # torch._logging.set_logs(dynamo=logging.INFO)
@@ -19,7 +21,7 @@ from edm2.phema import PowerFunctionEMA
 torch._dynamo.config.recompile_limit = 100
 # Example usage:
 n_clips = 100_000
-micro_batch_size = 2 
+micro_batch_size = 4 
 batch_size = 32
 accumulation_steps = batch_size//micro_batch_size
 total_number_of_batches = n_clips // batch_size
@@ -29,8 +31,8 @@ total_number_of_steps = total_number_of_batches * accumulation_steps
 num_workers = 8 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# dataloader = OpenVidDataloader(micro_batch_size, num_workers, device)
-dataloader = RandomDataloader(micro_batch_size, num_workers, device)
+dataloader = OpenVidDataloader(micro_batch_size, num_workers, device)
+# dataloader = RandomDataloader(micro_batch_size, num_workers, device)
 
 
 unet = UNet(img_resolution=64, # Match your latent resolution
@@ -66,17 +68,31 @@ ulw=False
 losses = []
 pbar = tqdm(enumerate(dataloader),total=total_number_of_steps)
 for i, micro_batch in pbar:
+        
     if i==0: print("Downloaded first batch and starting training loop")
     latents = micro_batch['latents'].to(device)
 
+    if (i+1)%1024==0 and i>10:
+        precond.eval()
+        with torch.no_grad():
+            x=latents[:4,:-5].clone()
+            for _ in range(5):
+                y=edm_sampler(precond, x)
+                print(x.shape,y.shape)
+                y[:,:-1]=x
+                x=y.clone()
+            torch.save(y, f"sampled_latents_batch_{i}.pt")
+        del x, y
+        gc.collect()
+        precond.train()
+
     # Calculate loss    
-    loss = loss_fn(precond, latents, use_loss_weight=ulw)
-    losses.append(loss.item())
-
-
+    loss, un_weighted_loss = loss_fn(precond, latents, use_loss_weight=ulw)
+    losses.append(un_weighted_loss)
     # Backpropagation and optimization
     loss.backward()
     pbar.set_postfix_str(f"Loss: {np.mean(losses[-accumulation_steps:]):.4f}, lr: {current_lr:.4f}")
+
     if i % accumulation_steps == 0 and i!=0:
         #microbatching
         optimizer.step()

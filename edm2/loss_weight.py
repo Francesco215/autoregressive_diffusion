@@ -12,14 +12,16 @@ class MultiNoiseLoss:
         self.sigmas = torch.tensor([], dtype=torch.float32)
         self.losses = torch.tensor([], dtype=torch.float32)
         self.positions = torch.tensor([], dtype=torch.int64)
-        self.history_size = 1000
-        self.fourier_approximator = FourierSeriesFit(-torch.pi, torch.pi, num_terms=8)
+        self.history_size = 5_000
+        self.fourier_approximator = FourierSeriesFit(-torch.pi, torch.pi, num_terms=4)
 
     torch.no_grad()
-    def add_data(self, sigma:Tensor, loss:Tensor):
-        self.sigmas = torch.cat((self.sigmas, sigma.flatten().detach().cpu()))[-self.history_size:]
-        self.losses = torch.cat((self.losses, loss.flatten().detach().cpu()))[-self.history_size:]
-        positions = torch.arange(sigma.shape[0] * sigma.shape[1]) % sigma.shape[1]
+    def add_data(self, sigmas:Tensor, losses:Tensor):
+        positions = torch.arange(sigmas.shape[0] * sigmas.shape[1]) % sigmas.shape[1]
+        sigmas, losses, positions = sigmas.flatten().flip((0,)), losses.flatten().flip((0,)), positions.flip((0,))
+        
+        self.sigmas = torch.cat((self.sigmas, sigmas.flatten().detach().cpu()))[-self.history_size:]
+        self.losses = torch.cat((self.losses, losses.flatten().detach().cpu()))[-self.history_size:]
         self.positions = torch.cat((self.positions, positions))[-self.history_size:]
 
     @torch.no_grad()
@@ -45,7 +47,7 @@ class MultiNoiseLoss:
 
         # Scatter plot of the data, colored by position using the viridis colormap
         scatter = ax.scatter(self.sigmas, self.losses, c=self.positions, cmap='viridis', norm=LogNorm(),
-                                alpha=0.3, label='Data Points', s=.5)
+                                alpha=1, label='Data Points', s=.5)
         fig.colorbar(scatter, ax=ax, label='Position')
 
         # Generate logarithmically spaced sigma values and plot them
@@ -73,6 +75,7 @@ class FourierSeriesFit:
         self.L = (interval_max - interval_min) / 2  # Half-interval length
         self.num_terms = num_terms
         self.coefficients = None
+        self.coefficients_history = []
 
     def fourier_series(self, x):
 
@@ -88,13 +91,14 @@ class FourierSeriesFit:
     def fit_data(self, X, Y):
         # Ensure data is within the interval [min, max]
         mask = (torch.log10(X) >= self.interval_min) & (torch.log10(X) <= self.interval_max)
-        X, Y = X[mask], Y[mask]
+        X, Y = X[mask].flatten(), Y[mask].flatten()
 
         # Create Fourier basis matrix
         X_basis = self.fourier_series(X)
 
         # Solve for coefficients using least squares
         self.coefficients = torch.linalg.lstsq(X_basis, Y.unsqueeze(1)).solution
+        self.coefficients_history.append(self.coefficients)
 
     def predict(self, x):
         if self.coefficients is None:
