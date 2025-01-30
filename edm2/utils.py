@@ -1,4 +1,5 @@
 import torch
+from torch import Tensor
 import numpy as np
 from . import misc
 #----------------------------------------------------------------------------
@@ -40,7 +41,7 @@ def mp_silu(x):
 #----------------------------------------------------------------------------
 # Magnitude-preserving sum (Equation 88).
 
-def mp_sum(a, b, t=0.5):
+def mp_sum(a:Tensor, b:Tensor, t=0.5):
     return a.lerp(b, t) / np.sqrt((1 - t) ** 2 + t ** 2)
 
 #----------------------------------------------------------------------------

@@ -11,7 +11,7 @@ from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.loss_weight import MultiNoiseLoss
 from edm2.mars import MARS
-from edm2.dataloading import OpenVidDataloader, RandomDataloader
+from edm2.dataloading import OpenVidDataloader, RandomDataset, OpenVidDataset
 from edm2.phema import PowerFunctionEMA
 from edm2.sampler import edm_sampler
 
@@ -31,13 +31,13 @@ total_number_of_steps = total_number_of_batches * accumulation_steps
 num_workers = 8 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-dataloader = OpenVidDataloader(micro_batch_size, num_workers, device)
+dataloader = OpenVidDataloader(micro_batch_size, num_workers, device, dataset = OpenVidDataset())
 # dataloader = RandomDataloader(micro_batch_size, num_workers, device)
 
 
 unet = UNet(img_resolution=64, # Match your latent resolution
             img_channels=16, # Match your latent channels
-            label_dim = 0,
+            label_dim = dataloader.text_embedding_dim,
             model_channels=128,
             channel_mult=[1,2,2,4],
             channel_mult_noise=None,
@@ -51,8 +51,6 @@ print(f"Number of UNet parameters: {unet_params}M")
 sigma_data = 1.
 precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to("cuda")
 loss_fn = EDM2Loss(P_mean=0.5,P_std=1.5, sigma_data=sigma_data, noise_weight=MultiNoiseLoss())
-loss_fn.noise_weight.loss_mean_popt =[0.2,0,1,0] 
-loss_fn.noise_weight.loss_std_popt = [10,0.01,1e-4]
 
 ref_lr = 1e-2
 current_lr = ref_lr
@@ -68,26 +66,12 @@ ulw=False
 losses = []
 pbar = tqdm(enumerate(dataloader),total=total_number_of_steps)
 for i, micro_batch in pbar:
-        
     if i==0: print("Downloaded first batch and starting training loop")
     latents = micro_batch['latents'].to(device)
-
-    if (i+1)%1024==0 and i>10:
-        precond.eval()
-        with torch.no_grad():
-            x=latents[:4,:-5].clone()
-            for _ in range(5):
-                y=edm_sampler(precond, x)
-                print(x.shape,y.shape)
-                y[:,:-1]=x
-                x=y.clone()
-            torch.save(y, f"sampled_latents_batch_{i}.pt")
-        del x, y
-        gc.collect()
-        precond.train()
+    text_embeddings = None if i%3==0 else micro_batch['text_embeddings'].to(device)
 
     # Calculate loss    
-    loss, un_weighted_loss = loss_fn(precond, latents, use_loss_weight=ulw)
+    loss, un_weighted_loss = loss_fn(precond, latents, text_embeddings, use_loss_weight=ulw)
     losses.append(un_weighted_loss)
     # Backpropagation and optimization
     loss.backward()

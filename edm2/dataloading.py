@@ -10,10 +10,11 @@ from torch.utils.data import DataLoader, IterableDataset
 from abc import abstractmethod
 from tqdm import tqdm
 from datasets import load_dataset
+from transformers import CLIPTokenizer, CLIPTextModel
 from typing import Optional
 
 os.environ['HF_HUB_ENABLE_HF_TRANSFER'] = '1'
-#%%
+
 def deserialize_tensor(
     serialized_tensor: bytes, device: Optional[str] = "cpu"
 ) -> torch.Tensor:
@@ -35,10 +36,14 @@ class OpenVidDataset(IterableDataset):
             yield latent, caption
 
 class OpenVidDataloader(DataLoader):
-    def __init__(self, batch_size, num_workers, device):
-        self.dataset = OpenVidDataset()
+    def __init__(self, batch_size, num_workers, device, dataset):
+        self.dataset = dataset
         self.device = device
         self.mean, self.std, self.channel_wise_std = -0.010, 2.08, 69
+        model_name = "openai/clip-vit-large-patch14"
+        self.tokenizer = CLIPTokenizer.from_pretrained(model_name)
+        self.text_encoder = CLIPTextModel.from_pretrained(model_name).cpu() # Keep on CPU to save VRAM
+        self.text_embedding_dim = self.text_encoder.config.hidden_size
         
         super().__init__(self.dataset, batch_size=batch_size, num_workers=num_workers, collate_fn=self.collate_fn, prefetch_factor=16)
     
@@ -48,7 +53,12 @@ class OpenVidDataloader(DataLoader):
         latents = torch.stack(latents)
         latents = einops.rearrange(latents, 'b c t h w -> b t c h w')
         caption = list(caption)
-        return {"latents": latents/self.std, "captions": caption}
+
+        inputs = self.tokenizer(caption, padding=True, truncation=True, return_tensors="pt")
+        with torch.no_grad():
+            text_embeddings = self.text_encoder(**inputs).last_hidden_state[:, 0, :]
+
+        return {"latents": latents/self.std, "captions": caption, "text_embeddings": text_embeddings}
 
 
 
@@ -65,7 +75,7 @@ class OpenVidDataloader(DataLoader):
 
 # useful for debugging
 class RandomDataset(IterableDataset):
-    def __init__(self, clip_length, clip_shape):
+    def __init__(self, clip_length= 16, clip_shape = (16,64,64)):
         self.clip_length = clip_length
         self.clip_shape = clip_shape
         self.mean, self.std = 0.051, 0.434
@@ -75,18 +85,3 @@ class RandomDataset(IterableDataset):
         while True:
             latents = torch.randn(self.clip_length, *self.clip_shape)
             yield latents, "random_caption"
-class RandomDataloader(DataLoader):
-    def __init__(self, batch_size, num_workers, device):
-        self.dataset = RandomDataset(16, (16, 64, 64))
-        self.device = device
-        self.mean, self.std, self.channel_wise_std = 0, 2., 1.
-        
-        super().__init__(self.dataset, batch_size=batch_size, num_workers=num_workers, collate_fn=self.collate_fn, prefetch_factor=4)
-    
-    @abstractmethod
-    def collate_fn(self, batch):
-        latents, caption = zip(*batch)
-        latents = torch.stack(latents)
-        latents = einops.rearrange(latents, 'b c t h w -> b t c h w')
-        caption = list(caption)
-        return {"latents": latents/self.std, "captions": caption}
