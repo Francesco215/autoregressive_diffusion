@@ -64,7 +64,7 @@ class MPCausal3DConv(torch.nn.Module):
             # we just take the context frames
             context, _ = einops.rearrange(x, '(b s t) c h w -> s b c t h w', b=batch_size, s=2).unbind(0)
             #pad context along the time dimention to make sure that it's causal
-            context = mp_cat(causal_pad, context, dim=-3)
+            context = torch.cat((causal_pad, context), dim=-3)
 
             # now we do the 3d convolutions over the previous frames of the context
             context = torch.nn.functional.conv3d(context[:,:,:-1], w[:,:,:-1], padding=image_padding)

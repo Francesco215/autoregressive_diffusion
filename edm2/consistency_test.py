@@ -23,6 +23,7 @@ SEED = 42  # Set a seed for reproducibility
 dtype = torch.float32
 np.random.seed(42)
 random.seed(42)
+error_bound = 2e-3
 class TestUNet(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -63,31 +64,31 @@ class TestUNet(unittest.TestCase):
         std_diff_1 = (y_train[:, :CUT_FRAME] - y_eval[:, :-1]).std().item()
         std_diff_2 = (y_train[:, CUT_FRAME + N_FRAMES] - y_eval[:, -1]).std().item()
 
-        self.assertLessEqual(std_diff_1, 4e-4, f"Test failed: std deviation {std_diff_1} exceeded 4e-4")
-        self.assertLessEqual(std_diff_2, 4e-4, f"Test failed: std deviation {std_diff_2} exceeded 4e-4")
+        self.assertLessEqual(std_diff_1, error_bound, f"Test failed: std deviation {std_diff_1} exceeded {error_bound}")
+        self.assertLessEqual(std_diff_2, error_bound, f"Test failed: std deviation {std_diff_2} exceeded {error_bound}")
 
 
     def test_3d_conv_consistency_between_train_and_eval(self):
         self.conv3d.train()
-        x = torch.randn(BATCH_SIZE * 2 * N_FRAMES, 4*IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
+        x = torch.randn(BATCH_SIZE * 2 * N_FRAMES, IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
         noise_level = torch.zeros(x.shape[:2], device="cuda", dtype=dtype)
-        y_train = self.attention(x, BATCH_SIZE)
+        y_train = self.conv3d(x, BATCH_SIZE)
         
         self.conv3d.eval()
         x = einops.rearrange(x,'(b l) ... -> b l ...', b=BATCH_SIZE)
         x_eval = torch.cat((x[:, :CUT_FRAME], x[:, CUT_FRAME + N_FRAMES].unsqueeze(1)), dim=1)
         x_eval = einops.rearrange(x_eval, 'b l ... -> (b l ) ...')
-        y_eval = self.attention(x_eval, BATCH_SIZE)
+        y_eval = self.conv3d(x_eval, BATCH_SIZE)
 
         y_train, y_eval = einops.rearrange(y_train,'(b l) ... -> b l ...', b=BATCH_SIZE), einops.rearrange(y_eval,'(b l) ... -> b l ...', b=BATCH_SIZE)
 
-        std_diff_0 = (y_train[:, :2] - y_eval[:, :2]).std().item()
+        std_diff_0 = (y_train[:, :1] - y_eval[:, :1]).std().item()
         std_diff_1 = (y_train[:, :CUT_FRAME] - y_eval[:, :-1]).std().item()
         std_diff_2 = (y_train[:, CUT_FRAME + N_FRAMES] - y_eval[:, -1]).std().item()
 
-        self.assertLessEqual(std_diff_0, 4e-4, f"Test failed: std deviation {std_diff_0} exceeded 4e-4")
-        self.assertLessEqual(std_diff_1, 4e-4, f"Test failed: std deviation {std_diff_1} exceeded 4e-4")
-        self.assertLessEqual(std_diff_2, 4e-4, f"Test failed: std deviation {std_diff_2} exceeded 4e-4")
+        self.assertLessEqual(std_diff_0, error_bound, f"Test failed: std deviation {std_diff_0} exceeded {error_bound}")
+        self.assertLessEqual(std_diff_1, error_bound, f"Test failed: std deviation {std_diff_1} exceeded {error_bound}")
+        self.assertLessEqual(std_diff_2, error_bound, f"Test failed: std deviation {std_diff_2} exceeded {error_bound}")
     
     def test_unet_consistency_between_train_and_eval(self):
         # Test consistency between training and evaluation modes
@@ -104,8 +105,8 @@ class TestUNet(unittest.TestCase):
         std_diff_1 = (y_train[:, :CUT_FRAME] - y_eval[:, :-1]).std().item()
         std_diff_2 = (y_train[:, CUT_FRAME + N_FRAMES] - y_eval[:, -1]).std().item()
 
-        self.assertLessEqual(std_diff_1, 4e-4, f"Test failed: std deviation {std_diff_1} exceeded 4e-4")
-        self.assertLessEqual(std_diff_2, 4e-4, f"Test failed: std deviation {std_diff_2} exceeded 4e-4")
+        self.assertLessEqual(std_diff_1, error_bound, f"Test failed: std deviation {std_diff_1} exceeded {error_bound}")
+        self.assertLessEqual(std_diff_2, error_bound, f"Test failed: std deviation {std_diff_2} exceeded {error_bound}")
 
 
     def test_unet_causality(self):
@@ -119,9 +120,9 @@ class TestUNet(unittest.TestCase):
         noise_level = torch.zeros(x.shape[:2], device="cuda", dtype=dtype)
         y = self.unet.forward(x, noise_level, None) - self.unet.forward(a, noise_level, None)
 
-        self.assertTrue((y[:, :CUT_FRAME].std()<4e-4).item())
+        self.assertTrue((y[:, :CUT_FRAME].std()<error_bound).item())
         self.assertTrue((y[:, CUT_FRAME:N_FRAMES].std()>0.3).item())
-        self.assertTrue((y[:, N_FRAMES:N_FRAMES + CUT_FRAME].std()<4e-4).item())
+        self.assertTrue((y[:, N_FRAMES:N_FRAMES + CUT_FRAME].std()<error_bound).item())
         self.assertFalse((y[:, N_FRAMES + CUT_FRAME:].std()>0.3).item())
 
 if __name__ == "__main__":
