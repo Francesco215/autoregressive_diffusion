@@ -107,14 +107,14 @@ for i, micro_batch in pbar:
         ulw=True
 
 
-    if i % (total_number_of_steps//10) == 0 and i!=0:  # save every 10% of epochs
+    if i % (total_number_of_steps//4) == 0 and i!=0:  # save every 10% of epochs
         torch.save({
             'batch': i,
             'model_state_dict': precond.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
+            # 'optimizer_state_dict': optimizer.state_dict(),
             'ema_state_dict': ema_tracker.state_dict(),
             'loss': loss,
-        }, f"model_batch_{i+1}.pt")
+        }, f"model_batch_{i}.pt")
 
     if i == total_number_of_steps:
         break

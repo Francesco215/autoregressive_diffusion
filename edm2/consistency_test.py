@@ -4,7 +4,8 @@ import unittest
 import logging
 import os
 from edm2.conv import MPCausal3DConv
-from edm2.networks_edm2 import UNet, VideoSelfAttention
+from edm2.attention import VideoAttention
+from edm2.networks_edm2 import UNet
 import numpy as np
 import random 
 
@@ -44,7 +45,7 @@ class TestUNet(unittest.TestCase):
         ).to("cuda").to(dtype)
         print(f"Number of UNet parameters: {sum(p.numel() for p in cls.unet.parameters()) // 1e6}M")
 
-        cls.attention = VideoSelfAttention(channels = 4*IMG_CHANNELS, num_heads = 4).to("cuda").to(dtype)
+        cls.attention = VideoAttention(channels = 4*IMG_CHANNELS, num_heads = 4).to("cuda").to(dtype)
         cls.conv3d = MPCausal3DConv(IMG_CHANNELS, IMG_CHANNELS, kernel = (3,3,3)).to("cuda").to(dtype)
 
     def test_attention_consistency_between_train_and_eval(self):

@@ -1,19 +1,30 @@
 #%%
-from transformers import CLIPTokenizer, CLIPTextModel
 import torch
+import numpy as np
 
-model_name = "openai/clip-vit-large-patch14"
-tokenizer = CLIPTokenizer.from_pretrained(model_name)
-text_encoder = CLIPTextModel.from_pretrained(model_name)
+# Parameters
+m = 1000  # Number of rows
+n = 500   # Number of columns
+sigma = 2.0  # Standard deviation of normal distribution
 
-def encode_text(texts):
-    inputs = tokenizer(texts, padding=True, truncation=True, return_tensors="pt")
-    with torch.no_grad():
-        embeddings = text_encoder(**inputs).last_hidden_state[:, 0, :]
-    return embeddings  # Shape: (b, d)
+# Generate random matrix X from N(0, sigma^2)
+X = torch.randn(m, n) * sigma  # Each element ~ N(0, sigma^2)
 
-texts = ["a cat", "a dog"]
-embeddings = encode_text(texts)
-print(embeddings.shape)  # Expected: (2, 512) for CLIP-ViT-B/32
+# Define vector of ones
+ones_vector = torch.ones(n, 1)
+
+# Compute Y = X * ones_vector
+Y = X @ ones_vector  # Shape (m, 1)
+
+# Compute empirical standard deviation
+empirical_std = Y.std().item()
+
+theoretical_std = np.sqrt(n) * sigma
+
+print(f"Empirical Std: {empirical_std:.4f}")
+print(f"Theoretical Std: {theoretical_std:.4f}")
+
+# %%
+Y.shape
 
 # %%
