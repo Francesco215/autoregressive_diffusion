@@ -16,7 +16,7 @@ torch._logging.set_logs(dynamo=logging.INFO)
 
 # Constants
 IMG_RESOLUTION = 64
-BATCH_SIZE = 2
+BATCH_SIZE = 16
 IMG_CHANNELS = 16
 N_FRAMES = 8
 CUT_FRAME = 3
@@ -24,7 +24,7 @@ SEED = 42  # Set a seed for reproducibility
 dtype = torch.float32
 np.random.seed(42)
 random.seed(42)
-error_bound = 2e-3
+error_bound = 4e-4
 class TestUNet(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
