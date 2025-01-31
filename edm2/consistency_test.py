@@ -1,8 +1,9 @@
+import einops
 import torch
 import unittest
 import logging
 import os
-from edm2.networks_edm2 import UNet
+from edm2.networks_edm2 import UNet, VideoSelfAttention
 import numpy as np
 import random 
 
@@ -13,6 +14,7 @@ torch._logging.set_logs(dynamo=logging.INFO)
 
 # Constants
 IMG_RESOLUTION = 64
+BATCH_SIZE = 2
 IMG_CHANNELS = 16
 N_FRAMES = 8
 CUT_FRAME = 3
@@ -32,14 +34,39 @@ class TestUNet(unittest.TestCase):
             img_channels=IMG_CHANNELS,
             label_dim=0,
             model_channels=32,
-            channel_mult=[1, 2, 2],
+            channel_mult=[1, 2, 2, 4],
             channel_mult_noise=None,
             channel_mult_emb=None,
-            num_blocks=1,
-            attn_resolutions=[]
+            num_blocks=3,
+            attn_resolutions=[16,8]
         ).to("cuda").to(dtype)
         print(f"Number of UNet parameters: {sum(p.numel() for p in cls.unet.parameters()) // 1e6}M")
 
+        cls.attention = VideoSelfAttention(channels = 4*IMG_CHANNELS, num_heads = 4).to("cuda").to(dtype)
+
+    def test_attention_consistency_between_train_and_eval(self):
+        self.attention.train()
+        x = torch.randn(BATCH_SIZE * 2 * N_FRAMES, 4*IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
+        noise_level = torch.zeros(x.shape[:2], device="cuda", dtype=dtype)
+        y_train = self.attention(x, BATCH_SIZE)
+        
+        self.attention.eval()
+        x = einops.rearrange(x,'(b l) ... -> b l ...', b=BATCH_SIZE)
+        x_eval = torch.cat((x[:, :CUT_FRAME], x[:, CUT_FRAME + N_FRAMES].unsqueeze(1)), dim=1)
+        x_eval = einops.rearrange(x_eval, 'b l ... -> (b l ) ...')
+        y_eval = self.attention(x_eval, BATCH_SIZE)
+
+        y_train, y_eval = einops.rearrange(y_train,'(b l) ... -> b l ...', b=BATCH_SIZE), einops.rearrange(y_eval,'(b l) ... -> b l ...', b=BATCH_SIZE)
+
+        std_diff_1 = (y_train[:, :CUT_FRAME] - y_eval[:, :-1]).std().item()
+        std_diff_2 = (y_train[:, CUT_FRAME + N_FRAMES] - y_eval[:, -1]).std().item()
+
+        self.assertLessEqual(std_diff_1, 4e-4, f"Test failed: std deviation {std_diff_1} exceeded 4e-4")
+        self.assertLessEqual(std_diff_2, 4e-4, f"Test failed: std deviation {std_diff_2} exceeded 4e-4")
+
+
+
+        
     
     def test_unet_consistency_between_train_and_eval(self):
         # Test consistency between training and evaluation modes
@@ -53,8 +80,12 @@ class TestUNet(unittest.TestCase):
         noise_level_eval = torch.cat((noise_level[:, :CUT_FRAME], noise_level[:, CUT_FRAME + N_FRAMES].unsqueeze(1)), dim=1)
         y_eval = self.unet.forward(x_eval, noise_level_eval, None)
         
-        self.assertTrue(((y_train[:,:CUT_FRAME]-y_eval[:,:-1]).std()<4e-4).item())
-        self.assertTrue(((y_train[:,CUT_FRAME+N_FRAMES] - y_eval[:,-1]).std()<4e-4).item())
+        std_diff_1 = (y_train[:, :CUT_FRAME] - y_eval[:, :-1]).std().item()
+        std_diff_2 = (y_train[:, CUT_FRAME + N_FRAMES] - y_eval[:, -1]).std().item()
+
+        self.assertLessEqual(std_diff_1, 4e-4, f"Test failed: std deviation {std_diff_1} exceeded 4e-4")
+        self.assertLessEqual(std_diff_2, 4e-4, f"Test failed: std deviation {std_diff_2} exceeded 4e-4")
+
 
     def test_unet_causality(self):
         # make sure that during training the network is fully causal
