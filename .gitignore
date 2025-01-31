@@ -6,6 +6,6 @@ encoded_latents/
 uv.lock
 .venv/
 autoregressive_diffusion.egg-info/
-.vscode/
+# .vscode/
 aws/
 pretrained_ckpts/

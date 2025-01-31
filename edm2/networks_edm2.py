@@ -11,173 +11,15 @@
 import numpy as np
 import torch
 from torch import nn, Tensor
-from torch.nn import functional as F
-from torch.nn.attention.flex_attention import flex_attention
 import einops
 
-from . import misc
-from .RoPe import RotaryEmbedding
-from .attention_masking import make_train_mask, make_infer_mask, AutoregressiveDiffusionMask
-from .utils import normalize
-from .conv_3d import MPCausal3DConv
-
-#----------------------------------------------------------------------------
-# Upsample or downsample the given tensor with the given filter,
-# or keep it as is.
-
-def resample(x, f=[1,1], mode='keep'):
-    if mode == 'keep':
-        return x
-    f = np.float32(f)
-    assert f.ndim == 1 and len(f) % 2 == 0
-    pad = (len(f) - 1) // 2
-    f = f / f.sum()
-    f = np.outer(f, f)[np.newaxis, np.newaxis, :, :]
-    f = misc.const_like(x, f)
-    c = x.shape[1]
-    if mode == 'down':
-        return torch.nn.functional.conv2d(x, f.tile([c, 1, 1, 1]), groups=c, stride=2, padding=(pad,))
-    assert mode == 'up'
-    return torch.nn.functional.conv_transpose2d(x, (f * 4).tile([c, 1, 1, 1]), groups=c, stride=2, padding=(pad,))
-
-#----------------------------------------------------------------------------
-# Magnitude-preserving SiLU (Equation 81).
-
-def mp_silu(x):
-    return torch.nn.functional.silu(x) / 0.596
-
-#----------------------------------------------------------------------------
-# Magnitude-preserving sum (Equation 88).
-
-def mp_sum(a, b, t=0.5):
-    return a.lerp(b, t) / np.sqrt((1 - t) ** 2 + t ** 2)
-
-#----------------------------------------------------------------------------
-# Magnitude-preserving concatenation (Equation 103).
-
-def mp_cat(a, b, dim=1, t=0.5):
-    Na = a.shape[dim]
-    Nb = b.shape[dim]
-    C = np.sqrt((Na + Nb) / ((1 - t) ** 2 + t ** 2))
-    wa = C / np.sqrt(Na) * (1 - t)
-    wb = C / np.sqrt(Nb) * t
-    return torch.cat([wa * a , wb * b], dim=dim)
-
-#----------------------------------------------------------------------------
-# Magnitude-preserving Fourier features (Equation 75).
-
-class MPFourier(torch.nn.Module):
-    def __init__(self, num_channels, bandwidth=1):
-        super().__init__()
-        self.register_buffer('freqs', 2 * np.pi * torch.randn(num_channels) * bandwidth)
-        self.register_buffer('phases', 2 * np.pi * torch.rand(num_channels))
-
-    def forward(self, x):
-        y = x.to(torch.float32)
-        y = y.ger(self.freqs.to(torch.float32))
-        y = y + self.phases.to(torch.float32)
-        y = y.cos() * np.sqrt(2)
-        return y.to(x.dtype)
-
-#----------------------------------------------------------------------------
-# Magnitude-preserving convolution or fully-connected layer (Equation 47)
-# with force weight normalization (Equation 66).
-
-class MPConv(torch.nn.Module):
-    def __init__(self, in_channels, out_channels, kernel):
-        super().__init__()
-        self.out_channels = out_channels
-        self.weight = torch.nn.Parameter(torch.randn(out_channels, in_channels, *kernel))
-
-    def forward(self, x, gain=1, batch_size=None):
-        w = self.weight.to(torch.float32)
-        if self.training:
-            with torch.no_grad():
-                self.weight.copy_(normalize(w)) # forced weight normalization
-        w = normalize(w) # traditional weight normalization. for the gradients 
-        w = w * (gain / np.sqrt(w[0].numel())) # magnitude-preserving scaling
-        w = w.to(x.dtype)
-        if w.ndim == 2:
-            return x @ w.t()
-        assert w.ndim == 4
-        return torch.nn.functional.conv2d(x, w, padding=(w.shape[-1]//2,))
+from .utils import normalize, resample, mp_silu, mp_sum, mp_cat, MPFourier
+from .conv import MPCausal3DConv, MPConv
+from .attention import FrameAttention, VideoAttention
 
 
-#----------------------------------------------------------------------------
-# Self-Attention module. It shouldn't need anything extra to make it magniture-preserving
-class VideoSelfAttention(torch.nn.Module):
-    def __init__(self, channels, num_heads, attn_balance = 0.3):
-        super().__init__()
-        self.channels = channels
-        self.num_heads = num_heads
-        self.attn_balance = attn_balance
-        if num_heads == 0:
-            return
 
-        self.attn_qkv = MPConv(channels, channels * 3, kernel=[1,1]) 
-        self.attn_proj = MPConv(channels, channels, kernel=[1,1]) 
-        self.rope = RotaryEmbedding(channels//num_heads)
-        self.block_mask = None
-        self.training_mask = None        
-    
-
-    def forward(self, x, batch_size):
-        if self.num_heads == 0:
-            return x
-
-        h, w = x.shape[-2:]
-        self.image_size = h*w
-        if (self.training_mask is None and self.block_mask is None) or self.last_x_shape != x.shape or self.last_modality != self.training:
-            # This can trigger a recompilation of the flex_attention function
-            if self.training:
-                n_frames = x.shape[0]//(batch_size*2)
-                self.training_mask = AutoregressiveDiffusionMask(n_frames, self.image_size)
-                self.block_mask = make_train_mask(batch_size, self.num_heads, n_frames, image_size=h*w)
-            else:
-                n_frames = x.shape[0]//batch_size
-                self.block_mask = make_infer_mask(batch_size, self.num_heads, n_frames, image_size=h*w)
-
-            self.last_x_shape = x.shape
-            self.last_modality = self.training
-
-        y = self.attn_qkv(x)
-
-        # b:batch, t:time, m: multi-head, s: split, c: channels, h: height, w: width
-        y = einops.rearrange(y, '(b t) (s m c) h w -> s b m t (h w) c', b=batch_size, s=3, m=self.num_heads)
-        # q, k, v = normalize(y, dim=-1).unbind(0) # pixel norm & split 
-        q, k, v = y.unbind(0) # pixel norm & split 
-
-        q, k = self.rope(q, k)
-
-        # i = (h w)
-        v = einops.rearrange(v, ' b m t i c -> b m (t i) c') # q and k are already rearranged inside of rope
-
-        y = self.flex_attention(q, k, v, self.block_mask)
-        y = einops.rearrange(y, 'b m (t h w) c -> (b t) (c m) h w', b=batch_size, h=h, w=w)
-
-        y = self.attn_proj(y)
-        return mp_sum(x, y, t=self.attn_balance)
-    
-    # To log all recompilation reasons, use TORCH_LOGS="recompiles" or torch._logging.set_logs(dynamo=logging.INFO)
-    @torch.compile
-    def flex_attention(self, q, k, v, block_mask): 
-        score_mod = None
-        # if block_mask == None:
-        #     if self.training:
-        #         def causal_mask(score, b, h, q_idx, kv_idx):
-        #             return torch.where(self.training_mask(b, h, q_idx, kv_idx), score, -float("inf"))
-        #         score_mod = causal_mask
-        #     else:
-        #         def causal_mask(score, b, h, q_idx, kv_idx):
-        #             q_idx, kv_idx = q_idx // self.image_size, kv_idx // self.image_size
-        #             return torch.where(q_idx >= kv_idx, score, -float("inf"))
-        #         score_mod = causal_mask
-        assert score_mod is not None or block_mask is not None, "Either block_mask or score_mod must be defined"
-
-        return flex_attention(q, k, v, score_mod, block_mask)
-
-        
-#----------------------------------------------------------------------------
+#---------------------------------------------------------------------------
 # U-Net encoder/decoder block with optional self-attention (Figure 21).
 
 class Block(torch.nn.Module):
@@ -211,11 +53,11 @@ class Block(torch.nn.Module):
         self.conv_res0 = MPCausal3DConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3,3])
         self.conv_res1 = MPCausal3DConv(out_channels, out_channels, kernel=[3,3,3])
         # else:
-        #     self.conv_res0 = MPConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3])
-        #     self.conv_res1 = MPConv(out_channels, out_channels, kernel=[3,3])
+        # self.conv_res0 = MPConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3])
+        # self.conv_res1 = MPConv(out_channels, out_channels, kernel=[3,3])
 
         self.conv_skip = MPConv(in_channels, out_channels, kernel=[1,1]) if in_channels != out_channels else None
-        self.attn = VideoSelfAttention(out_channels, self.num_heads, attn_balance)
+        self.attn = VideoAttention(out_channels, self.num_heads, attn_balance)
 
         if self.num_heads > 0: 
             assert (out_channels & (out_channels - 1) == 0) and out_channels != 0, f"out_channels must be a power of 2, got {out_channels}"
@@ -277,7 +119,7 @@ class UNet(torch.nn.Module):
         cemb = model_channels * channel_mult_emb if channel_mult_emb is not None else max(cblock)
         self.label_balance = label_balance
         self.concat_balance = concat_balance
-        # self.out_gain = torch.nn.Parameter(torch.tensor([1.], requires_grad=False))
+        self.out_gain = torch.nn.Parameter(torch.tensor([1.], requires_grad=True))
 
         # Embedding.
         self.emb_fourier = MPFourier(cnoise)
@@ -316,16 +158,20 @@ class UNet(torch.nn.Module):
                 self.dec[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=(res in attn_resolutions), **block_kwargs)
         self.out_conv = MPConv(cout, img_channels, kernel=[3,3])
 
-    def forward(self, x, noise_labels, class_labels = None):
+    def forward(self, x, noise_labels, text_embeddings = None):
         # x.shape = b t c h w
-        batch_size = x.shape[0]
-        x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
+        batch_size, time_dimention = x.shape[:2]
+        x = einops.rearrange(x, 'b t ... -> (b t) ...')
         noise_labels = einops.rearrange(noise_labels, 'b t ... -> (b t) ...')
+
         # Embedding.
         emb = self.emb_noise(self.emb_fourier(noise_labels))
-        if self.emb_label is not None:
+        if self.emb_label is not None and text_embeddings is not None:
             # TODO: might need to change this for when the class label is not none
-            emb = mp_sum(emb, self.emb_label(class_labels * np.sqrt(class_labels.shape[1])), t=self.label_balance)
+            text_embeddings = self.emb_label(text_embeddings * np.sqrt(text_embeddings.shape[1]))
+            if text_embeddings.shape[0]!=1:
+                text_embeddings = torch.repeat_interleave(text_embeddings, time_dimention, dim = 0)
+            emb = mp_sum(emb, text_embeddings, t=self.label_balance)
         emb = mp_silu(emb)
 
         # Encoder.
@@ -340,7 +186,7 @@ class UNet(torch.nn.Module):
             if 'block' in name:
                 x = mp_cat(x, skips.pop(), t=self.concat_balance)
             x = block(x, emb, batch_size=batch_size)
-        x = self.out_conv(x)
+        x = self.out_conv(x, gain=self.out_gain)
         x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
         return x
 
@@ -361,11 +207,13 @@ class Precond(torch.nn.Module):
         self.use_fp16 = use_fp16
         self.sigma_data = sigma_data
 
-    def forward(self, x:Tensor, sigma:Tensor, class_labels=None, force_fp32=False, **unet_kwargs):
+    def forward(self, x:Tensor, sigma:Tensor, text_embeddings:Tensor=None, force_fp32=False, **unet_kwargs):
+        b, t, c, h, w = x.shape
         x = x.to(torch.float32)
         sigma = sigma.to(torch.float32)
         sigma = einops.rearrange(sigma, '... -> ... 1 1 1')
-        class_labels = None if self.label_dim == 0 else torch.zeros([1, self.label_dim], device=x.device) if class_labels is None else class_labels.to(torch.float32).reshape(-1, self.label_dim)
+
+        text_embeddings = None if self.label_dim == 0 else torch.zeros([1, self.label_dim], device=x.device) if text_embeddings is None else text_embeddings.to(torch.float32)
         dtype = torch.float16 if (self.use_fp16 and not force_fp32 and x.device.type == 'cuda') else torch.float32
 
         # Preconditioning weights.
@@ -376,7 +224,7 @@ class Precond(torch.nn.Module):
  
         # Run the model.
         x_in = (c_in * x).to(dtype)
-        F_x = self.unet(x_in, c_noise, class_labels, **unet_kwargs)
+        F_x = self.unet(x_in, c_noise, text_embeddings, **unet_kwargs)
         D_x = c_skip * x + c_out * F_x.to(torch.float32)
 
         return D_x

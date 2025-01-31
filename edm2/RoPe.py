@@ -40,14 +40,14 @@ class RotaryEmbedding(nn.Module):
         self.register_buffer("pos_emb_scale", scale.to(torch.float16), persistent=False)
         return pos_emb, scale
     
-
+    @torch.compile
     def forward(self, q:Tensor, k:Tensor):
         # q,k shape = b m t (h w) c
         
         # split the context subspace from the prediction subspace
         if self.training:
-            q = einops.rearrange(q, 'b m (a t) i c -> b m a t i c', a=2)
-            k = einops.rearrange(k, 'b m (a t) i c -> b m a t i c', a=2)
+            q = einops.rearrange(q, 'b m (a t) hw c -> b m a t hw c', a=2)
+            k = einops.rearrange(k, 'b m (a t) hw c -> b m a t hw c', a=2)
 
         pos, scale=self.get_rotary_embedding(q.shape[-3])
 
@@ -56,11 +56,11 @@ class RotaryEmbedding(nn.Module):
 
         #'b m ... c -> b m (...) c'
         if self.training:
-            q = einops.rearrange(q, 'b m a t i c -> b m (a t i) c')
-            k = einops.rearrange(k, 'b m a t i c -> b m (a t i) c')
+            q = einops.rearrange(q, 'b m a t hw c -> b m (a t hw) c')
+            k = einops.rearrange(k, 'b m a t hw c -> b m (a t hw) c')
         else:
-            q = einops.rearrange(q, 'b m t i c -> b m (t i) c')
-            k = einops.rearrange(k, 'b m t i c -> b m (t i) c')
+            q = einops.rearrange(q, 'b m t hw c -> b m (t hw) c')
+            k = einops.rearrange(k, 'b m t hw c -> b m (t hw) c')
 
         return q, k
 

@@ -37,7 +37,7 @@ class EDM2Loss:
         self.noise_weight = noise_weight
         assert context_noise_reduction >= 0 and context_noise_reduction <= 1, f"context_noise_reduction must be in [0,1], what are you doing? {context_noise_reduction}"
 
-    def __call__(self, net, images, labels=None, use_loss_weight=False):
+    def __call__(self, net, images, text_embeddings=None, use_loss_weight=False):
         batch_size, n_frames, channels, height, width = images.shape    
         cat_images = torch.cat((images,images),dim=1).clone()
 
@@ -46,19 +46,21 @@ class EDM2Loss:
         sigma = torch.cat((sigma_context,sigma_targets),dim=1)
 
         noise = einops.einsum(sigma, torch.randn_like(cat_images), 'b t, b t ... -> b t ...') 
-        denoised = net(cat_images + noise, sigma, labels)[:,n_frames:]
+        denoised = net(cat_images + noise, sigma, text_embeddings)[:,n_frames:]
         losses = ((denoised - images) ** 2).mean(dim=(-1,-2,-3))
 
         sigma = sigma[:,n_frames:]
-        weight = 0.5*(sigma ** 2 + self.sigma_data ** 2) / (sigma * self.sigma_data) ** 2 # the 0.5 factor is because the Karras paper is wrong
+        weight = (sigma ** 2 + self.sigma_data ** 2) / (sigma * self.sigma_data) ** 2 # the 0.5 factor is because the Karras paper is wrong
         losses = losses * weight
+
+        un_weighted_avg_loss = losses.mean().item()
 
         if self.noise_weight is not None:
             self.noise_weight.add_data(sigma, losses)
             if use_loss_weight:
                 mean_loss = self.noise_weight.calculate_mean_loss(sigma)
-                losses = losses / mean_loss**2 + 2*torch.log(mean_loss)
-        return losses.mean()
+                losses = losses / mean_loss#**2 + 2*torch.log(mean_loss)
+        return losses.mean(), un_weighted_avg_loss
 #----------------------------------------------------------------------------
 # Learning rate decay schedule used in the paper "Analyzing and Improving
 # the Training Dynamics of Diffusion Models".

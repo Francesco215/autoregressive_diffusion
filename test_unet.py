@@ -20,11 +20,13 @@ unet = UNet(img_resolution=img_resolution, # Match your latent resolution
             channel_mult_emb=None,
             num_blocks=2,
             attn_resolutions=[16,8]
-            ).to("cuda").to(torch.float16)
+            )
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
-precond = Precond(unet, use_fp16=True, sigma_data=1.).to("cuda")
+precond = Precond(unet, use_fp16=False, sigma_data=1.).to("cuda")
 
 # %%
+torch.autograd.set_detect_anomaly(True, check_nan=True)
+
 x = torch.randn(4, 10, img_channels, img_resolution, img_resolution, device="cuda")
 # noise_level = torch.rand(2, 10, device="cuda")
 # y = unet.forward(x, noise_level, None)

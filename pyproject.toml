@@ -13,7 +13,11 @@ dependencies = [
     "moviepy",
     "scipy",
     "diffusers>=0.32.1",
+    "transformers",
     "datasets>=3.2.0",
     "cosmos_tokenizer @ git+https://github.com/NVIDIA/Cosmos-Tokenizer",
     "av"
 ]
+
+[tool.setuptools.packages.find]
+include = ["edm2", "edm2.*"]

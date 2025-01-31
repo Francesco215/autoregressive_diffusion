@@ -9,7 +9,7 @@ from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.loss_weight import MultiNoiseLoss
 from edm2.mars import MARS
-from edm2.dataloading import OpenVidDataloader
+from edm2.dataloading import OpenVidDataloader, OpenVidDataset
 from edm2.phema import PowerFunctionEMA
 
 # import logging
@@ -27,14 +27,13 @@ total_number_of_steps = total_number_of_batches * accumulation_steps
 num_workers = 8 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-if batch is None:
-    dataloader = OpenVidDataloader(micro_batch_size, num_workers, device)
-    batch = next(iter(dataloader))
+dataloader = OpenVidDataloader(micro_batch_size, num_workers, device, OpenVidDataset())
+batch = next(iter(dataloader))
 #%%
 
 unet = UNet(img_resolution=64, # Match your latent resolution
             img_channels=16, # Match your latent channels
-            label_dim = 0,
+            label_dim = dataloader.text_embedding_dim,
             model_channels=128,
             channel_mult=[1,2,2,4],
             channel_mult_noise=None,
@@ -45,7 +44,7 @@ unet = UNet(img_resolution=64, # Match your latent resolution
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
 sigma_data = 1.
 precond = Precond(unet, use_fp16=True, sigma_data=sigma_data)
-precond_state_dict = torch.load("conv3d_first.pt",map_location=device,weights_only=False)['model_state_dict']
+precond_state_dict = torch.load("model_batch_5001.pt",map_location=device,weights_only=False)['model_state_dict']
 # precond_state_dict = torch.load("conv3d_first.pt",map_location=device,weights_only=False)['ema_state_dict']['emas'][1]
 precond.load_state_dict(precond_state_dict)
 precond.to(device)
@@ -54,7 +53,7 @@ precond.to(device)
 @torch.no_grad()
 def edm_sampler_with_mse(
     net, context, target,  # Added target for MSE calculation
-    gnet=None, labels=None, num_steps=32, sigma_min=0.002, sigma_max=80, 
+    gnet=None, text_embeddings=None, num_steps=32, sigma_min=0.002, sigma_max=80, 
     rho=7, guidance=1, S_churn=0, S_min=0, S_max=float('inf'), S_noise=1,
     dtype=torch.float32,
 ):
@@ -68,10 +67,10 @@ def edm_sampler_with_mse(
         t = torch.ones(batch_size, 1, device=t.device, dtype=dtype) * t
         t = torch.cat((context_t, t), dim=1)
         
-        Dx = net(x, t, labels).to(dtype)
+        Dx = net(x, t, text_embeddings).to(dtype)
         if guidance == 1:
             return Dx
-        ref_Dx = gnet(x, t, labels).to(dtype)
+        ref_Dx = gnet(x, t, text_embeddings=None).to(dtype)
         return ref_Dx.lerp(Dx, guidance)
 
     # Time step discretization
@@ -125,6 +124,7 @@ def edm_sampler_with_mse(
 
 # Prepare data
 latents = batch["latents"].to(device)
+text_embeddings = batch["text_embeddings"].to(device)
 context = latents[:, :-1]  # First t-1 frames
 target = latents[:, -1]    # Last frame (ground truth)
 
@@ -134,11 +134,12 @@ _, mse_steps = edm_sampler_with_mse(
     net=precond,
     context=context,
     target=target,
-    sigma_max=5,  # Initial noise level matches our test
-    num_steps=32,
-    gnet=None,
-    labels=None,
-    rho = 7
+    sigma_max=1,  # Initial noise level matches our test
+    num_steps=16,
+    gnet=precond,
+    text_embeddings=text_embeddings,
+    rho = 7,
+    guidance = 0.5,
 )
 
 # Plot results
