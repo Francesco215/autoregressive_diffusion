@@ -36,7 +36,7 @@ class OpenVidDataset(IterableDataset):
             yield latent, caption
 
 class OpenVidDataloader(DataLoader):
-    def __init__(self, batch_size, num_workers, device, dataset):
+    def __init__(self, batch_size, num_workers, device, dataset, prefetch_factor=16):
         self.dataset = dataset
         self.device = device
         self.mean, self.std, self.channel_wise_std = -0.010, 2.08, 69
@@ -45,7 +45,7 @@ class OpenVidDataloader(DataLoader):
         self.text_encoder = CLIPTextModel.from_pretrained(model_name).cpu() # Keep on CPU to save VRAM
         self.text_embedding_dim = self.text_encoder.config.hidden_size
         
-        super().__init__(self.dataset, batch_size=batch_size, num_workers=num_workers, collate_fn=self.collate_fn, prefetch_factor=16)
+        super().__init__(self.dataset, batch_size=batch_size, num_workers=num_workers, collate_fn=self.collate_fn, prefetch_factor=prefetch_factor)
     
     @abstractmethod
     def collate_fn(self, batch):

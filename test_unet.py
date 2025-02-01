@@ -1,5 +1,6 @@
 #%%
 import torch
+from torch import profiler
 from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss
 import logging
@@ -25,13 +26,33 @@ print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1
 precond = Precond(unet, use_fp16=False, sigma_data=1.).to("cuda")
 
 # %%
+
+# Generate input tensors
+x = torch.randn(4, 16, img_channels, img_resolution, img_resolution, device="cuda")
+noise_level = torch.rand(4, 16, device="cuda")
 torch.autograd.set_detect_anomaly(True, check_nan=True)
+# Profiling
+with profiler.profile(
+    activities=[
+        profiler.ProfilerActivity.CPU, 
+        profiler.ProfilerActivity.CUDA
+    ],
+    schedule=profiler.schedule(wait=1, warmup=1, active=3, repeat=1),
+    on_trace_ready=torch.profiler.tensorboard_trace_handler('/root/autoregressive_diffusion/log'),
+    record_shapes=True,
+    profile_memory=True,
+    with_stack=True
+) as prof:
+    for _ in range(5):  # Run multiple iterations to capture performance over time
+        with profiler.record_function("unet"):
+            y = precond.forward(x, noise_level, None)
+        prof.step()
 
-x = torch.randn(4, 10, img_channels, img_resolution, img_resolution, device="cuda")
-# noise_level = torch.rand(2, 10, device="cuda")
-# y = unet.forward(x, noise_level, None)
-# y = precond.forward(x, noise_level, return_logvar=True)
+# Print profiling results
+print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
 
+
+#%%
 loss=EDM2Loss()
 y=loss(precond, x)
 

@@ -20,8 +20,8 @@ from edm2.sampler import edm_sampler
 
 torch._dynamo.config.recompile_limit = 100
 # Example usage:
-n_clips = 100_000
-micro_batch_size = 4 
+n_clips = 1_000_000
+micro_batch_size = 2 
 batch_size = 32
 accumulation_steps = batch_size//micro_batch_size
 total_number_of_batches = n_clips // batch_size
@@ -31,7 +31,7 @@ total_number_of_steps = total_number_of_batches * accumulation_steps
 num_workers = 8 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-dataloader = OpenVidDataloader(micro_batch_size, num_workers, device, dataset = OpenVidDataset())
+dataloader = OpenVidDataloader(micro_batch_size, num_workers, device, dataset = OpenVidDataset(), prefetch_factor=2048//micro_batch_size)
 # dataloader = RandomDataloader(micro_batch_size, num_workers, device)
 
 
@@ -42,9 +42,10 @@ unet = UNet(img_resolution=64, # Match your latent resolution
             channel_mult=[1,2,2,4],
             channel_mult_noise=None,
             channel_mult_emb=None,
-            num_blocks=2,
+            num_blocks=3,
             attn_resolutions=[16,8]
             )
+
 unet_params = sum(p.numel() for p in unet.parameters())//1e6
 print(f"Number of UNet parameters: {unet_params}M")
 # sigma_data = 0.434
@@ -52,7 +53,7 @@ sigma_data = 1.
 precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to("cuda")
 loss_fn = EDM2Loss(P_mean=0.5,P_std=1.5, sigma_data=sigma_data, noise_weight=MultiNoiseLoss())
 
-ref_lr = 1e-2
+ref_lr = 1e-1/accumulation_steps
 current_lr = ref_lr
 optimizer = MARS(precond.parameters(), lr=ref_lr, eps = 1e-4)
 optimizer.zero_grad()
@@ -84,11 +85,11 @@ for i, micro_batch in pbar:
         ema_tracker.update(cur_nimg= i * batch_size, batch_size=batch_size)
 
         for g in optimizer.param_groups:
-            current_lr = learning_rate_schedule(i, ref_lr, total_number_of_steps/50, 0)
+            current_lr = learning_rate_schedule(i, ref_lr, total_number_of_steps*1e-5, 0)
             g['lr'] = current_lr
 
     # Save model checkpoint (optional)
-    if i % 50 * accumulation_steps == 0 and i!=0:
+    if i % 200 == 0 and i!=0:
         loss_fn.noise_weight.fit_loss_curve()
         loss_fn.noise_weight.plot('plot.png')
         n_clips = np.linspace(0, i * micro_batch_size, len(losses))
@@ -107,7 +108,7 @@ for i, micro_batch in pbar:
         ulw=True
 
 
-    if i % (total_number_of_steps//4) == 0 and i!=0:  # save every 10% of epochs
+    if i % (total_number_of_steps//10) == 0 and i!=0:  # save every 10% of epochs
         torch.save({
             'batch': i,
             'model_state_dict': precond.state_dict(),

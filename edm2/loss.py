@@ -36,18 +36,20 @@ class EDM2Loss:
         self.context_noise_reduction = context_noise_reduction
         self.noise_weight = noise_weight
         assert context_noise_reduction >= 0 and context_noise_reduction <= 1, f"context_noise_reduction must be in [0,1], what are you doing? {context_noise_reduction}"
+        self.sigma_dtype = torch.float32
 
     def __call__(self, net, images, text_embeddings=None, use_loss_weight=False):
         batch_size, n_frames, channels, height, width = images.shape    
         cat_images = torch.cat((images,images),dim=1).clone()
 
-        sigma_targets = (torch.randn(batch_size,n_frames,device=images.device) * self.P_std + self.P_mean).exp()
-        sigma_context = torch.rand(batch_size,1,device=images.device).expand(-1,n_frames).clone()*self.context_noise_reduction # reducing significantly the noise of the context tokens
+        sigma_targets = (torch.randn(batch_size,n_frames,device=images.device,dtype=self.sigma_dtype) * self.P_std + self.P_mean).exp()
+        sigma_context = torch.rand(batch_size,1,device=images.device,dtype=self.sigma_dtype).expand(-1,n_frames).clone()*self.context_noise_reduction # reducing significantly the noise of the context tokens
         sigma = torch.cat((sigma_context,sigma_targets),dim=1)
 
         noise = einops.einsum(sigma, torch.randn_like(cat_images), 'b t, b t ... -> b t ...') 
         denoised = net(cat_images + noise, sigma, text_embeddings)[:,n_frames:]
         losses = ((denoised - images) ** 2).mean(dim=(-1,-2,-3))
+        # losses = ((denoised - cat_images) ** 2).mean(dim=(-1,-2,-3))
 
         sigma = sigma[:,n_frames:]
         weight = (sigma ** 2 + self.sigma_data ** 2) / (sigma * self.sigma_data) ** 2 # the 0.5 factor is because the Karras paper is wrong

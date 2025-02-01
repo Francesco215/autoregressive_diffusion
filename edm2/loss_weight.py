@@ -55,6 +55,8 @@ class MultiNoiseLoss:
         sigma_values = torch.logspace(-2., 2., num_points)
         mean_loss = self.calculate_mean_loss(sigma_values)
         ax.plot(sigma_values, mean_loss, label='best fit', color='red')
+        ax.set_xlim(1e-3,1e3)
+        ax.set_ylim(0.,2.)
 
         ax.set_xscale('log')
         ax.set_xlabel('σ (sigma)')
