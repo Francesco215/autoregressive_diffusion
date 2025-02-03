@@ -7,7 +7,7 @@ from torch.autograd import Function
 class EfficientWeightFunction(Function):
     @staticmethod
     def forward(weight):
-        return weight.view_as(weight)  # Ensure PyTorch tracks it properly
+        return weight.data
 
     @staticmethod
     def setup_context(ctx, inputs, output):
@@ -15,26 +15,34 @@ class EfficientWeightFunction(Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        (weight,) = ctx.saved_tensors  # Unpack saved tensor
+        (w,) = ctx.saved_tensors  # Unpack saved tensor
 
         # More efficient dot product computation
-        dot = (grad_output * weight).sum(dim=tuple(range(1, grad_output.dim())), keepdim=True)
+        dot = (grad_output * w).sum(dim=tuple(range(1, grad_output.dim())), keepdim=True)
+        dot = dot / w.numel()
 
         # Efficiently subtract the weighted dot product
-        grad_output = grad_output - weight * dot
+        grad_output = grad_output - w * dot
 
-        return grad_output
+        return grad_output * w[0].numel()**(-0.5)
 
 class EfficientWeight(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel):
         super().__init__()
         self.out_channels = out_channels
-        self.weight = torch.nn.Parameter(normalize(torch.randn(out_channels, in_channels, *kernel)))
+        self.weight = torch.nn.Parameter(torch.randn(out_channels, in_channels, *kernel))
         self.weight_function = EfficientWeightFunction.apply
+        self.gain = 1
+        self.normalize_weight()
 
-    def forward(self, x, gain=1):
+    @torch.no_grad()
+    def normalize_weight(self):
+        w = normalize(self.weight.to(torch.float32))
+        w = w * (self.gain / np.sqrt(w[0].numel())) # magnitude-preserving scaling
+        self.weight.copy_(w)
+
+    def forward(self, x):
         w = self.weight_function(self.weight)
-        w = w * (gain / np.sqrt(w[0].numel())) # magnitude-preserving scaling
         return  w.to(x.dtype)
 
 class Weight(torch.nn.Module):
@@ -60,10 +68,10 @@ class MPConv(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel):
         super().__init__()
         self.out_channels = out_channels
-        self.weight = Weight(in_channels, out_channels, kernel)
+        self.weight = EfficientWeight(in_channels, out_channels, kernel)
 
     def forward(self, x, gain=1, batch_size=None):
-        w = self.weight(x, gain)
+        w = self.weight(x)
         if w.ndim == 2:
             return x @ w.t()
         assert w.ndim == 4
@@ -79,10 +87,10 @@ class MPCausal3DConv(torch.nn.Module):
         super().__init__()
         self.out_channels = out_channels
         assert len(kernel)==3
-        self.weight = Weight(in_channels, out_channels, kernel)
+        self.weight = EfficientWeight(in_channels, out_channels, kernel)
 
     def forward(self, x, batch_size, gain=1):
-        w = self.weight(x, gain)
+        w = self.weight(x)
 
         image_padding = (0, w.shape[-2]//2, w.shape[-1]//2)
 

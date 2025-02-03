@@ -14,7 +14,7 @@ from torch import nn, Tensor
 import einops
 
 from .utils import normalize, resample, mp_silu, mp_sum, mp_cat, MPFourier
-from .conv import MPCausal3DConv, MPConv
+from .conv import MPCausal3DConv, MPConv, EfficientWeight
 from .attention import FrameAttention, VideoAttention
 
 
@@ -208,7 +208,6 @@ class Precond(torch.nn.Module):
         self.sigma_data = sigma_data
 
     def forward(self, x:Tensor, sigma:Tensor, text_embeddings:Tensor=None, force_fp32=False, **unet_kwargs):
-        b, t, c, h, w = x.shape
         x = x.to(torch.float32)
         sigma = sigma.to(torch.float32)
         sigma = einops.rearrange(sigma, '... -> ... 1 1 1')
@@ -229,4 +228,8 @@ class Precond(torch.nn.Module):
 
         return D_x
 
+    def normalize_all_weights(self):
+        for module in self.modules():
+            if isinstance(module, EfficientWeight):
+                module.normalize_weight()
 #----------------------------------------------------------------------------

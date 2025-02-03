@@ -27,6 +27,9 @@ class VideoAttention(nn.Module):
         self.block_mask = None
         self.training_mask = None        
     
+    def normalize_weights(self):
+        self.attn_qkv.normalize_weight()
+        self.attn_proj.normalize_weight()
 
     def forward(self, x:Tensor, batch_size:int):
         if self.num_heads == 0:

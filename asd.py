@@ -33,7 +33,7 @@ def measure_speed_and_utilization():
     fast_module = EfficientWeight(in_channels, out_channels, kernel).to(device)
 
     with torch.no_grad():
-        old_module.weight.copy_(fast_module.weight.clone())
+        old_module.weight.copy_(fast_module.weight.detach().clone())
 
     old_module.train()
     fast_module.train()
@@ -41,7 +41,7 @@ def measure_speed_and_utilization():
     # Warmup CUDA (to remove initialization overhead)
     for _ in range(5):
         old_module(dummy_input, gain=gain)
-        fast_module(dummy_input, gain=gain)
+        fast_module(dummy_input)
 
     # -------------------------------
     # Measure Forward Pass Speed
@@ -54,7 +54,7 @@ def measure_speed_and_utilization():
 
     torch.cuda.synchronize()
     start_fast = time.perf_counter()
-    out_fast = fast_module(dummy_input, gain=gain)
+    out_fast = fast_module(dummy_input)
     torch.cuda.synchronize()
     fast_forward_time = time.perf_counter() - start_fast
 
@@ -88,8 +88,22 @@ def measure_speed_and_utilization():
     # -------------------------------
     # Measure CUDA Memory Usage
     # -------------------------------
-    old_mem = torch.cuda.memory_allocated()
-    fast_mem = torch.cuda.memory_reserved()
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+
+    # Run old module and check peak memory
+    old_module(dummy_input, gain=gain)
+    torch.cuda.synchronize()
+    old_mem = torch.cuda.max_memory_allocated()
+
+    # Reset memory stats before running fast module
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+
+    # Run fast module and check peak memory
+    fast_module(dummy_input)
+    torch.cuda.synchronize()
+    fast_mem = torch.cuda.max_memory_allocated()
 
     print(f"CUDA Memory - old: {old_mem / 1e6:.2f}MB, fast: {fast_mem / 1e6:.2f}MB")
 

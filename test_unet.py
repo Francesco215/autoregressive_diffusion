@@ -12,25 +12,11 @@ torch._logging.set_logs(dynamo=logging.INFO)
 
 img_resolution = 64
 img_channels = 16
-unet = UNet(img_resolution=img_resolution, # Match your latent resolution
-            img_channels=img_channels,
-            label_dim = 0,
-            model_channels=32,
-            channel_mult=[1,2,2,4],
-            channel_mult_noise=None,
-            channel_mult_emb=None,
-            num_blocks=2,
-            attn_resolutions=[16,8]
-            )
-print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
-precond = Precond(unet, use_fp16=False, sigma_data=1.).to("cuda")
 
 # %%
 
 # Generate input tensors
-x = torch.randn(4, 16, img_channels, img_resolution, img_resolution, device="cuda")
-noise_level = torch.rand(4, 16, device="cuda")
-torch.autograd.set_detect_anomaly(True, check_nan=True)
+# torch.autograd.set_detect_anomaly(True, check_nan=True)
 # Profiling
 with profiler.profile(
     activities=[
@@ -43,6 +29,20 @@ with profiler.profile(
     profile_memory=True,
     with_stack=True
 ) as prof:
+    unet = UNet(img_resolution=img_resolution, # Match your latent resolution
+                img_channels=img_channels,
+                label_dim = 0,
+                model_channels=64,
+                channel_mult=[1,2,4,8],
+                channel_mult_noise=None,
+                channel_mult_emb=None,
+                num_blocks=1,
+                attn_resolutions=[16,8]
+                )
+    print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
+    precond = Precond(unet, use_fp16=False, sigma_data=1.).to("cuda")
+    x = torch.randn(4, 16, img_channels, img_resolution, img_resolution, device="cuda")
+    noise_level = torch.rand(4, 16, device="cuda")
     for _ in range(5):  # Run multiple iterations to capture performance over time
         with profiler.record_function("unet"):
             y = precond.forward(x, noise_level, None)

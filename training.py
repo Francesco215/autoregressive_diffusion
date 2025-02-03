@@ -11,7 +11,7 @@ from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.loss_weight import MultiNoiseLoss
 from edm2.mars import MARS
-from edm2.dataloading import OpenVidDataloader, RandomDataset, OpenVidDataset
+from edm2.dataloading import OpenVidDataloader, RandomDataset#, OpenVidDataset
 from edm2.phema import PowerFunctionEMA
 from edm2.sampler import edm_sampler
 
@@ -31,7 +31,7 @@ total_number_of_steps = total_number_of_batches * accumulation_steps
 num_workers = 8 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-dataloader = OpenVidDataloader(micro_batch_size, num_workers, device, dataset = OpenVidDataset(), prefetch_factor=2048//micro_batch_size)
+dataloader = OpenVidDataloader(micro_batch_size, num_workers, device, dataset = RandomDataset(), prefetch_factor=2048//micro_batch_size)
 # dataloader = RandomDataloader(micro_batch_size, num_workers, device)
 
 
@@ -65,6 +65,7 @@ ema_tracker = PowerFunctionEMA(precond, stds=[0.050, 0.100])
 # Training loop
 ulw=False
 losses = []
+loss = torch.tensor(0.,device = device)
 pbar = tqdm(enumerate(dataloader),total=total_number_of_steps)
 for i, micro_batch in pbar:
     if i==0: print("Downloaded first batch and starting training loop")
@@ -82,6 +83,7 @@ for i, micro_batch in pbar:
         #microbatching
         optimizer.step()
         optimizer.zero_grad()
+        precond.normalize_all_weights()
         ema_tracker.update(cur_nimg= i * batch_size, batch_size=batch_size)
 
         for g in optimizer.param_groups:
