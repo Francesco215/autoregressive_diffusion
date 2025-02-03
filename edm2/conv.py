@@ -7,21 +7,30 @@ from .utils import normalize, mp_cat
 #----------------------------------------------------------------------------
 # Magnitude-preserving convolution or fully-connected layer (Equation 47)
 # with force weight normalization (Equation 66).
-
-class MPConv(torch.nn.Module):
+class Weight(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel):
         super().__init__()
         self.out_channels = out_channels
         self.weight = torch.nn.Parameter(torch.randn(out_channels, in_channels, *kernel))
 
-    def forward(self, x, gain=1, batch_size=None):
+    def forward(self, x, gain=1):
         w = self.weight.to(torch.float32)
         if self.training:
             with torch.no_grad():
                 self.weight.copy_(normalize(w)) # forced weight normalization
         w = normalize(w) # traditional weight normalization. for the gradients 
         w = w * (gain / np.sqrt(w[0].numel())) # magnitude-preserving scaling
-        w = w.to(x.dtype)
+        return  w.to(x.dtype)
+
+
+class MPConv(torch.nn.Module):
+    def __init__(self, in_channels, out_channels, kernel):
+        super().__init__()
+        self.out_channels = out_channels
+        self.weight = Weight(in_channels, out_channels, kernel)
+
+    def forward(self, x, gain=1, batch_size=None):
+        w = self.weight(x, gain)
         if w.ndim == 2:
             return x @ w.t()
         assert w.ndim == 4
@@ -37,16 +46,10 @@ class MPCausal3DConv(torch.nn.Module):
         super().__init__()
         self.out_channels = out_channels
         assert len(kernel)==3
-        self.weight = torch.nn.Parameter(torch.randn(out_channels, in_channels, *kernel))
+        self.weight = Weight(in_channels, out_channels, kernel)
 
     def forward(self, x, batch_size, gain=1):
-        w = self.weight.to(torch.float32)
-        if self.training:
-            with torch.no_grad():
-                self.weight.copy_(normalize(w)) # forced weight normalization
-        w = normalize(w) # traditional weight normalization. for the gradients 
-        w = w * (gain / np.sqrt(w[0].numel())) # magnitude-preserving scaling
-        w = w.to(x.dtype)
+        w = self.weight(x, gain)
 
         image_padding = (0, w.shape[-2]//2, w.shape[-1]//2)
 
@@ -77,13 +80,13 @@ class MPCausal3DConv(torch.nn.Module):
             # context.std(dim=(0,2,3,4)) = [1.1555, 1.0016, 0.9064, 1.0799, 0.8134, 0.7813, 0.7638, 0.8903, 0.8006, 0.7442, 0.7492, 0.8073, 0.8076, 0.7287, 0.7323, 0.7740]
 
             # we concatenate the results and reshape them to sum them back to the 2d convolutions
-            c_log = context.clone()
+            # c_log = context.clone()
             context = torch.stack((context, context), dim=0)
             context = einops.rearrange(context, 's b c t h w -> (b s t) c h w')
 
             # we use the fact that the convolution is linear to sum the results of the 2d and 3d convolutions
             x = context + last_frame_conv
-            to_log = einops.rearrange(x, '(b t) ... -> b t ...', b = batch_size)
+            # to_log = einops.rearrange(x, '(b t) ... -> b t ...', b = batch_size)
             return x
 
         # during inference is much simpler
