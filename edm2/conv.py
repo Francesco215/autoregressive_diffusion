@@ -24,7 +24,7 @@ class EfficientWeightFunction(Function):
         # Efficiently subtract the weighted dot product
         grad_output = grad_output - w * dot
 
-        return grad_output * w[0].numel()**(-0.5)
+        return grad_output
 
 class EfficientWeight(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel):
@@ -32,18 +32,16 @@ class EfficientWeight(torch.nn.Module):
         self.out_channels = out_channels
         self.weight = torch.nn.Parameter(torch.randn(out_channels, in_channels, *kernel))
         self.weight_function = EfficientWeightFunction.apply
-        self.gain = 1
         self.normalize_weight()
 
     @torch.no_grad()
     def normalize_weight(self):
         w = normalize(self.weight.to(torch.float32))
-        w = w * (self.gain / np.sqrt(w[0].numel())) # magnitude-preserving scaling
         self.weight.copy_(w)
 
-    def forward(self, x):
+    def forward(self):
         w = self.weight_function(self.weight)
-        return  w.to(x.dtype)
+        return  w
 
 class Weight(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel):
@@ -51,14 +49,13 @@ class Weight(torch.nn.Module):
         self.out_channels = out_channels
         self.weight = torch.nn.Parameter(torch.randn(out_channels, in_channels, *kernel))
 
-    def forward(self, x, gain=1):
+    def forward(self):
         w = self.weight.to(torch.float32)
         if self.training:
             with torch.no_grad():
                 self.weight.copy_(normalize(w)) # forced weight normalization
         w = normalize(w) # traditional weight normalization. for the gradients 
-        w = w * (gain / np.sqrt(w[0].numel())) # magnitude-preserving scaling
-        return  w.to(x.dtype)
+        return  w
 
 
 #----------------------------------------------------------------------------
@@ -71,7 +68,9 @@ class MPConv(torch.nn.Module):
         self.weight = EfficientWeight(in_channels, out_channels, kernel)
 
     def forward(self, x, gain=1, batch_size=None):
-        w = self.weight(x)
+        w = self.weight()
+        x = x * (gain / np.sqrt(w[0].numel())) # magnitude-preserving scaling
+        w = w.to(x.dtype)
         if w.ndim == 2:
             return x @ w.t()
         assert w.ndim == 4
@@ -90,7 +89,9 @@ class MPCausal3DConv(torch.nn.Module):
         self.weight = EfficientWeight(in_channels, out_channels, kernel)
 
     def forward(self, x, batch_size, gain=1):
-        w = self.weight(x)
+        w = self.weight()
+        x = x * (gain / np.sqrt(w[0].numel())) # magnitude-preserving scaling
+        w = w.to(x.dtype)
 
         image_padding = (0, w.shape[-2]//2, w.shape[-1]//2)
 
