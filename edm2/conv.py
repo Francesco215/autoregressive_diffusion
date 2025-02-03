@@ -2,11 +2,41 @@ import einops
 import torch
 import numpy as np
 from .utils import normalize, mp_cat
+from torch.autograd import Function
 
+class EfficientWeightFunction(Function):
+    @staticmethod
+    def forward(weight):
+        return weight.view_as(weight)  # Ensure PyTorch tracks it properly
 
-#----------------------------------------------------------------------------
-# Magnitude-preserving convolution or fully-connected layer (Equation 47)
-# with force weight normalization (Equation 66).
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        ctx.save_for_backward(*inputs)  # Unpacking the tuple
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        (weight,) = ctx.saved_tensors  # Unpack saved tensor
+
+        # More efficient dot product computation
+        dot = (grad_output * weight).sum(dim=tuple(range(1, grad_output.dim())), keepdim=True)
+
+        # Efficiently subtract the weighted dot product
+        grad_output = grad_output - weight * dot
+
+        return grad_output
+
+class EfficientWeight(torch.nn.Module):
+    def __init__(self, in_channels, out_channels, kernel):
+        super().__init__()
+        self.out_channels = out_channels
+        self.weight = torch.nn.Parameter(normalize(torch.randn(out_channels, in_channels, *kernel)))
+        self.weight_function = EfficientWeightFunction.apply
+
+    def forward(self, x, gain=1):
+        w = self.weight_function(self.weight)
+        w = w * (gain / np.sqrt(w[0].numel())) # magnitude-preserving scaling
+        return  w.to(x.dtype)
+
 class Weight(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel):
         super().__init__()
@@ -23,6 +53,9 @@ class Weight(torch.nn.Module):
         return  w.to(x.dtype)
 
 
+#----------------------------------------------------------------------------
+# Magnitude-preserving convolution or fully-connected layer (Equation 47)
+# with force weight normalization (Equation 66).
 class MPConv(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel):
         super().__init__()
