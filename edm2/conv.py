@@ -87,11 +87,15 @@ class MPCausal3DConv(torch.nn.Module):
         self.out_channels = out_channels
         assert len(kernel)==3
         self.weight = EfficientWeight(in_channels, out_channels, kernel)
+        # self.weight = torch.nn.Parameter(torch.randn(out_channels, in_channels, *kernel))
 
     def forward(self, x, batch_size, gain=1):
-        w = self.weight()
-        x = x * (gain / np.sqrt(w[0].numel())) # magnitude-preserving scaling
-        w = w.to(x.dtype)
+        # w = self.weight.to(torch.float32)
+        # if self.training:
+        #     with torch.no_grad():
+        #         self.weight.copy_(normalize(w)) # forced weight normalization
+        # w = normalize(w) # traditional weight normalization. for the gradients 
+        w = self.weight().to(x.dtype)
 
         image_padding = (0, w.shape[-2]//2, w.shape[-1]//2)
 
@@ -128,6 +132,7 @@ class MPCausal3DConv(torch.nn.Module):
 
             # we use the fact that the convolution is linear to sum the results of the 2d and 3d convolutions
             x = context + last_frame_conv
+            x = x * (gain / np.sqrt(w[0].numel())) # magnitude-preserving scaling
             # to_log = einops.rearrange(x, '(b t) ... -> b t ...', b = batch_size)
             return x
 

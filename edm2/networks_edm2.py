@@ -50,15 +50,15 @@ class Block(torch.nn.Module):
         self.emb_gain = torch.nn.Parameter(torch.zeros([]))
         self.emb_linear = MPConv(emb_channels, out_channels, kernel=[])
         # if attention:
-        # self.conv_res0 = MPCausal3DConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3,3])
-        # self.conv_res1 = MPCausal3DConv(out_channels, out_channels, kernel=[3,3,3])
+        self.conv_res0 = MPCausal3DConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3,3])
+        self.conv_res1 = MPCausal3DConv(out_channels, out_channels, kernel=[3,3,3])
         # else:
-        self.conv_res0 = MPConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3])
-        self.conv_res1 = MPConv(out_channels, out_channels, kernel=[3,3])
+        # self.conv_res0 = MPConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3])
+        # self.conv_res1 = MPConv(out_channels, out_channels, kernel=[3,3])
 
         self.conv_skip = MPConv(in_channels, out_channels, kernel=[1,1]) if in_channels != out_channels else None
-        # self.attn = VideoAttention(out_channels, self.num_heads, attn_balance)
-        self.attn = FrameAttention(out_channels, self.num_heads, attn_balance)
+        self.attn = VideoAttention(out_channels, self.num_heads, attn_balance)
+        # self.attn = FrameAttention(out_channels, self.num_heads, attn_balance)
 
         if self.num_heads > 0: 
             assert (out_channels & (out_channels - 1) == 0) and out_channels != 0, f"out_channels must be a power of 2, got {out_channels}"
