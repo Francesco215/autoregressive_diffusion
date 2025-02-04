@@ -11,7 +11,7 @@ from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.loss_weight import MultiNoiseLoss
 from edm2.mars import MARS
-from edm2.dataloading import OpenVidDataloader, RandomDataset#, OpenVidDataset
+from edm2.dataloading import OpenVidDataloader, RandomDataset, OpenVidDataset
 from edm2.phema import PowerFunctionEMA
 from edm2.sampler import edm_sampler
 
@@ -20,8 +20,8 @@ from edm2.sampler import edm_sampler
 
 torch._dynamo.config.recompile_limit = 100
 # Example usage:
-n_clips = 1_000_000
-micro_batch_size = 10 
+n_clips = 100_000
+micro_batch_size = 8 
 batch_size = 32
 accumulation_steps = batch_size//micro_batch_size
 total_number_of_batches = n_clips // batch_size
@@ -31,7 +31,8 @@ total_number_of_steps = total_number_of_batches * accumulation_steps
 num_workers = 8 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-dataloader = OpenVidDataloader(micro_batch_size, num_workers, device, dataset = RandomDataset(), prefetch_factor=batch_size)
+dataloader = OpenVidDataloader(micro_batch_size, num_workers, device, dataset = OpenVidDataset(), prefetch_factor=1024//micro_batch_size)
+# dataloader = OpenVidDataloader(micro_batch_size, num_workers, device, dataset = RandomDataset(), prefetch_factor=batch_size)
 # dataloader = RandomDataloader(micro_batch_size, num_workers, device)
 
 
