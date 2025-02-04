@@ -14,7 +14,7 @@ from torch import nn, Tensor
 import einops
 
 from .utils import normalize, resample, mp_silu, mp_sum, mp_cat, MPFourier
-from .conv import MPCausal3DConv, MPConv, EfficientWeight, Weight
+from .conv import MPCausal3DConv, MPConv, MPWeight
 from .attention import FrameAttention, VideoAttention
 
 
@@ -231,6 +231,6 @@ class Precond(torch.nn.Module):
 
     def normalize_all_weights(self):
         for module in self.modules():
-            if isinstance(module, (EfficientWeight, Weight)):
+            if isinstance(module, MPWeight):
                 module.normalize_weight()
 #----------------------------------------------------------------------------

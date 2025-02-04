@@ -21,7 +21,7 @@ from edm2.sampler import edm_sampler
 torch._dynamo.config.recompile_limit = 100
 # Example usage:
 n_clips = 1_000_000
-micro_batch_size = 2 
+micro_batch_size = 10 
 batch_size = 32
 accumulation_steps = batch_size//micro_batch_size
 total_number_of_batches = n_clips // batch_size
@@ -31,18 +31,18 @@ total_number_of_steps = total_number_of_batches * accumulation_steps
 num_workers = 8 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-dataloader = OpenVidDataloader(micro_batch_size, num_workers, device, dataset = RandomDataset(), prefetch_factor=2048//micro_batch_size)
+dataloader = OpenVidDataloader(micro_batch_size, num_workers, device, dataset = RandomDataset(), prefetch_factor=batch_size)
 # dataloader = RandomDataloader(micro_batch_size, num_workers, device)
 
 
 unet = UNet(img_resolution=64, # Match your latent resolution
             img_channels=16, # Match your latent channels
             label_dim = dataloader.text_embedding_dim,
-            model_channels=128,
-            channel_mult=[1,2,2,4],
+            model_channels=64,
+            channel_mult=[1,2,4,8],
             channel_mult_noise=None,
             channel_mult_emb=None,
-            num_blocks=3,
+            num_blocks=1,
             attn_resolutions=[16,8]
             )
 

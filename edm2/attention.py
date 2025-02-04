@@ -1,5 +1,5 @@
 import torch
-from torch import nn, Tensor, profiler
+from torch import nn, Tensor
 from torch.nn import functional as F
 from torch.nn.attention.flex_attention import flex_attention
 import einops
@@ -53,8 +53,7 @@ class VideoAttention(nn.Module):
         y = self.attn_qkv(x)
 
         # b:batch, t:time, m: multi-head, s: split, c: channels, h: height, w: width
-        with profiler.record_function("rearrange"):
-            y = einops.rearrange(y, '(b t) (s m c) h w -> s b m t (h w) c', b=batch_size, s=3, m=self.num_heads)
+        y = einops.rearrange(y, '(b t) (s m c) h w -> s b m t (h w) c', b=batch_size, s=3, m=self.num_heads)
         # q, k, v = normalize(y, dim=-1).unbind(0) # pixel norm & split 
         q, k, v = y.unbind(0) # pixel norm & split 
 

@@ -6,7 +6,7 @@ from torch.autograd import Function
 ###############################################################################
 # CUSTOM FUNCTION
 ###############################################################################
-from edm2.conv import Weight, EfficientWeight
+from edm2.conv import NormalizedWeight, EfficientNormalizedWeight
 
 ###############################################################################
 # TESTS
@@ -29,8 +29,8 @@ def measure_speed_and_utilization():
 
     dummy_input = torch.randn(out_channels, in_channels, *kernel, device=device)  # Example input
 
-    old_module = Weight(in_channels, out_channels, kernel).to(device)
-    fast_module = EfficientWeight(in_channels, out_channels, kernel).to(device)
+    old_module = NormalizedWeight(in_channels, out_channels, kernel).to(device)
+    fast_module = EfficientNormalizedWeight(in_channels, out_channels, kernel).to(device)
 
     with torch.no_grad():
         old_module.weight.copy_(fast_module.weight.detach().clone())
