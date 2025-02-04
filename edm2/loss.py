@@ -59,6 +59,7 @@ class EDM2Loss:
             self.noise_weight.add_data(sigma, losses)
             if use_loss_weight:
                 mean_loss = self.noise_weight.calculate_mean_loss(sigma)
+                mean_loss = torch.clamp(mean_loss, min=0., max=1.)
                 losses = losses / mean_loss#**2 + 2*torch.log(mean_loss)
         return losses.mean(), un_weighted_avg_loss
 #----------------------------------------------------------------------------

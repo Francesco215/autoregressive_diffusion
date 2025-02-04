@@ -49,9 +49,6 @@ class RotaryEmbedding(nn.Module):
             q = einops.rearrange(q, 'b m (a t) hw c -> b m a t hw c', a=2)
             k = einops.rearrange(k, 'b m (a t) hw c -> b m a t hw c', a=2)
 
-        #normalize q and k along the channels
-        q = q / q.norm(dim=-1, keepdim=True)
-        k = k / k.norm(dim=-1, keepdim=True)
         pos, scale=self.get_rotary_embedding(q.shape[-3])
 
         q = (q * pos.cos() + rotate_half(q) * pos.sin())*scale

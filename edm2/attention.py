@@ -4,7 +4,6 @@ from torch.nn import functional as F
 from torch.nn.attention.flex_attention import flex_attention
 import einops
 
-from . import misc
 from .RoPe import RotaryEmbedding
 from .attention_masking import make_train_mask, make_infer_mask, AutoregressiveDiffusionMask
 from .utils import  mp_sum
