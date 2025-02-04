@@ -32,7 +32,7 @@ class RotaryEmbedding(nn.Module):
         return freqs, scale
 
     def get_rotary_embedding(self,n):
-        if (self.pos_emb is not None) and self.pos_emb.shape[-2] >= n:
+        if (self.pos_emb is not None) and self.pos_emb.shape[0] >= n:
             return self.pos_emb[:n], self.pos_emb_scale[:n]
 
         pos_emb, scale = self.make_rotary_embedding(n)
@@ -49,6 +49,9 @@ class RotaryEmbedding(nn.Module):
             q = einops.rearrange(q, 'b m (a t) hw c -> b m a t hw c', a=2)
             k = einops.rearrange(k, 'b m (a t) hw c -> b m a t hw c', a=2)
 
+        #normalize q and k along the channels
+        q = q / q.norm(dim=-1, keepdim=True)
+        k = k / k.norm(dim=-1, keepdim=True)
         pos, scale=self.get_rotary_embedding(q.shape[-3])
 
         q = (q * pos.cos() + rotate_half(q) * pos.sin())*scale

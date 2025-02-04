@@ -134,7 +134,7 @@ class UNet(torch.nn.Module):
             if level == 0:
                 cin = cout
                 cout = channels
-                self.enc[f'{res}x{res}_conv'] = MPConv(cin, cout, kernel=[3,3])
+                self.enc[f'{res}x{res}_conv'] = MPCausal3DConv(cin, cout, kernel=[3,3,3])
             else:
                 self.enc[f'{res}x{res}_down'] = Block(cout, cout, cemb, flavor='enc', resample_mode='down', **block_kwargs)
             for idx in range(num_blocks):
@@ -156,7 +156,7 @@ class UNet(torch.nn.Module):
                 cin = cout + skips.pop()
                 cout = channels
                 self.dec[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=(res in attn_resolutions), **block_kwargs)
-        self.out_conv = MPConv(cout, img_channels, kernel=[3,3])
+        self.out_conv = MPCausal3DConv(cout, img_channels, kernel=[3,3,3])
 
     def forward(self, x, noise_labels, text_embeddings = None):
         # x.shape = b t c h w
@@ -178,7 +178,7 @@ class UNet(torch.nn.Module):
         x = torch.cat([x, torch.ones_like(x[:, :1])], dim=1)
         skips = []
         for name, block in self.enc.items():
-            x = block(x) if 'conv' in name else block(x, emb, batch_size=batch_size)
+            x = block(x, batch_size=batch_size) if 'conv' in name else block(x, emb, batch_size=batch_size)
             skips.append(x)
 
         # Decoder.
@@ -186,7 +186,7 @@ class UNet(torch.nn.Module):
             if 'block' in name:
                 x = mp_cat(x, skips.pop(), t=self.concat_balance)
             x = block(x, emb, batch_size=batch_size)
-        x = self.out_conv(x, gain=self.out_gain)
+        x = self.out_conv(x, gain=self.out_gain, batch_size=batch_size)
         x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
         return x
 
