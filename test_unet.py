@@ -33,7 +33,7 @@ unet = UNet(img_resolution=64, # Match your latent resolution
             )
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
 precond = Precond(unet, use_fp16=True, sigma_data=1.).to("cuda")
-precond.load_state_dict(torch.load("model_batch_2500.pt")["model_state_dict"])
+# precond.load_state_dict(torch.load("model_batch_2500.pt")["model_state_dict"])
 
 # %%
 # torch.autograd.set_detect_anomaly(True, check_nan=True)
@@ -50,7 +50,7 @@ latents, noise_level, text_embeddings = latents.to(torch.float16), noise_level.t
 
 loss=EDM2Loss(noise_weight=MultiNoiseLoss())
 
-for s in tqdm(np.logspace(-2,2,200)):
+for s in tqdm(np.logspace(-2,2,20)):
     sigma_shape = latents.shape[:2]
     sigma = torch.cat((torch.ones(sigma_shape)*0.05,torch.ones(sigma_shape)*s), dim=1).to(device)
     y=loss.forward(precond, latents, sigma=sigma)

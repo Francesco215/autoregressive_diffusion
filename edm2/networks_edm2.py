@@ -11,6 +11,7 @@
 import numpy as np
 import torch
 from torch import nn, Tensor
+from torch.nn import functional as F
 import einops
 
 from .utils import normalize, resample, mp_silu, mp_sum, mp_cat, MPFourier
@@ -57,7 +58,7 @@ class Block(torch.nn.Module):
         # self.conv_res1 = MPConv(out_channels, out_channels, kernel=[3,3])
 
         self.conv_skip = MPConv(in_channels, out_channels, kernel=[1,1]) if in_channels != out_channels else None
-        self.attn = FrameAttention(out_channels, self.num_heads, attn_balance)
+        self.attn = VideoAttention(out_channels, self.num_heads, attn_balance)
 
         if self.num_heads > 0: 
             assert (out_channels & (out_channels - 1) == 0) and out_channels != 0, f"out_channels must be a power of 2, got {out_channels}"
@@ -119,11 +120,14 @@ class UNet(torch.nn.Module):
         cemb = model_channels * channel_mult_emb if channel_mult_emb is not None else max(cblock)
         self.label_balance = label_balance
         self.concat_balance = concat_balance
-        self.out_gain = torch.nn.Parameter(torch.tensor([1.], requires_grad=True))
+        self.out_gain = MPConv(cemb, 1, kernel=[])
+        self.out_temp = torch.nn.Parameter(torch.tensor([1.], requires_grad=True))
 
         # Embedding.
-        self.emb_fourier = MPFourier(cnoise)
-        self.emb_noise = MPConv(cnoise, cemb, kernel=[]) # this are actually linear layers with normalized weights. the kernel is empty
+        self.emb_fourier_sigma = MPFourier(cnoise)
+        self.emb_sigma = MPConv(cnoise, cemb, kernel=[]) # this are actually linear layers with normalized weights. the kernel is empty
+        self.emb_fourier_time = MPFourier(cnoise)
+        self.emb_time = MPConv(cnoise, cemb, kernel=[]) # this are actually linear layers with normalized weights. the kernel is empty
         self.emb_label = MPConv(label_dim, cemb, kernel=[]) if label_dim != 0 else None
 
         # Encoder.
@@ -158,20 +162,23 @@ class UNet(torch.nn.Module):
                 self.dec[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=(res in attn_resolutions), **block_kwargs)
         self.out_conv = MPCausal3DConv(cout, img_channels, kernel=[3,3,3])
 
-    def forward(self, x, noise_labels, text_embeddings = None):
+    def forward(self, x, c_noise, text_embeddings = None):
         # x.shape = b t c h w
         batch_size, time_dimention = x.shape[:2]
-        x = einops.rearrange(x, 'b t ... -> (b t) ...')
-        noise_labels = einops.rearrange(noise_labels, 'b t ... -> (b t) ...')
+        x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
+        c_noise = einops.rearrange(c_noise, 'b t -> (b t)')
 
         # Embedding.
-        emb = self.emb_noise(self.emb_fourier(noise_labels))
+        time_labels = torch.arange(time_dimention, device=x.device).repeat(batch_size).log1p().to(c_noise.dtype) / 4
+        time_embeddings = self.emb_time(self.emb_fourier_time(time_labels))
+        emb = self.emb_sigma(self.emb_fourier_sigma(c_noise))
+        emb = mp_sum(emb, time_embeddings, t=0.5)
         if self.emb_label is not None and text_embeddings is not None:
             # TODO: might need to change this for when the class label is not none
             text_embeddings = self.emb_label(text_embeddings/1.5)
             if text_embeddings.shape[0]!=1:
                 text_embeddings = torch.repeat_interleave(text_embeddings, time_dimention, dim = 0)
-            emb = mp_sum(emb, text_embeddings, t=self.label_balance)
+            emb = mp_sum(emb, text_embeddings, t=1/3)
         emb = mp_silu(emb)
 
         # Encoder.
@@ -186,7 +193,10 @@ class UNet(torch.nn.Module):
             if 'block' in name:
                 x = mp_cat(x, skips.pop(), t=self.concat_balance)
             x = block(x, emb, batch_size=batch_size)
-        x = self.out_conv(x, gain=self.out_gain, batch_size=batch_size)
+        out_gain = self.out_gain(emb, batch_size=batch_size)
+        out_gain = F.sigmoid(out_gain*self.out_temp)
+        x = self.out_conv(x, batch_size=batch_size)
+        x = einops.einsum(x, out_gain, 'bt c h w, bt c -> bt c h w')
         x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
         return x
 

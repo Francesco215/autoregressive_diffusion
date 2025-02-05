@@ -20,7 +20,7 @@ from .loss_weight import MultiNoiseLoss
 # Uncertainty-based loss function (Equations 14,15,16,21) proposed in the
 # paper "Analyzing and Improving the Training Dynamics of Diffusion Models".
 
-class EDM2Loss(torch.nn.Module):
+class EDM2Loss:
     def __init__(self, P_mean=0.5, P_std=2., sigma_data=1., context_noise_reduction=0.1, noise_weight:MultiNoiseLoss = None):
         self.P_mean = P_mean
         self.P_std = P_std
@@ -29,7 +29,7 @@ class EDM2Loss(torch.nn.Module):
         self.noise_weight = noise_weight
         assert context_noise_reduction >= 0 and context_noise_reduction <= 1, f"context_noise_reduction must be in [0,1], what are you doing? {context_noise_reduction}"
 
-    def forward(self, net, images, text_embeddings=None, use_loss_weight=False, sigma=None):
+    def __call__(self, net, images, text_embeddings=None, use_loss_weight=False, sigma=None):
         batch_size, n_frames, channels, height, width = images.shape    
         cat_images = torch.cat((images,images),dim=1).clone()
 
