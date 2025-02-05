@@ -20,7 +20,7 @@ from .loss_weight import MultiNoiseLoss
 # Uncertainty-based loss function (Equations 14,15,16,21) proposed in the
 # paper "Analyzing and Improving the Training Dynamics of Diffusion Models".
 
-class EDM2Loss:
+class EDM2Loss(torch.nn.Module):
     def __init__(self, P_mean=0.5, P_std=2., sigma_data=1., context_noise_reduction=0.1, noise_weight:MultiNoiseLoss = None):
         self.P_mean = P_mean
         self.P_std = P_std
@@ -29,13 +29,16 @@ class EDM2Loss:
         self.noise_weight = noise_weight
         assert context_noise_reduction >= 0 and context_noise_reduction <= 1, f"context_noise_reduction must be in [0,1], what are you doing? {context_noise_reduction}"
 
-    def __call__(self, net, images, text_embeddings=None, use_loss_weight=False):
+    def forward(self, net, images, text_embeddings=None, use_loss_weight=False, sigma=None):
         batch_size, n_frames, channels, height, width = images.shape    
         cat_images = torch.cat((images,images),dim=1).clone()
 
-        sigma_targets = (torch.randn(batch_size,n_frames,device=images.device) * self.P_std + self.P_mean).exp()
-        sigma_context = torch.rand(batch_size,1,device=images.device).expand(-1,n_frames).clone()*self.context_noise_reduction # reducing significantly the noise of the context tokens
-        sigma = torch.cat((sigma_context,sigma_targets),dim=1)
+        if sigma is None:
+            sigma_targets = (torch.randn(batch_size,n_frames,device=images.device) * self.P_std + self.P_mean).exp()
+            sigma_context = torch.rand(batch_size,1,device=images.device).expand(-1,n_frames).clone()*self.context_noise_reduction # reducing significantly the noise of the context tokens
+            sigma = torch.cat((sigma_context,sigma_targets),dim=1)
+        
+        assert sigma.shape == (batch_size, n_frames*2), f"sigma shape is {sigma.shape} but should be {(batch_size, n_frames*2)}"
 
         noise = einops.einsum(sigma, torch.randn_like(cat_images), 'b t, b t ... -> b t ...') 
         denoised = net(cat_images + noise, sigma, text_embeddings)[:,n_frames:]

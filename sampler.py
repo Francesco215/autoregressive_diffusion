@@ -9,7 +9,7 @@ from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.loss_weight import MultiNoiseLoss
 from edm2.mars import MARS
-from edm2.dataloading import OpenVidDataloader, OpenVidDataset
+from edm2.dataloading import OpenVidDataloader, RandomDataset
 from edm2.phema import PowerFunctionEMA
 
 # import logging
@@ -27,8 +27,8 @@ total_number_of_steps = total_number_of_batches * accumulation_steps
 num_workers = 8 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-dataloader = OpenVidDataloader(micro_batch_size, num_workers, device, OpenVidDataset())
-batch = next(iter(dataloader))
+dataloader = OpenVidDataloader(micro_batch_size, num_workers, device, RandomDataset())
+batch = torch.load("backup_batch.pt")
 #%%
 
 unet = UNet(img_resolution=64, # Match your latent resolution
@@ -44,7 +44,7 @@ unet = UNet(img_resolution=64, # Match your latent resolution
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
 sigma_data = 1.
 precond = Precond(unet, use_fp16=True, sigma_data=sigma_data)
-precond_state_dict = torch.load("model_batch_5001.pt",map_location=device,weights_only=False)['model_state_dict']
+precond_state_dict = torch.load("model_batch_2500.pt",map_location=device,weights_only=False)['model_state_dict']
 # precond_state_dict = torch.load("conv3d_first.pt",map_location=device,weights_only=False)['ema_state_dict']['emas'][1]
 precond.load_state_dict(precond_state_dict)
 precond.to(device)
@@ -123,8 +123,10 @@ def edm_sampler_with_mse(
 # batch ={"latents": torch.randn(2, 8, 16, 64, 64)}
 
 # Prepare data
-latents = batch["latents"].to(device)
-text_embeddings = batch["text_embeddings"].to(device)
+start = 0
+num_samples = 4
+latents = batch["latents"][start:start+num_samples].to(device)
+text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
 context = latents[:, :-1]  # First t-1 frames
 target = latents[:, -1]    # Last frame (ground truth)
 
@@ -134,12 +136,12 @@ _, mse_steps = edm_sampler_with_mse(
     net=precond,
     context=context,
     target=target,
-    sigma_max=1,  # Initial noise level matches our test
+    sigma_max=10,  # Initial noise level matches our test
     num_steps=16,
     gnet=precond,
     text_embeddings=text_embeddings,
     rho = 7,
-    guidance = 0.5,
+    guidance = 0.,
 )
 
 # Plot results

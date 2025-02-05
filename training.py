@@ -107,7 +107,7 @@ for i, micro_batch in pbar:
         ulw=True
 
 
-    if i % (total_number_of_steps//4) == 0 and i!=0:  # save every 10% of epochs
+    if i % (total_number_of_steps//10) == 0 and i!=0:  # save every 10% of epochs
         torch.save({
             'batch': i,
             'model_state_dict': precond.state_dict(),
