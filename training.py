@@ -84,7 +84,7 @@ for i, micro_batch in pbar:
         ema_tracker.update(cur_nimg= i * batch_size, batch_size=batch_size)
 
         for g in optimizer.param_groups:
-            current_lr = learning_rate_schedule(i, ref_lr, total_number_of_steps/1000, 0)
+            current_lr = learning_rate_schedule(i, ref_lr, total_number_of_steps/100, 0)
             g['lr'] = current_lr
 
     # Save model checkpoint (optional)

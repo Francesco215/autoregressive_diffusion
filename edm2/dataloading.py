@@ -85,3 +85,4 @@ class RandomDataset(IterableDataset):
         while True:
             latents = torch.randn(self.clip_length, *self.clip_shape)
             yield latents, "random_caption"
+# %%

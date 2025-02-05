@@ -168,7 +168,7 @@ class UNet(torch.nn.Module):
         emb = self.emb_noise(self.emb_fourier(noise_labels))
         if self.emb_label is not None and text_embeddings is not None:
             # TODO: might need to change this for when the class label is not none
-            text_embeddings = self.emb_label(text_embeddings * np.sqrt(text_embeddings.shape[1]))
+            text_embeddings = self.emb_label(text_embeddings/1.5)
             if text_embeddings.shape[0]!=1:
                 text_embeddings = torch.repeat_interleave(text_embeddings, time_dimention, dim = 0)
             emb = mp_sum(emb, text_embeddings, t=self.label_balance)

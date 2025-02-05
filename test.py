@@ -1,30 +1,15 @@
 #%%
+from edm2.dataloading import OpenVidDataloader, OpenVidDataset
+
+# Create a dataloader
+dataloader = OpenVidDataloader(batch_size=256, num_workers=8, device="cpu", dataset=OpenVidDataset())
+
+#%%
+# Get a batch from the dataloader
+batch = next(iter(dataloader))
+
+#%%
+# Save batch to file 
 import torch
-import numpy as np
-
-# Parameters
-m = 1000  # Number of rows
-n = 500   # Number of columns
-sigma = 2.0  # Standard deviation of normal distribution
-
-# Generate random matrix X from N(0, sigma^2)
-X = torch.randn(m, n) * sigma  # Each element ~ N(0, sigma^2)
-
-# Define vector of ones
-ones_vector = torch.ones(n, 1)
-
-# Compute Y = X * ones_vector
-Y = X @ ones_vector  # Shape (m, 1)
-
-# Compute empirical standard deviation
-empirical_std = Y.std().item()
-
-theoretical_std = np.sqrt(n) * sigma
-
-print(f"Empirical Std: {empirical_std:.4f}")
-print(f"Theoretical Std: {theoretical_std:.4f}")
-
-# %%
-Y.shape
-
+torch.save(batch, "backup_batch.pt")
 # %%

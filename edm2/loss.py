@@ -7,17 +7,9 @@
 
 """Main training loop."""
 
-import os
-import time
-import copy
-import pickle
-import psutil
 import numpy as np
 import torch
-from torch.nn import functional as F
 import einops
-import matplotlib.pyplot as plt
-from scipy.optimize import curve_fit
 from .loss_weight import MultiNoiseLoss
 # import dnnlib
 # from torch_utils import distributed as dist

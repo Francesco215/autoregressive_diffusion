@@ -54,7 +54,7 @@ class MPCausal3DConv(torch.nn.Module):
         # the multiplicative factor sqrt(0.5) is wrong. it is only an approximation of the correct analytical solution
         # to understand the theory check out the variance-preserving concatenation
         # however variance preserving concatenatinon doesn't work because it will give different results depending if self.training is true
-        causal_pad = torch.ones(batch_size, x.shape[1], w.shape[2]-1, *x.shape[2:], device=x.device, dtype=x.dtype)*np.sqrt(0.5)
+        causal_pad = torch.ones(batch_size, x.shape[1], w.shape[2]-1, *x.shape[2:], device=x.device, dtype=x.dtype)
 
         if self.training:
             # Warning: to understand this, read first how it works during inference
