@@ -28,11 +28,18 @@ class OpenVidDataset(IterableDataset):
     def __init__(self):
         self.dataset = load_dataset("fal/cosmos-openvid-1m", data_dir="continuous", split="train", streaming=True, cache_dir="/tmp/datasets_cache")
 
-        self.mean, self.std = 0.051, 0.434
+        # self.mean, self.std = 0.051, 0.434
+        self.mean, self.std = 0, 1 
+        self.mean = torch.tensor([ 0.1001,  0.0025,  0.0703, -0.0649,  0.0347, -0.0874,  0.0237,  0.0269,
+         -0.1187, -0.0049,  0.0938, -0.0098, -0.0250,  0.1118,  0.0015,  0.1562])
+        self.std = torch.tensor([0.3281, 0.5664, 0.2949, 0.2754, 0.3984, 0.3652, 0.6094, 0.2910, 0.5195,
+         0.2734, 0.4219, 0.3574, 0.2314, 0.3086, 0.6133, 0.3125])
     def __iter__(self):
         for example in self.dataset:
-            latent = (deserialize_tensor(example['serialized_latent'])-self.mean)/self.std
+            latent = deserialize_tensor(example['serialized_latent'])
+            latent = (latent - self.mean[:,None,None,None]) / self.std[:,None,None,None]
             caption = example['caption']
+            # if (latent.mean(dim =(1,2,3)).abs()+latent.std(dim=(1,2,3))).max().item() < 5:
             yield latent, caption
 
 class OpenVidDataloader(DataLoader):
