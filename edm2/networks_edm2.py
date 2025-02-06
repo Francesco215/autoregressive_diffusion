@@ -223,6 +223,9 @@ class Precond(torch.nn.Module):
         sigma = sigma.to(torch.float32)
         sigma = einops.rearrange(sigma, '... -> ... 1 1 1')
 
+        mean, std = x.mean(dim=(2,3,4), keepdim=True), x.std(dim=(2,3,4), keepdim=True)
+        x=(x-mean)/std
+
         text_embeddings = None if self.label_dim == 0 else torch.zeros([1, self.label_dim], device=x.device) if text_embeddings is None else text_embeddings.to(torch.float32)
         dtype = torch.float16 if (self.use_fp16 and not force_fp32 and x.device.type == 'cuda') else torch.float32
 
@@ -236,7 +239,7 @@ class Precond(torch.nn.Module):
         x_in = (c_in * x).to(dtype)
         F_x = self.unet(x_in, c_noise, text_embeddings, **unet_kwargs)
         D_x = c_skip * x + c_out * F_x.to(torch.float32)
-
+        D_x = D_x * std + mean
         return D_x
 
 #----------------------------------------------------------------------------
