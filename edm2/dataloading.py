@@ -30,15 +30,15 @@ class OpenVidDataset(IterableDataset):
 
         # self.mean, self.std = 0.051, 0.434
         self.mean, self.std = 0, 1 
-        data_vars = torch.load("cosmos_mean_cov.pth")
+        data_vars = torch.load("cosmos_mean_var.pth")
         self.mean, self.cov = data_vars["means"], data_vars["cov"]
         eigenvalues, eigenvectors = torch.linalg.eigh(self.cov)
-        self.transformation_matrix = torch.diag(eigenvalues**-0.5) @ eigenvectors.t()
+        self.transformation_matrix = eigenvectors @ torch.diag(eigenvalues**-0.5)
     def __iter__(self):
         for example in self.dataset:
-            latent = deserialize_tensor(example['serialized_latent'])
+            latent = deserialize_tensor(example['serialized_latent']).to(torch.float32)
             latent = einops.rearrange(latent, 'c t h w -> t h w c')
-            latent = (latent - self.mean) @ self.transformation_matrix
+            latent = (latent-self.mean) @ self.transformation_matrix
             caption = example['caption']
             # if (latent.mean(dim =(1,2,3)).abs()+latent.std(dim=(1,2,3))).max().item() < 5:
             yield latent, caption
