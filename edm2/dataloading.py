@@ -30,14 +30,15 @@ class OpenVidDataset(IterableDataset):
 
         # self.mean, self.std = 0.051, 0.434
         self.mean, self.std = 0, 1 
-        self.mean = torch.tensor([ 0.1001,  0.0025,  0.0703, -0.0649,  0.0347, -0.0874,  0.0237,  0.0269,
-         -0.1187, -0.0049,  0.0938, -0.0098, -0.0250,  0.1118,  0.0015,  0.1562])
-        self.std = torch.tensor([0.3281, 0.5664, 0.2949, 0.2754, 0.3984, 0.3652, 0.6094, 0.2910, 0.5195,
-         0.2734, 0.4219, 0.3574, 0.2314, 0.3086, 0.6133, 0.3125])
+        data_vars = torch.load("cosmos_mean_cov.pth")
+        self.mean, self.cov = data_vars["means"], data_vars["cov"]
+        eigenvalues, eigenvectors = torch.linalg.eigh(self.cov)
+        self.transformation_matrix = torch.diag(eigenvalues**-0.5) @ eigenvectors.t()
     def __iter__(self):
         for example in self.dataset:
             latent = deserialize_tensor(example['serialized_latent'])
-            latent = (latent - self.mean[:,None,None,None]) / self.std[:,None,None,None]
+            latent = einops.rearrange(latent, 'c t h w -> t h w c')
+            latent = (latent - self.mean) @ self.transformation_matrix
             caption = example['caption']
             # if (latent.mean(dim =(1,2,3)).abs()+latent.std(dim=(1,2,3))).max().item() < 5:
             yield latent, caption
@@ -58,7 +59,7 @@ class OpenVidDataloader(DataLoader):
     def collate_fn(self, batch):
         latents, caption = zip(*batch)
         latents = torch.stack(latents)
-        latents = einops.rearrange(latents, 'b c t h w -> b t c h w')
+        latents = einops.rearrange(latents, 'b t h w c -> b t c h w')
         caption = list(caption)
 
         inputs = self.tokenizer(caption, padding=True, truncation=True, return_tensors="pt")
