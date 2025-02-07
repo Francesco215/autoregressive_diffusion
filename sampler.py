@@ -49,7 +49,7 @@ precond_state_dict = torch.load("model_batch_2500.pt",map_location=device,weight
 precond.load_state_dict(precond_state_dict)
 precond.to(device)
 # Modify the sampler to collect intermediate steps and compute MSE
-
+#%%
 @torch.no_grad()
 def edm_sampler_with_mse(
     net, context, target,  # Added target for MSE calculation
@@ -83,6 +83,7 @@ def edm_sampler_with_mse(
     noise = target + torch.randn_like(target) * t_steps[0]
     x_next = torch.cat((context, noise.unsqueeze(1)), dim=1)
     mse_values = []
+    mse_pred_values = []
 
     net.eval()
     for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])):
@@ -99,7 +100,8 @@ def edm_sampler_with_mse(
             x_hat = x_cur
 
         # Euler step
-        d_cur = (x_hat - denoise(x_hat, t_hat)) / t_hat
+        x_pred=denoise(x_hat, t_hat)
+        d_cur = (x_hat - x_pred) / t_hat
         x_next = x_hat + (t_next - t_hat) * d_cur
 
         # 2nd order correction
@@ -110,11 +112,13 @@ def edm_sampler_with_mse(
 
         # Calculate MSE after each step
         pred_frame = x_next[:, -1]
+        mse_pred = torch.mean((x_pred[:,-1] - target) ** 2).item()
         mse = torch.mean((pred_frame - target) ** 2).item()
         mse_values.append(mse)
+        mse_pred_values.append(mse_pred)
 
     net.train()
-    return x_next, mse_values
+    return x_next, mse_values, mse_pred_values
 
 #%%
 
@@ -132,12 +136,12 @@ target = latents[:, -1]    # Last frame (ground truth)
 
 
 # Run sampler with sigma_max=0.5 for initial noise level
-_, mse_steps = edm_sampler_with_mse(
+_, mse_steps, mse_pred_values = edm_sampler_with_mse(
     net=precond,
     context=context,
     target=target,
-    sigma_max=10,  # Initial noise level matches our test
-    num_steps=16,
+    sigma_max=1,  # Initial noise level matches our test
+    num_steps=32,
     gnet=precond,
     text_embeddings=text_embeddings,
     rho = 7,
@@ -147,12 +151,14 @@ _, mse_steps = edm_sampler_with_mse(
 # Plot results
 import matplotlib.pyplot as plt
 plt.figure(figsize=(10, 6))
-plt.plot(mse_steps, marker='o', linestyle='-')
+plt.plot(mse_steps, marker='o', linestyle='-', label="MSE")
+plt.plot(mse_pred_values, marker='o', linestyle='-', label="MSE (Predicted)")
 plt.xlabel("Denoising Step")
 plt.ylabel("MSE")
 plt.yscale("log")
 plt.title("Denoising Progress (Lower is Better)")
 plt.grid(True)
+plt.legend()
 plt.show()
 print(mse_steps[-1])
 

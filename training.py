@@ -122,24 +122,3 @@ for i, micro_batch in pbar:
 print("Training finished!")
 
 # %%
-
-import torch
-from edm2.sampler import edm_sampler
-
-precond.load_state_dict(torch.load("model_batch_5001.pt", weights_only=False)['model_state_dict'])
-
-precond.eval()
-#%%
-samples = next(iter(dataloader))
-# %%
-x = samples["latents"][0:4,:-10].to("cuda")
-for _ in range(10):
-    y=edm_sampler(precond, x)
-    print(x.shape,y.shape)
-    y[:,:-1]=x
-    x=y.clone()
-
-
-# %%
-torch.save(y, "sampled_latents.pt")
-# %%

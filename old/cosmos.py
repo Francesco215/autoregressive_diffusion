@@ -7,7 +7,6 @@ from edm2.dataloading import OpenVidDataloader
 
 batch_size = 16
 dataloader = OpenVidDataloader(batch_size=batch_size, num_workers=32, device="cuda")
-
 mean_sum = 0
 std_sum = 0
 num_batches = 0
