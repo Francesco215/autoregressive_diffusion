@@ -89,7 +89,7 @@ class FourierSeriesFit:
             basis.append(torch.sin(n * x))
         return torch.stack(basis, dim=1)
 
-    def fit_data(self, X, Y):
+    def fit_data(self, X:Tensor, Y:Tensor):
         # Ensure data is within the interval [min, max]
         mask = (torch.log10(X) >= self.interval_min) & (torch.log10(X) <= self.interval_max)
         X, Y = X[mask].flatten(), Y[mask].flatten()
@@ -98,7 +98,7 @@ class FourierSeriesFit:
         X_basis = self.fourier_series(X)
 
         # Solve for coefficients using least squares
-        self.coefficients = torch.linalg.lstsq(X_basis, Y.unsqueeze(1)).solution
+        self.coefficients = torch.linalg.lstsq(X_basis, Y.log10().unsqueeze(1)).solution
         self.coefficients_history.append(self.coefficients)
 
     def predict(self, x):
@@ -110,4 +110,4 @@ class FourierSeriesFit:
             x = einops.rearrange(x, 'b t -> (b t)')
             return einops.rearrange(self.predict(x).squeeze(1), '(b t) -> b t', b=b)
         basis = self.fourier_series(x)
-        return basis @ self.coefficients.to(basis.device)
+        return 10.**(basis @ self.coefficients.to(basis.device))
