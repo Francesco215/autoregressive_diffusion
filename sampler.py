@@ -1,16 +1,21 @@
 #%%
 from tqdm import tqdm
 import numpy as np
+from matplotlib import pyplot as plt
 
 import torch
-from matplotlib import pyplot as plt
+from torch.utils.data import DataLoader
+
 
 from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.loss_weight import MultiNoiseLoss
 from edm2.mars import MARS
-from edm2.dataloading import OpenVidDataloader, RandomDataset
+from edm2.gym_dataloader import GymDataGenerator, frames_to_latents, gym_collate_function
 from edm2.phema import PowerFunctionEMA
+
+
+from diffusers import AutoencoderKL
 
 # import logging
 # torch._logging.set_logs(dynamo=logging.INFO)
@@ -26,26 +31,32 @@ total_number_of_steps = total_number_of_batches * accumulation_steps
 
 num_workers = 8 
 device = "cuda" if torch.cuda.is_available() else "cpu"
+state_size = 8
+original_env = "LunarLander-v3"
+latent_channels = 0
 
-dataloader = OpenVidDataloader(micro_batch_size, num_workers, device, RandomDataset())
-batch = torch.load("backup_batch.pt")
+model_id="stabilityai/stable-diffusion-2-1"
+autoencoder = AutoencoderKL.from_pretrained(model_id, subfolder="vae").to(device).requires_grad_(False)
+dataset = GymDataGenerator(state_size, original_env)
+dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=gym_collate_function, num_workers=2)
+batch = next(iter(dataloader))
 #%%
 
-unet = UNet(img_resolution=64, # Match your latent resolution
-            img_channels=16, # Match your latent channels
-            label_dim = dataloader.text_embedding_dim,
-            model_channels=128,
+unet = UNet(img_resolution=32, # Match your latent resolution
+            img_channels=autoencoder.config.latent_channels, # Match your latent channels
+            label_dim = 0,
+            model_channels=64,
             channel_mult=[1,2,2,4],
             channel_mult_noise=None,
             channel_mult_emb=None,
-            num_blocks=2,
+            num_blocks=1,
             attn_resolutions=[16,8]
             )
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
 sigma_data = 1.
 precond = Precond(unet, use_fp16=True, sigma_data=sigma_data)
-precond_state_dict = torch.load("model_batch_2500.pt",map_location=device,weights_only=False)['model_state_dict']
-# precond_state_dict = torch.load("conv3d_first.pt",map_location=device,weights_only=False)['ema_state_dict']['emas'][1]
+# precond_state_dict = torch.load("model_batch_2000.pt",map_location=device,weights_only=False)['model_state_dict']
+precond_state_dict = torch.load("model_batch_2000.pt",map_location=device,weights_only=False)['ema_state_dict']['emas'][0]
 precond.load_state_dict(precond_state_dict)
 precond.to(device)
 # Modify the sampler to collect intermediate steps and compute MSE
@@ -129,8 +140,11 @@ def edm_sampler_with_mse(
 # Prepare data
 start = 0
 num_samples = 4
-latents = batch["latents"][start:start+num_samples].to(device)
-text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
+frames, action, reward = batch
+frames = frames.to(device)
+latents = frames_to_latents(autoencoder, frames)
+# latents = batch["latents"][start:start+num_samples].to(device)
+# text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
 context = latents[:, :-1]  # First t-1 frames
 target = latents[:, -1]    # Last frame (ground truth)
 
@@ -141,11 +155,11 @@ _, mse_steps, mse_pred_values = edm_sampler_with_mse(
     context=context,
     target=target,
     sigma_max=1,  # Initial noise level matches our test
-    num_steps=32,
-    gnet=precond,
-    text_embeddings=text_embeddings,
+    num_steps=128,
+    # gnet=precond,
+    # text_embeddings=text_embeddings,
     rho = 7,
-    guidance = 0.,
+    guidance = 1,
 )
 
 # Plot results
