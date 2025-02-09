@@ -60,7 +60,7 @@ if __name__=="__main__":
     optimizer = MARS(precond.parameters(), lr=ref_lr, eps = 1e-4)
     optimizer.zero_grad()
 
-    # ema_tracker = PowerFunctionEMA(precond, stds=[0.050, 0.100])
+    ema_tracker = PowerFunctionEMA(precond, stds=[0.050, 0.100])
     losses = []
     #%%
     ulw=False
@@ -84,7 +84,7 @@ if __name__=="__main__":
             #microbatching
             optimizer.step()
             optimizer.zero_grad()
-            # ema_tracker.update(cur_nimg= i * batch_size, batch_size=batch_size)
+            ema_tracker.update(cur_nimg= i * batch_size, batch_size=batch_size)
 
             for g in optimizer.param_groups:
                 current_lr = learning_rate_schedule(i, ref_lr, total_number_of_steps/50, total_number_of_steps/50)
@@ -109,14 +109,14 @@ if __name__=="__main__":
             plt.close()
             ulw=True
 
-        if i % (total_number_of_steps//10) == 0 and i!=0:  # save every 10% of epochs
-                torch.save({
-                    'batch': i,
-                    'model_state_dict': precond.state_dict(),
-                    # 'optimizer_state_dict': optimizer.state_dict(),
-                    # 'ema_state_dict': ema_tracker.state_dict(),
-                    'loss': loss,
-                }, f"model_batch_{i}.pt")
+        if i % (total_number_of_steps//100) == 0 and i!=0:  # save every 10% of epochs
+            torch.save({
+                'batch': i,
+                'model_state_dict': precond.state_dict(),
+                # 'optimizer_state_dict': optimizer.state_dict(),
+                'ema_state_dict': ema_tracker.state_dict(),
+                'loss': loss,
+            }, f"model_batch_{i}.pt")
 
         if i == total_number_of_steps:
             break

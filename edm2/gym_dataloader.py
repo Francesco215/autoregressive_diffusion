@@ -68,7 +68,7 @@ def gym_collate_function(batch):
     frame_histories, action_histories, rewards = zip(*batch)
     padded_frames = torch.stack(frame_histories)
     padded_actions = torch.stack(action_histories)
-    
+    assert padded_frames.shape[1]==16
     return padded_frames, padded_actions, torch.Tensor(rewards)
 
     
@@ -94,5 +94,6 @@ def frames_to_latents(autoencoder, frames)->Tensor:
 
     # Apply scaling factor
     latents = latents * autoencoder.config.scaling_factor
+
     latents = einops.rearrange(latents, '(b t) c h w -> b t c h w', b=batch_size)
     return latents

@@ -55,8 +55,9 @@ unet = UNet(img_resolution=32, # Match your latent resolution
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
 sigma_data = 1.
 precond = Precond(unet, use_fp16=True, sigma_data=sigma_data)
+precond_state_dict = torch.load("model_batch_1000.pt",map_location=device,weights_only=False)['model_state_dict']
 # precond_state_dict = torch.load("model_batch_2000.pt",map_location=device,weights_only=False)['model_state_dict']
-precond_state_dict = torch.load("model_batch_2000.pt",map_location=device,weights_only=False)['ema_state_dict']['emas'][0]
+# precond_state_dict = torch.load("model_batch_2000.pt",map_location=device,weights_only=False)['ema_state_dict']['emas'][0]
 precond.load_state_dict(precond_state_dict)
 precond.to(device)
 # Modify the sampler to collect intermediate steps and compute MSE
@@ -74,7 +75,7 @@ def edm_sampler_with_mse(
     
     # Guided denoiser (same as original)
     def denoise(x, t):
-        context_t = torch.ones(batch_size, n_frames, device=t.device, dtype=dtype) * 0.1
+        context_t = torch.ones(batch_size, n_frames, device=t.device, dtype=dtype) * 0.03
         t = torch.ones(batch_size, 1, device=t.device, dtype=dtype) * t
         t = torch.cat((context_t, t), dim=1)
         
@@ -154,8 +155,8 @@ _, mse_steps, mse_pred_values = edm_sampler_with_mse(
     net=precond,
     context=context,
     target=target,
-    sigma_max=1,  # Initial noise level matches our test
-    num_steps=128,
+    sigma_max=4,  # Initial noise level matches our test
+    num_steps=32,
     # gnet=precond,
     # text_embeddings=text_embeddings,
     rho = 7,

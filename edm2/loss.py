@@ -48,7 +48,7 @@ class EDM2Loss:
         weight = (sigma ** 2 + self.sigma_data ** 2) / (sigma * self.sigma_data) ** 2 # the 0.5 factor is because the Karras paper is wrong
         losses = losses * weight
 
-        un_weighted_avg_loss = losses.mean().item()
+        un_weighted_avg_loss = losses.mean().detach().cpu().item()
 
         if self.noise_weight is not None:
             self.noise_weight.add_data(sigma, losses)

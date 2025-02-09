@@ -60,7 +60,7 @@ class MultiNoiseLoss:
         ax.set_xlabel('σ (sigma)')
         ax.set_ylabel('Loss')
         ax.set_yscale('log')
-        ax.set_title('Simulated Loss Curves with Increasing Noise')
+        ax.set_title('Loss as a function of the noise σ')
         ax.legend()
         ax.grid(True)
         if save_path is not None:
@@ -101,7 +101,7 @@ class FourierSeriesFit:
         self.coefficients = torch.linalg.lstsq(X_basis, Y.log10().unsqueeze(1)).solution
         self.coefficients_history.append(self.coefficients)
 
-    def predict(self, x):
+    def predict(self, x:Tensor):
         if self.coefficients is None:
             return torch.ones_like(x)
             raise ValueError("Model has not been fitted yet. Call fit_data first.")
