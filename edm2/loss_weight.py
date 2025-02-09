@@ -59,6 +59,7 @@ class MultiNoiseLoss:
         ax.set_xscale('log')
         ax.set_xlabel('σ (sigma)')
         ax.set_ylabel('Loss')
+        ax.set_yscale('log')
         ax.set_title('Simulated Loss Curves with Increasing Noise')
         ax.legend()
         ax.grid(True)

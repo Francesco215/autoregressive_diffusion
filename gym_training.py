@@ -39,10 +39,10 @@ if __name__=="__main__":
                 attn_resolutions=[16,8]
                 )
 
-    micro_batch_size = 4
-    batch_size = 64
+    micro_batch_size = 2
+    batch_size = 8
     accumulation_steps = batch_size//micro_batch_size
-    state_size = 8 
+    state_size = 16 
     total_number_of_steps = 10_000
     training_steps = total_number_of_steps * batch_size
     dataset = GymDataGenerator(state_size, original_env, training_steps)
@@ -55,7 +55,7 @@ if __name__=="__main__":
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
     loss_fn = EDM2Loss(P_mean=0.5,P_std=1.5, sigma_data=sigma_data, noise_weight=MultiNoiseLoss())
 
-    ref_lr = 1e-2
+    ref_lr = 3e-4
     current_lr = ref_lr
     optimizer = MARS(precond.parameters(), lr=ref_lr, eps = 1e-4)
     optimizer.zero_grad()
@@ -108,3 +108,15 @@ if __name__=="__main__":
             plt.show()
             plt.close()
             ulw=True
+
+        if i % (total_number_of_steps//10) == 0 and i!=0:  # save every 10% of epochs
+                torch.save({
+                    'batch': i,
+                    'model_state_dict': precond.state_dict(),
+                    # 'optimizer_state_dict': optimizer.state_dict(),
+                    'ema_state_dict': ema_tracker.state_dict(),
+                    'loss': loss,
+                }, f"model_batch_{i}.pt")
+
+        if i == total_number_of_steps:
+            break
