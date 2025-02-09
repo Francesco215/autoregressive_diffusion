@@ -1,6 +1,7 @@
 import torch
 from torch import Tensor
 import numpy as np
+import einops
 from . import misc
 #----------------------------------------------------------------------------
 # Normalize given tensor to unit magnitude with respect to the given
@@ -42,7 +43,10 @@ def mp_silu(x):
 # Magnitude-preserving sum (Equation 88).
 
 def mp_sum(a:Tensor, b:Tensor, t=0.5):
-    return a.lerp(b, t) / np.sqrt((1 - t) ** 2 + t ** 2)
+    if isinstance(t,float):
+        return a.lerp(b, t) / np.sqrt((1 - t) ** 2 + t ** 2)
+    
+    return a + bmult((b - a), t)
 
 #----------------------------------------------------------------------------
 # Magnitude-preserving concatenation (Equation 103).
@@ -70,3 +74,7 @@ class MPFourier(torch.nn.Module):
         y = y + self.phases.to(torch.float32)
         y = y.cos() * np.sqrt(2)
         return y.to(x.dtype)
+
+        
+def bmult(x, t):
+    return einops.einsum(x,t,' b ..., b -> b ...')

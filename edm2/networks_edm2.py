@@ -14,7 +14,7 @@ from torch import nn, Tensor
 from torch.nn import functional as F
 import einops
 
-from .utils import normalize, resample, mp_silu, mp_sum, mp_cat, MPFourier
+from .utils import normalize, resample, mp_silu, mp_sum, mp_cat, MPFourier, bmult
 from .conv import MPCausal3DConv, MPConv
 from .attention import FrameAttention, VideoAttention
 
@@ -166,6 +166,7 @@ class UNet(torch.nn.Module):
         # x.shape = b t c h w
         batch_size, time_dimention = x.shape[:2]
         x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
+        res = x.clone()
         c_noise = einops.rearrange(c_noise, 'b t -> (b t)')
 
         # Embedding.
@@ -193,10 +194,10 @@ class UNet(torch.nn.Module):
             if 'block' in name:
                 x = mp_cat(x, skips.pop(), t=self.concat_balance)
             x = block(x, emb, batch_size=batch_size)
-        out_gain = self.out_gain(emb, batch_size=batch_size)
-        out_gain = F.sigmoid(out_gain*self.out_temp)
         x = self.out_conv(x, batch_size=batch_size)
-        x = einops.einsum(x, out_gain, 'bt c h w, bt c -> bt c h w')
+        out_gain = self.out_gain(emb, batch_size=batch_size)
+        out_gain = F.sigmoid(out_gain*self.out_temp).squeeze(-1)
+        x = mp_sum(x, res, out_gain)
         x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
         return x
 

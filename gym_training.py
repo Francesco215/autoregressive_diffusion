@@ -60,7 +60,7 @@ if __name__=="__main__":
     optimizer = MARS(precond.parameters(), lr=ref_lr, eps = 1e-4)
     optimizer.zero_grad()
 
-    ema_tracker = PowerFunctionEMA(precond, stds=[0.050, 0.100])
+    # ema_tracker = PowerFunctionEMA(precond, stds=[0.050, 0.100])
     losses = []
     #%%
     ulw=False
@@ -78,16 +78,16 @@ if __name__=="__main__":
         losses.append(un_weighted_loss)
         # Backpropagation and optimization
         loss.backward()
-        pbar.set_postfix_str(f"Loss: {np.mean(losses[-accumulation_steps:]):.4f}, lr: {current_lr:.4f}")
+        pbar.set_postfix_str(f"Loss: {np.mean(losses[-accumulation_steps:]):.4f}, lr: {current_lr:.6f}")
 
         if i % accumulation_steps == 0 and i!=0:
             #microbatching
             optimizer.step()
             optimizer.zero_grad()
-            ema_tracker.update(cur_nimg= i * batch_size, batch_size=batch_size)
+            # ema_tracker.update(cur_nimg= i * batch_size, batch_size=batch_size)
 
             for g in optimizer.param_groups:
-                current_lr = learning_rate_schedule(i, ref_lr, total_number_of_steps/100, 0)
+                current_lr = learning_rate_schedule(i, ref_lr, total_number_of_steps/50, total_number_of_steps/50)
                 g['lr'] = current_lr
 
         # Save model checkpoint (optional)
@@ -114,7 +114,7 @@ if __name__=="__main__":
                     'batch': i,
                     'model_state_dict': precond.state_dict(),
                     # 'optimizer_state_dict': optimizer.state_dict(),
-                    'ema_state_dict': ema_tracker.state_dict(),
+                    # 'ema_state_dict': ema_tracker.state_dict(),
                     'loss': loss,
                 }, f"model_batch_{i}.pt")
 
