@@ -13,7 +13,7 @@ class GymDataGenerator(IterableDataset):
 
         self.env = gym.make(environment_name,render_mode="rgb_array")
 
-        self.evolution_time = 10
+        self.evolution_time = 5
         self.training_examples = training_examples
 
     def __iter__(self):

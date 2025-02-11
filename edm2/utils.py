@@ -46,7 +46,8 @@ def mp_sum(a:Tensor, b:Tensor, t=0.5):
     if isinstance(t,float):
         return a.lerp(b, t) / np.sqrt((1 - t) ** 2 + t ** 2)
     
-    return a + bmult((b - a), t)
+    lerp = a + bmult((b - a), t)
+    return bmult(lerp, ((1 - t) ** 2 + t ** 2)**(-0.5))
 
 #----------------------------------------------------------------------------
 # Magnitude-preserving concatenation (Equation 103).
@@ -76,5 +77,7 @@ class MPFourier(torch.nn.Module):
         return y.to(x.dtype)
 
         
-def bmult(x, t):
-    return einops.einsum(x,t,' b ..., b -> b ...')
+def bmult(x:Tensor, t:Tensor):
+    if t.dim() == 1:
+        return einops.einsum(x,t,' b ..., b -> b ...')
+    return einops.einsum(x,t,' b c ..., b c-> b c ...')

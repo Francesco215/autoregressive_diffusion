@@ -120,8 +120,7 @@ class UNet(torch.nn.Module):
         cemb = model_channels * channel_mult_emb if channel_mult_emb is not None else max(cblock)
         self.label_balance = label_balance
         self.concat_balance = concat_balance
-        self.out_gain = MPConv(cemb, 1, kernel=[])
-        self.out_temp = torch.nn.Parameter(torch.tensor([1.], requires_grad=True))
+        self.out_gate = Gating()
 
         # Embedding.
         self.emb_fourier_sigma = MPFourier(cnoise)
@@ -165,8 +164,10 @@ class UNet(torch.nn.Module):
     def forward(self, x, c_noise, text_embeddings = None):
         # x.shape = b t c h w
         batch_size, time_dimention = x.shape[:2]
-        x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
         res = x.clone()
+        out_gain = self.out_gate(c_noise)
+
+        x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
         c_noise = einops.rearrange(c_noise, 'b t -> (b t)')
 
         # Embedding.
@@ -195,10 +196,9 @@ class UNet(torch.nn.Module):
                 x = mp_cat(x, skips.pop(), t=self.concat_balance)
             x = block(x, emb, batch_size=batch_size)
         x = self.out_conv(x, batch_size=batch_size)
-        out_gain = self.out_gain(emb, batch_size=batch_size)
-        out_gain = F.sigmoid(out_gain*self.out_temp).squeeze(-1)
-        x = mp_sum(x, res, out_gain)
+
         x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
+        x = mp_sum(x, res, out_gain)
         return x
 
 #----------------------------------------------------------------------------
@@ -244,3 +244,32 @@ class Precond(torch.nn.Module):
         return D_x
 
 #----------------------------------------------------------------------------
+
+
+class Gating(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear_layer_start = nn.Linear(2, 2)
+        self.linear_layer = nn.Linear(2, 1)
+
+        self.offset = nn.Parameter(torch.tensor([0.,0.]))
+        self.mult = nn.Parameter(torch.tensor([-1.,-1.]))
+        # sensible_default_weight = torch.tensor([-1.,1.])
+        # self.linear_layer.weight.copy_(sensible_default_weight)
+        # sensible_default_bias = torch.tensor([0.,])
+        self.activation = nn.Sigmoid()
+
+    def forward(self, c_noise:Tensor):
+        b, t = c_noise.shape
+        positions = torch.arange(b*t, device = c_noise.device) % t
+        positions = einops.rearrange(positions, '(b t) -> b t', b=b).to(c_noise.dtype).log1p()
+
+        state_vector = torch.stack([c_noise, positions], dim=-1)
+        state_vector = (state_vector * self.mult + self.offset).sum(dim=-1)
+        return self.activation(state_vector)
+
+
+
+
+
+        

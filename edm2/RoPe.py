@@ -40,7 +40,7 @@ class RotaryEmbedding(nn.Module):
         self.register_buffer("pos_emb_scale", scale.to(torch.float16), persistent=False)
         return pos_emb, scale
     
-    @torch.compile
+    # @torch.compile
     def forward(self, q:Tensor, k:Tensor):
         # q,k shape = b m t (h w) c
         

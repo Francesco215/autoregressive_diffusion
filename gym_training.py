@@ -31,19 +31,19 @@ if __name__=="__main__":
     unet = UNet(img_resolution=32, # Match your latent resolution
                 img_channels=latent_channels, # Match your latent channels
                 label_dim = 0,
-                model_channels=64,
+                model_channels=128,
                 channel_mult=[1,2,2,4],
                 channel_mult_noise=None,
                 channel_mult_emb=None,
                 num_blocks=1,
-                attn_resolutions=[16,8]
+                attn_resolutions=[8,4]
                 )
 
     micro_batch_size = 2
     batch_size = 8
     accumulation_steps = batch_size//micro_batch_size
     state_size = 16 
-    total_number_of_steps = 10_000
+    total_number_of_steps = 100_000
     training_steps = total_number_of_steps * batch_size
     dataset = GymDataGenerator(state_size, original_env, training_steps)
     dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=gym_collate_function, num_workers=2)
@@ -62,6 +62,19 @@ if __name__=="__main__":
 
     ema_tracker = PowerFunctionEMA(precond, stds=[0.050, 0.100])
     losses = []
+
+    # resume_training_run = 'model_batch.pt'
+    resume_training_run = None
+
+    if resume_training_run is not None:
+        checkpoint = torch.load(resume_training_run, weights_only=False, map_location='cuda')
+        precond.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        ema_tracker.load_state_dict(checkpoint['ema_state_dict'])
+        losses = checkpoint['losses']
+        print(f"Resuming training from batch {checkpoint['batch']} with loss {losses[-1]:.4f}")
+        current_lr = optimizer.param_groups[0]['lr']
+        ref_lr = checkpoint['ref_lr']
     #%%
     ulw=False
     pbar = tqdm(enumerate(dataloader),total=total_number_of_steps)
@@ -103,6 +116,7 @@ if __name__=="__main__":
             plt.xscale('log')
             plt.xlabel('n images')
             plt.ylabel('loss')
+            plt.yscale('log')
             plt.title(f'Losses with {unet_params} parameters')
             plt.savefig('losses.png')
             plt.show()
@@ -113,10 +127,11 @@ if __name__=="__main__":
             torch.save({
                 'batch': i,
                 'model_state_dict': precond.state_dict(),
-                # 'optimizer_state_dict': optimizer.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
                 'ema_state_dict': ema_tracker.state_dict(),
-                'loss': loss,
-            }, f"model_batch_{i}.pt")
+                'losses': losses,
+                'ref_lr': ref_lr
+            }, f"model_batch.pt")
 
         if i == total_number_of_steps:
             break
