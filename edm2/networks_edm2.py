@@ -249,14 +249,11 @@ class Precond(torch.nn.Module):
 class Gating(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.linear_layer_start = nn.Linear(2, 2)
-        self.linear_layer = nn.Linear(2, 1)
+        # self.linear_layer_start = nn.Linear(2, 2)
+        # self.linear_layer = nn.Linear(2, 1)
 
         self.offset = nn.Parameter(torch.tensor([0.,0.]))
-        self.mult = nn.Parameter(torch.tensor([-1.,-1.]))
-        # sensible_default_weight = torch.tensor([-1.,1.])
-        # self.linear_layer.weight.copy_(sensible_default_weight)
-        # sensible_default_bias = torch.tensor([0.,])
+        self.mult = nn.Parameter(torch.tensor([1.5,-0.5]))
         self.activation = nn.Sigmoid()
 
     def forward(self, c_noise:Tensor):
