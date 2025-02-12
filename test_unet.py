@@ -24,7 +24,7 @@ dataloader = OpenVidDataloader(micro_batch_size, num_workers, device, dataset = 
 unet = UNet(img_resolution=64, # Match your latent resolution
             img_channels=16, # Match your latent channels
             label_dim = dataloader.text_embedding_dim,
-            model_channels=128,
+            model_channels=64,
             channel_mult=[1,2,2,4],
             channel_mult_noise=None,
             channel_mult_emb=None,

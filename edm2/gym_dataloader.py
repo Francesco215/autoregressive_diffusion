@@ -13,13 +13,14 @@ class GymDataGenerator(IterableDataset):
 
         self.env = gym.make(environment_name,render_mode="rgb_array")
 
-        self.evolution_time = 5
+        self.evolution_time = 10
         self.training_examples = training_examples
 
     def __iter__(self):
         terminated = True
+        n_data_yielded = 0
 
-        for _ in range(self.training_examples):
+        while n_data_yielded < self.training_examples:
             if terminated:
                 observation, _ = self.env.reset()
                 terminated = False
@@ -50,6 +51,7 @@ class GymDataGenerator(IterableDataset):
                 # if step_count%self.evolution_time==self.evolution_time-1:
 
                 yield frames, actions, torch.tensor(reward).clone()
+                n_data_yielded += 1
                 frame_history = []
                 
             step_count += 1

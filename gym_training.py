@@ -31,7 +31,7 @@ if __name__=="__main__":
     unet = UNet(img_resolution=32, # Match your latent resolution
                 img_channels=latent_channels, # Match your latent channels
                 label_dim = 0,
-                model_channels=128,
+                model_channels=64,
                 channel_mult=[1,2,2,4],
                 channel_mult_noise=None,
                 channel_mult_emb=None,
@@ -46,7 +46,7 @@ if __name__=="__main__":
     total_number_of_steps = 100_000
     training_steps = total_number_of_steps * batch_size
     dataset = GymDataGenerator(state_size, original_env, training_steps)
-    dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=gym_collate_function, num_workers=2)
+    dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=gym_collate_function, num_workers=batch_size)
 
     unet_params = sum(p.numel() for p in unet.parameters())
     print(f"Number of UNet parameters: {unet_params//1e6}M")
@@ -55,7 +55,7 @@ if __name__=="__main__":
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
     loss_fn = EDM2Loss(P_mean=0.5,P_std=1.5, sigma_data=sigma_data, noise_weight=MultiNoiseLoss())
 
-    ref_lr = 3e-4
+    ref_lr = 1e-2
     current_lr = ref_lr
     optimizer = MARS(precond.parameters(), lr=ref_lr, eps = 1e-4)
     optimizer.zero_grad()
@@ -131,7 +131,7 @@ if __name__=="__main__":
                 'ema_state_dict': ema_tracker.state_dict(),
                 'losses': losses,
                 'ref_lr': ref_lr
-            }, f"model_batch.pt")
+            }, f"lunar_lander_{unet_params//1e6}M.pt")
 
         if i == total_number_of_steps:
             break
