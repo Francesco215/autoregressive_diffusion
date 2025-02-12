@@ -42,20 +42,22 @@ dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=gym_collate_f
 batch = next(iter(dataloader))
 #%%
 
+latent_channels = autoencoder.config.latent_channels
+
 unet = UNet(img_resolution=32, # Match your latent resolution
-            img_channels=autoencoder.config.latent_channels, # Match your latent channels
+            img_channels=latent_channels, # Match your latent channels
             label_dim = 0,
-            model_channels=64,
+            model_channels=128,
             channel_mult=[1,2,2,4],
             channel_mult_noise=None,
             channel_mult_emb=None,
             num_blocks=1,
-            attn_resolutions=[16,8]
+            attn_resolutions=[8,4]
             )
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
 sigma_data = 1.
 precond = Precond(unet, use_fp16=True, sigma_data=sigma_data)
-precond_state_dict = torch.load("model_batch_1000.pt",map_location=device,weights_only=False)['model_state_dict']
+precond_state_dict = torch.load("model_batch.pt",map_location=device,weights_only=False)['model_state_dict']
 # precond_state_dict = torch.load("model_batch_2000.pt",map_location=device,weights_only=False)['model_state_dict']
 # precond_state_dict = torch.load("model_batch_2000.pt",map_location=device,weights_only=False)['ema_state_dict']['emas'][0]
 precond.load_state_dict(precond_state_dict)
@@ -64,14 +66,13 @@ precond.to(device)
 #%%
 @torch.no_grad()
 def edm_sampler_with_mse(
-    net, context, target,  # Added target for MSE calculation
+    net, context, target=None,  # Added target for MSE calculation
     gnet=None, text_embeddings=None, num_steps=32, sigma_min=0.002, sigma_max=80, 
     rho=7, guidance=1, S_churn=0, S_min=0, S_max=float('inf'), S_noise=1,
     dtype=torch.float32,
 ):
     context = context.to(dtype)
     batch_size, n_frames, channels, height, width = context.shape
-    target = target.to(dtype)
     
     # Guided denoiser (same as original)
     def denoise(x, t):
@@ -92,10 +93,13 @@ def edm_sampler_with_mse(
     t_steps = torch.cat([t_steps, torch.zeros_like(t_steps[:1])])
     
     # Main sampling loop with MSE tracking
-    noise = target + torch.randn_like(target) * t_steps[0]
+    noise = torch.randn_like(latents[:,-1]) * t_steps[0]
     x_next = torch.cat((context, noise.unsqueeze(1)), dim=1)
     mse_values = []
     mse_pred_values = []
+    if target is not None:
+        target = target.to(dtype)
+        noise = noise + target
 
     net.eval()
     for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])):
@@ -124,12 +128,14 @@ def edm_sampler_with_mse(
 
         # Calculate MSE after each step
         pred_frame = x_next[:, -1]
-        mse_pred = torch.mean((x_pred[:,-1] - target) ** 2).item()
-        mse = torch.mean((pred_frame - target) ** 2).item()
-        mse_values.append(mse)
-        mse_pred_values.append(mse_pred)
+        if target is not None:
+            mse_pred = torch.mean((x_pred[:,-1] - target) ** 2).item()
+            mse = torch.mean((pred_frame - target) ** 2).item()
+            mse_values.append(mse)
+            mse_pred_values.append(mse_pred)
 
     net.train()
+    x_next[:,:-1] = context
     return x_next, mse_values, mse_pred_values
 
 #%%
@@ -155,7 +161,7 @@ _, mse_steps, mse_pred_values = edm_sampler_with_mse(
     net=precond,
     context=context,
     target=target,
-    sigma_max=4,  # Initial noise level matches our test
+    sigma_max=80,  # Initial noise level matches our test
     num_steps=32,
     # gnet=precond,
     # text_embeddings=text_embeddings,
@@ -176,5 +182,31 @@ plt.grid(True)
 plt.legend()
 plt.show()
 print(mse_steps[-1])
+
+# %%
+
+context.shape
+# %%
+x=latents.clone()
+for i in range(8):
+    x, _, _= edm_sampler_with_mse(precond, x, sigma_max = 80, num_steps=32)
+
+print(x.shape)
+# %%
+torch.save(x, "x.pt")
+
+# %%
+import torch
+from edm2.gym_dataloader import latents_to_frames
+import einops
+x = torch.load("x.pt").to(device)
+frames = latents_to_frames(autoencoder, x)
+
+# %%
+from matplotlib.pyplot import imshow
+
+x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t1=4)
+imshow(x[8])
+
 
 # %%

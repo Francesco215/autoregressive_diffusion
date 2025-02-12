@@ -63,7 +63,7 @@ if __name__=="__main__":
     ema_tracker = PowerFunctionEMA(precond, stds=[0.050, 0.100])
     losses = []
 
-    # resume_training_run = 'model_batch.pt'
+    # resume_training_run = 'lunar_lander.pt'
     resume_training_run = None
 
     if resume_training_run is not None:

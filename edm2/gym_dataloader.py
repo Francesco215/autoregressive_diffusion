@@ -68,7 +68,6 @@ def gym_collate_function(batch):
     frame_histories, action_histories, rewards = zip(*batch)
     padded_frames = torch.stack(frame_histories)
     padded_actions = torch.stack(action_histories)
-    assert padded_frames.shape[1]==16
     return padded_frames, padded_actions, torch.Tensor(rewards)
 
     
@@ -97,3 +96,37 @@ def frames_to_latents(autoencoder, frames)->Tensor:
 
     latents = einops.rearrange(latents, '(b t) c h w -> b t c h w', b=batch_size)
     return latents
+
+
+@torch.no_grad()        
+def latents_to_frames(autoencoder,latents):
+    """
+        Converts latent representations to frames.
+        Args:
+            latents (torch.Tensor): A tensor of shape (batch_size, time, latent_channels, latent_height, latent_width) 
+                                    representing the latent representations.
+        Returns:
+            numpy.ndarray: A numpy array of shape (batch_size, height, width * time, rgb) representing the decoded frames.
+        Note:
+            - The method uses an autoencoder to decode the latent representations.
+            - The frames are rearranged and clipped to the range [0, 255] before being converted to a numpy array.
+    """
+    batch_size = latents.shape[0]
+    latents = einops.rearrange(latents, 'b t c h w -> (b t) c h w')
+    # Apply inverse scaling factor
+    latents = latents / autoencoder.config.scaling_factor
+
+    #split the conversion to not overload the GPU RAM
+    split_size = 64
+    for i in range (0, latents.shape[0], split_size):
+        l = autoencoder.decode(latents[i:i+split_size]).sample
+        if i == 0:
+            frames = l
+        else:
+            frames = torch.cat((frames, l), dim=0)
+
+    frames = einops.rearrange(frames, '(b t) c h w -> b t h w c', b=batch_size) 
+    frames = torch.clip((frames + 1) * 127.5, 0, 255).cpu().detach().numpy().astype(int)
+    return frames
+
+        
