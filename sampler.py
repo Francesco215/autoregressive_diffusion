@@ -46,18 +46,19 @@ latent_channels = autoencoder.config.latent_channels
 
 unet = UNet(img_resolution=32, # Match your latent resolution
             img_channels=latent_channels, # Match your latent channels
-            label_dim = 0,
+            label_dim = 4,
             model_channels=64,
             channel_mult=[1,2,2,4],
             channel_mult_noise=None,
             channel_mult_emb=None,
-            num_blocks=1,
+            num_blocks=3,
             attn_resolutions=[8,4]
             )
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
 sigma_data = 1.
 precond = Precond(unet, use_fp16=True, sigma_data=sigma_data)
-precond_state_dict = torch.load("lunar_lander_38.0M.pt",map_location=device,weights_only=False)['model_state_dict']
+# precond_state_dict = torch.load("lunar_lander_38.0M_trained.pt",map_location=device,weights_only=False)['model_state_dict']
+precond_state_dict = torch.load("lunar_lander_68.0M.pt",map_location=device,weights_only=False)['model_state_dict']
 # precond_state_dict = torch.load("model_batch_2000.pt",map_location=device,weights_only=False)['model_state_dict']
 # precond_state_dict = torch.load("model_batch_2000.pt",map_location=device,weights_only=False)['ema_state_dict']['emas'][0]
 precond.load_state_dict(precond_state_dict)
@@ -161,7 +162,7 @@ _, mse_steps, mse_pred_values = edm_sampler_with_mse(
     net=precond,
     context=context,
     target=target,
-    sigma_max=0.3,  # Initial noise level matches our test
+    sigma_max=10,  # Initial noise level matches our test
     num_steps=32,
     # gnet=precond,
     # text_embeddings=text_embeddings,
@@ -209,4 +210,10 @@ x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t1=4)
 imshow(x[2])
 
 
+# %%
+losses = torch.load("lunar_lander_38.0M_trained.pt",map_location=device,weights_only=False)['losses']
+print(losses[-1])
+plt.yscale('log')
+plt.xscale('log')
+plt.plot(losses)
 # %%

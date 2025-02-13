@@ -161,7 +161,7 @@ class UNet(torch.nn.Module):
                 self.dec[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=(res in attn_resolutions), **block_kwargs)
         self.out_conv = MPCausal3DConv(cout, img_channels, kernel=[3,3,3])
 
-    def forward(self, x, c_noise, text_embeddings = None):
+    def forward(self, x, c_noise, conditioning = None):
         # x.shape = b t c h w
         batch_size, time_dimention = x.shape[:2]
         res = x.clone()
@@ -175,12 +175,15 @@ class UNet(torch.nn.Module):
         time_embeddings = self.emb_time(self.emb_fourier_time(time_labels))
         emb = self.emb_sigma(self.emb_fourier_sigma(c_noise))
         emb = mp_sum(emb, time_embeddings, t=0.5)
-        if self.emb_label is not None and text_embeddings is not None:
+        if self.emb_label is not None and conditioning is not None:
             # TODO: might need to change this for when the class label is not none
-            text_embeddings = self.emb_label(text_embeddings/1.5)
-            if text_embeddings.shape[0]!=1:
-                text_embeddings = torch.repeat_interleave(text_embeddings, time_dimention, dim = 0)
-            emb = mp_sum(emb, text_embeddings, t=1/3)
+            conditioning = einops.rearrange(conditioning, 'b t -> (b t)')
+            conditioning = F.one_hot(conditioning, num_classes=self.label_dim).to(c_noise.dtype)*self.label_dim**(0.5)
+            conditioning = self.emb_label(conditioning)
+            # conditioning = self.emb_label(conditioning/1.5)
+            # if conditioning.shape[0]!=1:
+            #     conditioning = torch.repeat_interleave(conditioning, time_dimention, dim = 0)
+            emb = mp_sum(emb, conditioning, t=1/3)
         emb = mp_silu(emb)
 
         # Encoder.
@@ -218,7 +221,7 @@ class Precond(torch.nn.Module):
         self.use_fp16 = use_fp16
         self.sigma_data = sigma_data
 
-    def forward(self, x:Tensor, sigma:Tensor, text_embeddings:Tensor=None, force_fp32=False, **unet_kwargs):
+    def forward(self, x:Tensor, sigma:Tensor, conditioning:Tensor=None, force_fp32=False, **unet_kwargs):
         b, t, c, h, w = x.shape
         x = x.to(torch.float32)
         sigma = sigma.to(torch.float32)
@@ -227,7 +230,7 @@ class Precond(torch.nn.Module):
         # mean, std = x.mean(dim=(2,3,4), keepdim=True), x.std(dim=(2,3,4), keepdim=True)
         # x=(x-mean)/(std + 1e-4)
 
-        text_embeddings = None if self.label_dim == 0 else torch.zeros([1, self.label_dim], device=x.device) if text_embeddings is None else text_embeddings.to(torch.float32)
+        # text_embeddings = None if self.label_dim == 0 else torch.zeros([1, self.label_dim], device=x.device) if text_embeddings is None else text_embeddings#.to(torch.float32)
         dtype = torch.float16 if (self.use_fp16 and not force_fp32 and x.device.type == 'cuda') else torch.float32
 
         # Preconditioning weights.
@@ -238,7 +241,7 @@ class Precond(torch.nn.Module):
  
         # Run the model.
         x_in = (c_in * x).to(dtype)
-        F_x = self.unet(x_in, c_noise, text_embeddings, **unet_kwargs)
+        F_x = self.unet(x_in, c_noise, conditioning, **unet_kwargs)
         D_x = c_skip * x + c_out * F_x.to(torch.float32)
         # D_x = D_x * std + mean
         return D_x

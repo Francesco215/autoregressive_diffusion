@@ -29,9 +29,11 @@ class EDM2Loss:
         self.noise_weight = noise_weight
         assert context_noise_reduction >= 0 and context_noise_reduction <= 1, f"context_noise_reduction must be in [0,1], what are you doing? {context_noise_reduction}"
 
-    def __call__(self, net, images, text_embeddings=None, use_loss_weight=False, sigma=None):
+    def __call__(self, net, images, conditioning=None, use_loss_weight=False, sigma=None):
         batch_size, n_frames, channels, height, width = images.shape    
         cat_images = torch.cat((images,images),dim=1).clone()
+        if conditioning is not None:
+            conditioning = torch.cat((conditioning,conditioning),dim=1).clone()
 
         if sigma is None:
             sigma_targets = (torch.randn(batch_size,n_frames,device=images.device) * self.P_std + self.P_mean).exp()
@@ -41,7 +43,7 @@ class EDM2Loss:
         assert sigma.shape == (batch_size, n_frames*2), f"sigma shape is {sigma.shape} but should be {(batch_size, n_frames*2)}"
 
         noise = einops.einsum(sigma, torch.randn_like(cat_images), 'b t, b t ... -> b t ...') 
-        denoised = net(cat_images + noise, sigma, text_embeddings)[:,n_frames:]
+        denoised = net(cat_images + noise, sigma, conditioning)[:,n_frames:]
         losses = ((denoised - images) ** 2).mean(dim=(-1,-2,-3))
 
         sigma = sigma[:,n_frames:]

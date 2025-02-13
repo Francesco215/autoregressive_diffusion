@@ -30,23 +30,23 @@ if __name__=="__main__":
 
     unet = UNet(img_resolution=32, # Match your latent resolution
                 img_channels=latent_channels, # Match your latent channels
-                label_dim = 0,
+                label_dim = 4,
                 model_channels=64,
                 channel_mult=[1,2,2,4],
                 channel_mult_noise=None,
                 channel_mult_emb=None,
-                num_blocks=1,
+                num_blocks=3,
                 attn_resolutions=[8,4]
                 )
 
-    micro_batch_size = 2
-    batch_size = 8
+    micro_batch_size = 16
+    batch_size = 16
     accumulation_steps = batch_size//micro_batch_size
     state_size = 16 
-    total_number_of_steps = 100_000
+    total_number_of_steps = 10_000
     training_steps = total_number_of_steps * batch_size
     dataset = GymDataGenerator(state_size, original_env, training_steps)
-    dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=gym_collate_function, num_workers=batch_size)
+    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=batch_size)
 
     unet_params = sum(p.numel() for p in unet.parameters())
     print(f"Number of UNet parameters: {unet_params//1e6}M")
@@ -55,7 +55,7 @@ if __name__=="__main__":
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
     loss_fn = EDM2Loss(P_mean=0.5,P_std=1.5, sigma_data=sigma_data, noise_weight=MultiNoiseLoss())
 
-    ref_lr = 1e-2
+    ref_lr = 3e-3
     current_lr = ref_lr
     optimizer = MARS(precond.parameters(), lr=ref_lr, eps = 1e-4)
     optimizer.zero_grad()
@@ -79,15 +79,15 @@ if __name__=="__main__":
     ulw=False
     pbar = tqdm(enumerate(dataloader),total=total_number_of_steps)
     for i, batch in pbar:
-        frames, action, reward = batch
+        frames, actions, reward = batch
         frames = frames.to(device)
-        action = action.to(device)
+        actions = None if i%4==0 else actions.to(device)
         # action_emb = diffusion.action_embedder(action)
 
         latents = frames_to_latents(autoencoder, frames)
 
         # Calculate loss    
-        loss, un_weighted_loss = loss_fn(precond, latents, use_loss_weight=ulw)
+        loss, un_weighted_loss = loss_fn(precond, latents, actions, use_loss_weight=ulw)
         losses.append(un_weighted_loss)
         # Backpropagation and optimization
         loss.backward()
