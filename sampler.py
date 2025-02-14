@@ -57,12 +57,24 @@ unet = UNet(img_resolution=32, # Match your latent resolution
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
 sigma_data = 1.
 precond = Precond(unet, use_fp16=True, sigma_data=sigma_data)
-# precond_state_dict = torch.load("lunar_lander_38.0M_trained.pt",map_location=device,weights_only=False)['model_state_dict']
 precond_state_dict = torch.load("lunar_lander_68.0M.pt",map_location=device,weights_only=False)['model_state_dict']
-# precond_state_dict = torch.load("model_batch_2000.pt",map_location=device,weights_only=False)['model_state_dict']
-# precond_state_dict = torch.load("model_batch_2000.pt",map_location=device,weights_only=False)['ema_state_dict']['emas'][0]
 precond.load_state_dict(precond_state_dict)
 precond.to(device)
+
+g_net_state_dict = torch.load("lunar_lander_68.0M_trained.pt",map_location=device,weights_only=False)['model_state_dict']
+gunet = UNet(img_resolution=32, # Match your latent resolution
+            img_channels=latent_channels, # Match your latent channels
+            label_dim = 4,
+            model_channels=64,
+            channel_mult=[1,2,2,4],
+            channel_mult_noise=None,
+            channel_mult_emb=None,
+            num_blocks=3,
+            attn_resolutions=[8,4]
+            )
+g_net = Precond(gunet, use_fp16=True, sigma_data=sigma_data)
+g_net.load_state_dict(g_net_state_dict)
+g_net.to(device)
 # Modify the sampler to collect intermediate steps and compute MSE
 #%%
 @torch.no_grad()
@@ -84,7 +96,7 @@ def edm_sampler_with_mse(
         Dx = net(x, t, text_embeddings).to(dtype)
         if guidance == 1:
             return Dx
-        ref_Dx = gnet(x, t, text_embeddings=None).to(dtype)
+        ref_Dx = gnet(x, t, text_embeddings).to(dtype)
         return ref_Dx.lerp(Dx, guidance)
 
     # Time step discretization
@@ -103,6 +115,8 @@ def edm_sampler_with_mse(
         noise = noise + target
 
     net.eval()
+    if gnet is not None:
+        gnet.eval()
     for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])):
         x_cur = x_next
         x_cur[:, :-1] = context  # Keep original context frames
@@ -157,17 +171,18 @@ context = latents[:, :-1]  # First t-1 frames
 target = latents[:, -1]    # Last frame (ground truth)
 
 
+#%%
 # Run sampler with sigma_max=0.5 for initial noise level
 _, mse_steps, mse_pred_values = edm_sampler_with_mse(
     net=precond,
     context=context,
     target=target,
-    sigma_max=10,  # Initial noise level matches our test
+    sigma_max=0.4,  # Initial noise level matches our test
     num_steps=32,
-    # gnet=precond,
+    gnet=g_net,
     # text_embeddings=text_embeddings,
     rho = 7,
-    guidance = 1,
+    guidance = 2,
 )
 
 # Plot results
@@ -190,7 +205,7 @@ context.shape
 # %%
 x=latents.clone()
 for i in range(8):
-    x, _, _= edm_sampler_with_mse(precond, x, sigma_max = 80, num_steps=32)
+    x, _, _= edm_sampler_with_mse(precond, x, gnet=g_net, sigma_max = 80, num_steps=32, rho=7, guidance=1)
 
 print(x.shape)
 # %%
@@ -207,7 +222,7 @@ frames = latents_to_frames(autoencoder, x)
 from matplotlib.pyplot import imshow
 
 x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t1=4)
-imshow(x[2])
+imshow(x[4])
 
 
 # %%

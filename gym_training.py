@@ -18,6 +18,7 @@ from edm2.loss_weight import MultiNoiseLoss
 from edm2.mars import MARS
 from edm2.phema import PowerFunctionEMA
 
+torch._dynamo.config.recompile_limit = 100
 #%%
 if __name__=="__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -39,11 +40,11 @@ if __name__=="__main__":
                 attn_resolutions=[8,4]
                 )
 
-    micro_batch_size = 16
-    batch_size = 16
+    micro_batch_size = 8
+    batch_size = 32
     accumulation_steps = batch_size//micro_batch_size
     state_size = 16 
-    total_number_of_steps = 10_000
+    total_number_of_steps = 100_000
     training_steps = total_number_of_steps * batch_size
     dataset = GymDataGenerator(state_size, original_env, training_steps)
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=batch_size)
@@ -55,7 +56,7 @@ if __name__=="__main__":
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
     loss_fn = EDM2Loss(P_mean=0.5,P_std=1.5, sigma_data=sigma_data, noise_weight=MultiNoiseLoss())
 
-    ref_lr = 3e-3
+    ref_lr = 3e-4
     current_lr = ref_lr
     optimizer = MARS(precond.parameters(), lr=ref_lr, eps = 1e-4)
     optimizer.zero_grad()
@@ -64,7 +65,7 @@ if __name__=="__main__":
     losses = []
 
     # resume_training_run = 'lunar_lander.pt'
-    resume_training_run = None
+    resume_training_run = 'lunar_lander_68.0M_trained.pt'
 
     if resume_training_run is not None:
         checkpoint = torch.load(resume_training_run, weights_only=False, map_location='cuda')
