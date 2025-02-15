@@ -29,42 +29,33 @@ class VideoAttention(nn.Module):
 
     def forward(self, x:Tensor, batch_size:int, kv_cache:Tensor=None):
         if self.num_heads == 0:
-            return x
+            return x, None
 
         h, w = x.shape[-2:]
-        self.image_size = h*w
         if self.training and ((self.training_mask is None and self.block_mask is None) or self.last_x_shape != x.shape):
             # This can trigger a recompilation of the flex_attention function
-            n_frames = x.shape[0]//(batch_size*2)
-            self.training_mask = AutoregressiveDiffusionMask(n_frames, self.image_size)
-            self.block_mask = make_train_mask(batch_size, self.num_heads, n_frames, image_size=h*w)
-
+            n_frames, image_size= x.shape[0]//(batch_size*2), h*w
+            self.training_mask = AutoregressiveDiffusionMask(n_frames, image_size)
+            self.block_mask = make_train_mask(batch_size, self.num_heads, n_frames, image_size)
             self.last_x_shape = x.shape
 
-        if not self.training:
-            x = einops.rearrange(x, 'b t c h w -> (b t) c h w')[:,-1]
-
         y = self.attn_qkv(x)
-
-        if not self.training:
-            y = y.unsqueeze(1) 
 
         # b:batch, t:time, m: multi-head, s: split, c: channels, h: height, w: width
         y = einops.rearrange(y, '(b t) (s m c) h w -> s b m t (h w) c', b=batch_size, s=3, m=self.num_heads)
         # q, k, v = normalize(y, dim=-1).unbind(0) # pixel norm & split 
         q, k, v = y.unbind(0) # pixel norm & split 
+        v = einops.rearrange(v, ' b m t hw c -> b m (t hw) c') # q and k are already rearranged inside of rope
 
         if not self.training:
             if kv_cache is not None:
                 cached_q, cached_k = kv_cache
-                q, k = torch.cat(cached_q, q, dim = 1), torch.cat(cached_k, k, dim = 1)
+                q, k = torch.cat(cached_q, q, dim=-3), torch.cat(cached_k, k, dim=-3)
             # TODO: this can be optimized because you only need to update the cache only at the last diffusion step
             # but maybe since i'm just updating the pointer it could not be a big deal
             kv_cache = (q, k)
-
         q, k = self.rope(q, k)
 
-        v = einops.rearrange(v, ' b m t hw c -> b m (t hw) c') # q and k are already rearranged inside of rope
 
         if self.training:
             # during training we use flex attention because it's very efficient and parallel
@@ -76,10 +67,9 @@ class VideoAttention(nn.Module):
             y = attention @ v
 
         y = einops.rearrange(y, 'b m (t h w) c -> (b t) (c m) h w', b=batch_size, h=h, w=w)
-
         y = self.attn_proj(y)
         
-        return mp_sum(x, y, t=self.attn_balance)
+        return mp_sum(x, y, t=self.attn_balance), kv_cache
     
     # To log all recompilation reasons, use TORCH_LOGS="recompiles" or torch._logging.set_logs(dynamo=logging.INFO)
     @torch.compile

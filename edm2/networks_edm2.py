@@ -63,7 +63,7 @@ class Block(torch.nn.Module):
         if self.num_heads > 0: 
             assert (out_channels & (out_channels - 1) == 0) and out_channels != 0, f"out_channels must be a power of 2, got {out_channels}"
 
-    def forward(self, x, emb, batch_size):
+    def forward(self, x, emb, batch_size, kv_cache=None):
         # Main branch.
         x = resample(x, f=self.resample_filter, mode=self.resample_mode)
         if self.flavor == 'enc':
@@ -86,12 +86,12 @@ class Block(torch.nn.Module):
         x = mp_sum(x, y, t=self.res_balance)
 
         # Self-attention.
-        x = self.attn(x, batch_size)
+        x, kv_cache = self.attn(x, batch_size, kv_cache)
 
         # Clip activations.
         if self.clip_act is not None:
             x = x.clip_(-self.clip_act, self.clip_act)
-        return x
+        return x, kv_cache
 
 #----------------------------------------------------------------------------
 # EDM2 U-Net model (Figure 21).
@@ -121,7 +121,6 @@ class UNet(torch.nn.Module):
         self.label_balance = label_balance
         self.concat_balance = concat_balance
         self.out_res = Gating()
-        # self.out_gain = Gating()
 
         # Embedding.
         self.emb_fourier_sigma = MPFourier(cnoise)
@@ -162,12 +161,11 @@ class UNet(torch.nn.Module):
                 self.dec[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=(res in attn_resolutions), **block_kwargs)
         self.out_conv = MPCausal3DConv(cout, img_channels, kernel=[3,3,3])
 
-    def forward(self, x, c_noise, conditioning = None):
+    def forward(self, x, c_noise, conditioning = None, cache:dict = {}):
         # x.shape = b t c h w
         batch_size, time_dimention = x.shape[:2]
         res = x.clone()
         out_res = self.out_res(c_noise)
-        # out_gain = self.out_gain(c_noise)
 
         x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
         c_noise = einops.rearrange(c_noise, 'b t -> (b t)')
@@ -182,9 +180,6 @@ class UNet(torch.nn.Module):
             conditioning = einops.rearrange(conditioning, 'b t -> (b t)')
             conditioning = F.one_hot(conditioning, num_classes=self.label_dim).to(c_noise.dtype)*self.label_dim**(0.5)
             conditioning = self.emb_label(conditioning)
-            # conditioning = self.emb_label(conditioning/1.5)
-            # if conditioning.shape[0]!=1:
-            #     conditioning = torch.repeat_interleave(conditioning, time_dimention, dim = 0)
             emb = mp_sum(emb, conditioning, t=1/3)
         emb = mp_silu(emb)
 
@@ -192,20 +187,21 @@ class UNet(torch.nn.Module):
         x = torch.cat([x, torch.ones_like(x[:, :1])], dim=1)
         skips = []
         for name, block in self.enc.items():
-            x = block(x, batch_size=batch_size) if 'conv' in name else block(x, emb, batch_size=batch_size)
+            if 'conv' in name:
+                x, cache[name] = block(x, batch_size=batch_size, cache=cache.get(name, None))
+            x, cache[name] = block(x, emb, batch_size=batch_size, kv_cache=cache.get(name, None))
             skips.append(x)
 
         # Decoder.
         for name, block in self.dec.items():
             if 'block' in name:
                 x = mp_cat(x, skips.pop(), t=self.concat_balance)
-            x = block(x, emb, batch_size=batch_size)
+            x, cache[name] = block(x, emb, batch_size=batch_size, kv_cache=cache.get(name,None))
         x = self.out_conv(x, batch_size=batch_size)
 
         x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
         x = mp_sum(x, res, out_res)
-        # x = bmult(x, out_gain)
-        return x
+        return x, cache
 
 #----------------------------------------------------------------------------
 # Preconditioning and uncertainty estimation.

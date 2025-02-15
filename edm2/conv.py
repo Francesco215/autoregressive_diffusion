@@ -1,5 +1,6 @@
 import einops
 import torch
+from torch.nn import functional as F
 import numpy as np
 from .utils import normalize, mp_cat
 
@@ -25,7 +26,7 @@ class MPConv(torch.nn.Module):
         if w.ndim == 2:
             return x @ w.t()
         assert w.ndim == 4
-        return torch.nn.functional.conv2d(x, w, padding=(w.shape[-1]//2,))
+        return F.conv2d(x, w, padding=(w.shape[-1]//2,))
 
 
 
@@ -39,7 +40,7 @@ class MPCausal3DConv(torch.nn.Module):
         assert len(kernel)==3
         self.weight = torch.nn.Parameter(torch.randn(out_channels, in_channels, *kernel))
 
-    def forward(self, x, batch_size, gain=1):
+    def forward(self, x, batch_size, gain=1, cache=None):
         w = self.weight.to(torch.float32)
         if self.training:
             with torch.no_grad():
@@ -63,7 +64,7 @@ class MPCausal3DConv(torch.nn.Module):
             # or we exploit linearity of the conv layers (good and smart). 
             
             # we do the 2d convolutions over the last frames
-            last_frame_conv = torch.nn.functional.conv2d(x, w[:,:,-1],  padding=image_padding[1:])
+            last_frame_conv = F.conv2d(x, w[:,:,-1],  padding=image_padding[1:])
 
             # we just take the context frames
             context, _ = einops.rearrange(x, '(b s t) c h w -> s b c t h w', b=batch_size, s=2).unbind(0)
@@ -71,7 +72,7 @@ class MPCausal3DConv(torch.nn.Module):
             context = torch.cat((causal_pad, context), dim=-3)
 
             # now we do the 3d convolutions over the previous frames of the context
-            context = torch.nn.functional.conv3d(context[:,:,:-1], w[:,:,:-1], padding=image_padding)
+            context = F.conv3d(context[:,:,:-1], w[:,:,:-1], padding=image_padding)
 
             # we concatenate the results and reshape them to sum them back to the 2d convolutions
             context = torch.stack((context, context), dim=0)
@@ -79,12 +80,21 @@ class MPCausal3DConv(torch.nn.Module):
 
             # we use the fact that the convolution is linear to sum the results of the 2d and 3d convolutions
             x = context + last_frame_conv
-            return x
+            return x, None
+
+        if cache is None:
+            cache = torch.ones(x.shape[0], x.shape[1], w.shape[2]-1, *x.shape[2:], device=x.device, dtype=x.dtype)
+
+        x = torch.cat((cache, x.unsqueeze(-3)), dim=-3)
+        cache = x[:,:,1:]
+        x = F.conv3d(x, w, padding = image_padding)
+
+        return x, cache
 
         # during inference is much simpler
         x = einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
         x = torch.cat((causal_pad, x), dim=-3)
-        x = torch.nn.functional.conv3d(x, w, padding=image_padding)
+        x = F.conv3d(x, w, padding=image_padding)
 
         x = einops.rearrange(x, 'b c t h w -> (b t) c h w')
         return x
