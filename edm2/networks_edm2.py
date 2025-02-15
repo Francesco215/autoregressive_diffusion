@@ -63,7 +63,7 @@ class Block(torch.nn.Module):
         if self.num_heads > 0: 
             assert (out_channels & (out_channels - 1) == 0) and out_channels != 0, f"out_channels must be a power of 2, got {out_channels}"
 
-    def forward(self, x, emb, batch_size, kv_cache=None):
+    def forward(self, x, emb, batch_size, cache=None):
         # Main branch.
         x = resample(x, f=self.resample_filter, mode=self.resample_mode)
         if self.flavor == 'enc':
@@ -74,7 +74,7 @@ class Block(torch.nn.Module):
         # Residual branch.
         y = self.conv_res0(mp_silu(x),batch_size=batch_size)
         c = self.emb_linear(emb, gain=self.emb_gain) + 1
-        y = einops.einsum(y, c.to(y.dtype),'b c h w, b c -> b c h w') 
+        y = bmult(y, c.to(y.dtype)) 
         y = mp_silu(y)
         if self.training and self.dropout != 0:
             y = torch.nn.functional.dropout(y, p=self.dropout)
@@ -86,12 +86,12 @@ class Block(torch.nn.Module):
         x = mp_sum(x, y, t=self.res_balance)
 
         # Self-attention.
-        x, kv_cache = self.attn(x, batch_size, kv_cache)
+        x, cache = self.attn(x, batch_size, cache)
 
         # Clip activations.
         if self.clip_act is not None:
             x = x.clip_(-self.clip_act, self.clip_act)
-        return x, kv_cache
+        return x, cache
 
 #----------------------------------------------------------------------------
 # EDM2 U-Net model (Figure 21).
@@ -143,7 +143,7 @@ class UNet(torch.nn.Module):
             for idx in range(num_blocks):
                 cin = cout
                 cout = channels
-                self.enc[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='enc', attention=(res in attn_resolutions), **block_kwargs)
+                self.enc[f'enc_{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='enc', attention=(res in attn_resolutions), **block_kwargs)
 
         # Decoder.
         self.dec = torch.nn.ModuleDict()
@@ -158,7 +158,7 @@ class UNet(torch.nn.Module):
             for idx in range(num_blocks + 1):
                 cin = cout + skips.pop()
                 cout = channels
-                self.dec[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=(res in attn_resolutions), **block_kwargs)
+                self.dec[f'dec_{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=(res in attn_resolutions), **block_kwargs)
         self.out_conv = MPCausal3DConv(cout, img_channels, kernel=[3,3,3])
 
     def forward(self, x, c_noise, conditioning = None, cache:dict = {}):
@@ -167,8 +167,9 @@ class UNet(torch.nn.Module):
         res = x.clone()
         out_res = self.out_res(c_noise)
 
-        x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
-        c_noise = einops.rearrange(c_noise, 'b t -> (b t)')
+        if self.training:
+            x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
+            c_noise = einops.rearrange(c_noise, 'b t -> (b t)')
 
         # Embedding.
         time_labels = torch.arange(time_dimention, device=x.device).repeat(batch_size).log1p().to(c_noise.dtype) / 4
@@ -176,8 +177,8 @@ class UNet(torch.nn.Module):
         emb = self.emb_sigma(self.emb_fourier_sigma(c_noise))
         emb = mp_sum(emb, time_embeddings, t=0.5)
         if self.emb_label is not None and conditioning is not None:
-            # TODO: might need to change this for when the class label is not none
-            conditioning = einops.rearrange(conditioning, 'b t -> (b t)')
+            if self.training:
+                conditioning = einops.rearrange(conditioning, 'b t -> (b t)')
             conditioning = F.one_hot(conditioning, num_classes=self.label_dim).to(c_noise.dtype)*self.label_dim**(0.5)
             conditioning = self.emb_label(conditioning)
             emb = mp_sum(emb, conditioning, t=1/3)
@@ -189,17 +190,18 @@ class UNet(torch.nn.Module):
         for name, block in self.enc.items():
             if 'conv' in name:
                 x, cache[name] = block(x, batch_size=batch_size, cache=cache.get(name, None))
-            x, cache[name] = block(x, emb, batch_size=batch_size, kv_cache=cache.get(name, None))
+            x, cache[name] = block(x, emb, batch_size=batch_size, cache=cache.get(name, None))
             skips.append(x)
 
         # Decoder.
         for name, block in self.dec.items():
             if 'block' in name:
                 x = mp_cat(x, skips.pop(), t=self.concat_balance)
-            x, cache[name] = block(x, emb, batch_size=batch_size, kv_cache=cache.get(name,None))
-        x = self.out_conv(x, batch_size=batch_size)
+            x, cache[name] = block(x, emb, batch_size=batch_size, cache=cache.get(name, None))
+        x, cache['out_conv'] = self.out_conv(x, batch_size=batch_size, cache=cache.get('out_conv', None))
 
-        x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
+        if self.training:
+            x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
         x = mp_sum(x, res, out_res)
         return x, cache
 
@@ -220,8 +222,7 @@ class Precond(torch.nn.Module):
         self.use_fp16 = use_fp16
         self.sigma_data = sigma_data
 
-    def forward(self, x:Tensor, sigma:Tensor, conditioning:Tensor=None, force_fp32=False, **unet_kwargs):
-        b, t, c, h, w = x.shape
+    def forward(self, x:Tensor, sigma:Tensor, conditioning:Tensor=None, force_fp32=False, cache={}):
         x = x.to(torch.float32)
         sigma = sigma.to(torch.float32)
         sigma = einops.rearrange(sigma, '... -> ... 1 1 1')
@@ -240,10 +241,10 @@ class Precond(torch.nn.Module):
  
         # Run the model.
         x_in = (c_in * x).to(dtype)
-        F_x = self.unet(x_in, c_noise, conditioning, **unet_kwargs)
+        F_x, cache = self.unet(x_in, c_noise, conditioning, cache)
         D_x = c_skip * x + c_out * F_x.to(torch.float32)
         # D_x = D_x * std + mean
-        return D_x
+        return D_x, cache
 
 #----------------------------------------------------------------------------
 

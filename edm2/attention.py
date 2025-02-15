@@ -27,7 +27,7 @@ class VideoAttention(nn.Module):
         self.training_mask = None        
     
 
-    def forward(self, x:Tensor, batch_size:int, kv_cache:Tensor=None):
+    def forward(self, x:Tensor, batch_size:int, cache:Tensor=None):
         if self.num_heads == 0:
             return x, None
 
@@ -48,12 +48,12 @@ class VideoAttention(nn.Module):
         v = einops.rearrange(v, ' b m t hw c -> b m (t hw) c') # q and k are already rearranged inside of rope
 
         if not self.training:
-            if kv_cache is not None:
-                cached_q, cached_k = kv_cache
+            if cache is not None:
+                cached_q, cached_k = cache
                 q, k = torch.cat(cached_q, q, dim=-3), torch.cat(cached_k, k, dim=-3)
             # TODO: this can be optimized because you only need to update the cache only at the last diffusion step
             # but maybe since i'm just updating the pointer it could not be a big deal
-            kv_cache = (q, k)
+            cache = (q, k)
         q, k = self.rope(q, k)
 
 
@@ -69,7 +69,7 @@ class VideoAttention(nn.Module):
         y = einops.rearrange(y, 'b m (t h w) c -> (b t) (c m) h w', b=batch_size, h=h, w=w)
         y = self.attn_proj(y)
         
-        return mp_sum(x, y, t=self.attn_balance), kv_cache
+        return mp_sum(x, y, t=self.attn_balance), cache
     
     # To log all recompilation reasons, use TORCH_LOGS="recompiles" or torch._logging.set_logs(dynamo=logging.INFO)
     @torch.compile

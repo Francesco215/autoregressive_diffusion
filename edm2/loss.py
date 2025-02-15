@@ -31,6 +31,7 @@ class EDM2Loss:
 
     def __call__(self, net, images, conditioning=None, use_loss_weight=False, sigma=None):
         batch_size, n_frames, channels, height, width = images.shape    
+        assert net.training, "The model should be in training mode"
         cat_images = torch.cat((images,images),dim=1).clone()
         if conditioning is not None:
             conditioning = torch.cat((conditioning,conditioning),dim=1).clone()
@@ -43,7 +44,8 @@ class EDM2Loss:
         assert sigma.shape == (batch_size, n_frames*2), f"sigma shape is {sigma.shape} but should be {(batch_size, n_frames*2)}"
 
         noise = einops.einsum(sigma, torch.randn_like(cat_images), 'b t, b t ... -> b t ...') 
-        denoised = net(cat_images + noise, sigma, conditioning)[:,n_frames:]
+        out, _ = net(cat_images + noise, sigma, conditioning)
+        denoised = out[:,n_frames:]
         losses = ((denoised - images) ** 2).mean(dim=(-1,-2,-3))
 
         sigma = sigma[:,n_frames:]
@@ -57,7 +59,7 @@ class EDM2Loss:
             if use_loss_weight:
                 mean_loss = self.noise_weight.calculate_mean_loss(sigma)
                 mean_loss = torch.clamp(mean_loss, min=1e-4, max=1)
-                losses = losses / mean_loss#**2 + 2*torch.log(mean_loss)
+                losses = losses / mean_loss
         return losses.mean(), un_weighted_avg_loss
 #----------------------------------------------------------------------------
 # Learning rate decay schedule used in the paper "Analyzing and Improving
