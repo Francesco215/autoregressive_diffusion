@@ -61,20 +61,21 @@ precond_state_dict = torch.load("lunar_lander_68.0M.pt",map_location=device,weig
 precond.load_state_dict(precond_state_dict)
 precond.to(device)
 
-g_net_state_dict = torch.load("lunar_lander_68.0M_trained.pt",map_location=device,weights_only=False)['model_state_dict']
-gunet = UNet(img_resolution=32, # Match your latent resolution
-            img_channels=latent_channels, # Match your latent channels
-            label_dim = 4,
-            model_channels=64,
-            channel_mult=[1,2,2,4],
-            channel_mult_noise=None,
-            channel_mult_emb=None,
-            num_blocks=3,
-            attn_resolutions=[8,4]
-            )
-g_net = Precond(gunet, use_fp16=True, sigma_data=sigma_data)
-g_net.load_state_dict(g_net_state_dict)
-g_net.to(device)
+# g_net_state_dict = torch.load("lunar_lander_68.0M_trained.pt",map_location=device,weights_only=False)['model_state_dict']
+# gunet = UNet(img_resolution=32, # Match your latent resolution
+#             img_channels=latent_channels, # Match your latent channels
+#             label_dim = 4,
+#             model_channels=64,
+#             channel_mult=[1,2,2,4],
+#             channel_mult_noise=None,
+#             channel_mult_emb=None,
+#             num_blocks=3,
+#             attn_resolutions=[8,4]
+#             )
+# g_net = Precond(gunet, use_fp16=True, sigma_data=sigma_data)
+# g_net.load_state_dict(g_net_state_dict)
+# g_net.to(device)
+g_net=None
 # Modify the sampler to collect intermediate steps and compute MSE
 #%%
 @torch.no_grad()

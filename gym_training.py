@@ -40,23 +40,23 @@ if __name__=="__main__":
                 attn_resolutions=[8,4]
                 )
 
-    micro_batch_size = 8
-    batch_size = 32
+    micro_batch_size = 16
+    batch_size = 16
     accumulation_steps = batch_size//micro_batch_size
     state_size = 16 
-    total_number_of_steps = 100_000
+    total_number_of_steps = 20_000
     training_steps = total_number_of_steps * batch_size
     dataset = GymDataGenerator(state_size, original_env, training_steps)
-    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=batch_size)
+    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=micro_batch_size)
 
     unet_params = sum(p.numel() for p in unet.parameters())
     print(f"Number of UNet parameters: {unet_params//1e6}M")
     # sigma_data = 0.434
     sigma_data = 1.
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
-    loss_fn = EDM2Loss(P_mean=0.5,P_std=1.5, sigma_data=sigma_data, noise_weight=MultiNoiseLoss())
+    loss_fn = EDM2Loss(P_mean=0.3,P_std=2., sigma_data=sigma_data, noise_weight=MultiNoiseLoss(), context_noise_reduction=0.5)
 
-    ref_lr = 3e-4
+    ref_lr = 1e-2
     current_lr = ref_lr
     optimizer = MARS(precond.parameters(), lr=ref_lr, eps = 1e-4)
     optimizer.zero_grad()
@@ -64,8 +64,8 @@ if __name__=="__main__":
     ema_tracker = PowerFunctionEMA(precond, stds=[0.050, 0.100])
     losses = []
 
-    # resume_training_run = 'lunar_lander.pt'
     resume_training_run = 'lunar_lander_68.0M_trained.pt'
+    resume_training_run = None
 
     if resume_training_run is not None:
         checkpoint = torch.load(resume_training_run, weights_only=False, map_location='cuda')

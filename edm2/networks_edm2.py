@@ -120,7 +120,8 @@ class UNet(torch.nn.Module):
         cemb = model_channels * channel_mult_emb if channel_mult_emb is not None else max(cblock)
         self.label_balance = label_balance
         self.concat_balance = concat_balance
-        self.out_gate = Gating()
+        self.out_res = Gating()
+        # self.out_gain = Gating()
 
         # Embedding.
         self.emb_fourier_sigma = MPFourier(cnoise)
@@ -165,7 +166,8 @@ class UNet(torch.nn.Module):
         # x.shape = b t c h w
         batch_size, time_dimention = x.shape[:2]
         res = x.clone()
-        out_gain = self.out_gate(c_noise)
+        out_res = self.out_res(c_noise)
+        # out_gain = self.out_gain(c_noise)
 
         x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
         c_noise = einops.rearrange(c_noise, 'b t -> (b t)')
@@ -201,7 +203,8 @@ class UNet(torch.nn.Module):
         x = self.out_conv(x, batch_size=batch_size)
 
         x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
-        x = mp_sum(x, res, out_gain)
+        x = mp_sum(x, res, out_res)
+        # x = bmult(x, out_gain)
         return x
 
 #----------------------------------------------------------------------------
