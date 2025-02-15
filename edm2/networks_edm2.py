@@ -161,18 +161,17 @@ class UNet(torch.nn.Module):
                 self.dec[f'dec_{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=(res in attn_resolutions), **block_kwargs)
         self.out_conv = MPCausal3DConv(cout, img_channels, kernel=[3,3,3])
 
-    def forward(self, x, c_noise, conditioning = None, cache:dict = {}):
-        # x.shape = b t c h w
-        batch_size, time_dimention = x.shape[:2]
-        res = x.clone()
-        out_res = self.out_res(c_noise)
+    def forward(self, x, c_noise, conditioning = None, cache:dict={}):
+        batch_size = x.shape[0]
 
         if self.training:
+            time_labels = torch.arange(x.shape[1], device=x.device).repeat(batch_size).log1p().to(c_noise.dtype) / 4 # Embedding
+            # Reshaping
             x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
             c_noise = einops.rearrange(c_noise, 'b t -> (b t)')
+        else:
+            time_labels = (torch.ones_like(c_noise) * cache['n_context_frames']).log1p().to(c_noise.dtype) / 4
 
-        # Embedding.
-        time_labels = torch.arange(time_dimention, device=x.device).repeat(batch_size).log1p().to(c_noise.dtype) / 4
         time_embeddings = self.emb_time(self.emb_fourier_time(time_labels))
         emb = self.emb_sigma(self.emb_fourier_sigma(c_noise))
         emb = mp_sum(emb, time_embeddings, t=0.5)
@@ -184,13 +183,16 @@ class UNet(torch.nn.Module):
             emb = mp_sum(emb, conditioning, t=1/3)
         emb = mp_silu(emb)
 
+        res = x.clone()
+        out_res, cache['n_context_frames'] = self.out_res(c_noise, cache.get('n_context_frames', None))
+
         # Encoder.
         x = torch.cat([x, torch.ones_like(x[:, :1])], dim=1)
         skips = []
         for name, block in self.enc.items():
             if 'conv' in name:
                 x, cache[name] = block(x, batch_size=batch_size, cache=cache.get(name, None))
-            x, cache[name] = block(x, emb, batch_size=batch_size, cache=cache.get(name, None))
+            x, cache[name] =block(x, emb, batch_size=batch_size, cache=cache.get(name, None))
             skips.append(x)
 
         # Decoder.
@@ -200,9 +202,9 @@ class UNet(torch.nn.Module):
             x, cache[name] = block(x, emb, batch_size=batch_size, cache=cache.get(name, None))
         x, cache['out_conv'] = self.out_conv(x, batch_size=batch_size, cache=cache.get('out_conv', None))
 
+        x = mp_sum(x, res, out_res)
         if self.training:
             x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
-        x = mp_sum(x, res, out_res)
         return x, cache
 
 #----------------------------------------------------------------------------
@@ -222,15 +224,11 @@ class Precond(torch.nn.Module):
         self.use_fp16 = use_fp16
         self.sigma_data = sigma_data
 
-    def forward(self, x:Tensor, sigma:Tensor, conditioning:Tensor=None, force_fp32=False, cache={}):
+    def forward(self, x:Tensor, sigma:Tensor, conditioning:Tensor=None, force_fp32:bool=False, cache:dict={}):
         x = x.to(torch.float32)
         sigma = sigma.to(torch.float32)
         sigma = einops.rearrange(sigma, '... -> ... 1 1 1')
 
-        # mean, std = x.mean(dim=(2,3,4), keepdim=True), x.std(dim=(2,3,4), keepdim=True)
-        # x=(x-mean)/(std + 1e-4)
-
-        # text_embeddings = None if self.label_dim == 0 else torch.zeros([1, self.label_dim], device=x.device) if text_embeddings is None else text_embeddings#.to(torch.float32)
         dtype = torch.float16 if (self.use_fp16 and not force_fp32 and x.device.type == 'cuda') else torch.float32
 
         # Preconditioning weights.
@@ -259,14 +257,17 @@ class Gating(torch.nn.Module):
         self.mult = nn.Parameter(torch.tensor([1.5,-0.5]))
         self.activation = nn.Sigmoid()
 
-    def forward(self, c_noise:Tensor):
-        b, t = c_noise.shape
-        positions = torch.arange(b*t, device = c_noise.device) % t
-        positions = einops.rearrange(positions, '(b t) -> b t', b=b).to(c_noise.dtype).log1p()
+    def forward(self, c_noise:Tensor, batch_size:int, n_context_frames:int=None):
+        if self.training:
+            time_dimention = len(c_noise) // batch_size
+            positions = torch.arange(len(c_noise), device = c_noise.device) % time_dimention
+        else:
+            positions = torch.ones_like(c_noise)*n_context_frames
 
+        positions = positions.to(c_noise.dtype).log1p()
         state_vector = torch.stack([c_noise, positions], dim=-1)
         state_vector = (state_vector * self.mult + self.offset).sum(dim=-1)
-        return self.activation(state_vector)
+        return self.activation(state_vector), n_context_frames+1
 
 
 

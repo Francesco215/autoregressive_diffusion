@@ -43,26 +43,24 @@ class VideoAttention(nn.Module):
 
         # b:batch, t:time, m: multi-head, s: split, c: channels, h: height, w: width
         y = einops.rearrange(y, '(b t) (s m c) h w -> s b m t (h w) c', b=batch_size, s=3, m=self.num_heads)
-        # q, k, v = normalize(y, dim=-1).unbind(0) # pixel norm & split 
         q, k, v = y.unbind(0) # pixel norm & split 
-        v = einops.rearrange(v, ' b m t hw c -> b m (t hw) c') # q and k are already rearranged inside of rope
 
         if not self.training:
             if cache is not None:
-                cached_q, cached_k = cache
-                q, k = torch.cat(cached_q, q, dim=-3), torch.cat(cached_k, k, dim=-3)
+                cached_k, cached_v = cache
+                k, v = torch.cat(cached_k, k, dim=-3), torch.cat(cached_v, v, dim=-3)
             # TODO: this can be optimized because you only need to update the cache only at the last diffusion step
             # but maybe since i'm just updating the pointer it could not be a big deal
-            cache = (q, k)
-        q, k = self.rope(q, k)
+            cache = (k, v)
 
+        q, k = self.rope(q, k)
+        v = einops.rearrange(v, ' b m t hw c -> b m (t hw) c') # q and k are already rearranged inside of rope
 
         if self.training:
-            # during training we use flex attention because it's very efficient and parallel
+            # During training we use flex attention because it's very efficient and can use spare attention
             y = self.flex_attention(q, k, v, self.block_mask)
         else:
-            # during inference we don't need sparse computing, and compilation is couterproductive
-            v = einops.rearrange(v, ' b m t hw c -> b m (t hw) c') # q and k are already rearranged inside of rope
+            # During inference we don't need flex attention to leverage sparse attention, and compilation is couterproductive
             attention = F.softmax(q @ k.transpose(-2,-1), dim=-1)
             y = attention @ v
 
