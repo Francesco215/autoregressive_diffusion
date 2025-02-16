@@ -1,4 +1,5 @@
 #%%
+import copy
 from tqdm import tqdm
 import numpy as np
 from matplotlib import pyplot as plt
@@ -85,14 +86,15 @@ def edm_sampler_with_mse(
     rho=7, guidance=1, S_churn=0, S_min=0, S_max=float('inf'), S_noise=1,
     dtype=torch.float32,
 ):
-    cache = cache.copy()
     batch_size, n_frames, channels, height, width = cache.get('shape', (None, None, None, None, None)) # TODO: change this
     device = net.device
     
     # Guided denoiser (same as original)
     def denoise(x, t, cache):
+        cache = cache.copy()
         t = torch.ones(batch_size, 1, device=device, dtype=dtype) * t
         
+        # cache = cache.copy()
         Dx, cache = net(x, t, conditioning, cache=cache)
         if guidance == 1:
             return Dx, cache
@@ -171,15 +173,15 @@ context = latents[:, :-1]  # First frames (context)
 target = latents[:, -1:]    # Last frame (ground truth)
 precond.eval()
 sigma = torch.ones(context.shape[:2], device=device) * 0.05
-x, cache = precond.forward(context, sigma, action[:,:-1])
+x, cache = precond(context, sigma, action[:,:-1])
 
 #%%
 # Run sampler with sigma_max=0.5 for initial noise level
-_, mse_steps, mse_pred_values, cache = edm_sampler_with_mse(
+_, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(
     net=precond,
     cache=cache,
     target=target,
-    sigma_max=0.4,  # Initial noise level matches our test
+    sigma_max=3,  # Initial noise level matches our test
     num_steps=32,
     conditioning=action[:,-1:],
     # gnet=g_net,
@@ -205,13 +207,13 @@ print(mse_steps[-1])
 
 context.shape
 # %%
-x=latents.clone()
-for i in range(8):
-    x, _, _= edm_sampler_with_mse(precond, x, gnet=g_net, sigma_max = 80, num_steps=32, rho=7, guidance=1)
+for i in tqdm(range(8)):
+    x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, gnet=g_net, sigma_max = 80, num_steps=32, rho=7, guidance=1)
+    latents = torch.cat((latents,x),dim=1)
 
 print(x.shape)
 # %%
-torch.save(x, "x.pt")
+torch.save(latents, "x.pt")
 
 # %%
 import torch
@@ -224,7 +226,7 @@ frames = latents_to_frames(autoencoder, x)
 from matplotlib.pyplot import imshow
 
 x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t1=4)
-imshow(x[4])
+imshow(x[3])
 
 
 # %%
