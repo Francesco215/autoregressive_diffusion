@@ -61,6 +61,7 @@ class VideoAttention(nn.Module):
             y = self.flex_attention(q, k, v, self.block_mask)
         else:
             # During inference we don't need flex attention to leverage sparse attention, and compilation is couterproductive
+            # TODO: masking when n_frames != 1 fuck fuck fuck
             attention = F.softmax(q @ k.transpose(-2,-1), dim=-1)
             y = attention @ v
 

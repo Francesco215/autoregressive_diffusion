@@ -83,19 +83,15 @@ class MPCausal3DConv(torch.nn.Module):
             return x, None
 
         if cache is None:
-            cache = torch.ones(x.shape[0], x.shape[1], w.shape[2]-1, *x.shape[2:], device=x.device, dtype=x.dtype)
-
-        x = torch.cat((cache, x.unsqueeze(-3)), dim=-3)
-        cache = x[:,:,1:]
-        x = F.conv3d(x, w, padding = image_padding)
-
-        return x, cache
+            cache = causal_pad
 
         # during inference is much simpler
         x = einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
-        x = torch.cat((causal_pad, x), dim=-3)
+        x = torch.cat((cache, x), dim=-3)
+        cache = x[:,:,-(w.shape[2]-1):].clone()
+
         x = F.conv3d(x, w, padding=image_padding)
 
         x = einops.rearrange(x, 'b c t h w -> (b t) c h w')
-        return x
+        return x, cache
 

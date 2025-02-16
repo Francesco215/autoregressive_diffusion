@@ -51,7 +51,9 @@ class RotaryEmbedding(nn.Module):
         pos, scale=self.get_rotary_embedding(k.shape[-3])
 
         k = (k * pos.cos() + rotate_half(k) * pos.sin())/scale
-        if not self.training: pos, scale = pos[-1:], scale[-1:]
+        if not self.training:
+            q_seq_len = q.shape[-3]
+            pos, scale = pos[-q_seq_len:], scale[-q_seq_len:]
         q = (q * pos.cos() + rotate_half(q) * pos.sin())*scale
 
         #'b m ... c -> b m (...) c'
