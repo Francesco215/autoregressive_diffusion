@@ -193,14 +193,14 @@ class UNet(torch.nn.Module):
         x = torch.cat([x, torch.ones_like(x[:, :1])], dim=1)
         skips = []
         for name, block in self.enc.items():
-            x, cache['enc', name] = block(x, emb, batch_size=batch_size, cache=cache.get(name, None))
+            x, cache['enc', name] = block(x, emb, batch_size=batch_size, cache=cache.get(('enc',name), None))
             skips.append(x)
 
         # Decoder.
         for name, block in self.dec.items():
             if 'block' in name:
                 x = mp_cat(x, skips.pop(), t=self.concat_balance)
-            x, cache['dec', name] = block(x, emb, batch_size=batch_size, cache=cache.get(name, None))
+            x, cache['dec', name] = block(x, emb, batch_size=batch_size, cache=cache.get(('dec',name), None))
         x, cache['out_conv'] = self.out_conv(x, emb, batch_size=batch_size, cache=cache.get('out_conv', None))
 
         x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)

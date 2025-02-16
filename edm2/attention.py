@@ -47,7 +47,7 @@ class VideoAttention(nn.Module):
         if not self.training:
             if cache is not None:
                 cached_k, cached_v = cache # TODO: check if we need to clone the tensors to avoid modification of the cache
-                k, v = torch.cat(cached_k, k, dim=-3), torch.cat(cached_v, v, dim=-3)
+                k, v = torch.cat((cached_k, k), dim=-3), torch.cat((cached_v, v), dim=-3)
             # TODO: this can be optimized because you only need to update the cache only at the last diffusion step
             # but maybe since i'm just updating the pointer it could not be a big deal
             cache = (k, v)

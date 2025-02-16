@@ -211,7 +211,7 @@ for i in tqdm(range(8)):
     x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, gnet=g_net, sigma_max = 80, num_steps=32, rho=7, guidance=1)
     latents = torch.cat((latents,x),dim=1)
 
-print(x.shape)
+print(latents.shape)
 # %%
 torch.save(latents, "x.pt")
 
