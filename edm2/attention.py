@@ -32,7 +32,7 @@ class VideoAttention(nn.Module):
             return x, None
 
         h, w = x.shape[-2:]
-        if self.training and ((self.training_mask is None and self.train_mask is None) or self.last_x_shape != x.shape):
+        if self.training and (self.train_mask is None or self.last_x_shape != x.shape):
             # This can trigger a recompilation of the flex_attention function
             n_frames, image_size= x.shape[0]//(batch_size*2), h*w
             self.train_mask = make_train_mask(batch_size, self.num_heads, n_frames, image_size)
