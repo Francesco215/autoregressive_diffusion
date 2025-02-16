@@ -40,7 +40,7 @@ class MPCausal3DConv(torch.nn.Module):
         assert len(kernel)==3
         self.weight = torch.nn.Parameter(torch.randn(out_channels, in_channels, *kernel))
 
-    def forward(self, x, batch_size, gain=1, cache=None):
+    def forward(self, x, emb, batch_size, gain=1, cache=None):
         w = self.weight.to(torch.float32)
         if self.training:
             with torch.no_grad():

@@ -2,12 +2,13 @@ import torch
 from torch import nn, Tensor
 from torch.nn import functional as F
 from torch.nn.attention.flex_attention import flex_attention
+
 import einops
 
 from .RoPe import RotaryEmbedding
-from .attention_masking import make_train_mask, make_infer_mask, AutoregressiveDiffusionMask
+from .attention_masking import make_train_mask, make_infer_mask
 from .utils import  mp_sum
-from .conv import MPCausal3DConv, MPConv
+from .conv import MPConv
 
 #----------------------------------------------------------------------------
 # Self-Attention module. It shouldn't need anything extra to make it magniture-preserving
@@ -23,8 +24,7 @@ class VideoAttention(nn.Module):
         self.attn_qkv = MPConv(channels, channels * 3, kernel=[1,1]) 
         self.attn_proj = MPConv(channels, channels, kernel=[1,1]) 
         self.rope = RotaryEmbedding(channels//num_heads)
-        self.block_mask = None
-        self.training_mask = None        
+        self.train_mask = None
     
 
     def forward(self, x:Tensor, batch_size:int, cache:Tensor=None):
@@ -32,11 +32,10 @@ class VideoAttention(nn.Module):
             return x, None
 
         h, w = x.shape[-2:]
-        if self.training and ((self.training_mask is None and self.block_mask is None) or self.last_x_shape != x.shape):
+        if self.training and ((self.training_mask is None and self.train_mask is None) or self.last_x_shape != x.shape):
             # This can trigger a recompilation of the flex_attention function
             n_frames, image_size= x.shape[0]//(batch_size*2), h*w
-            self.training_mask = AutoregressiveDiffusionMask(n_frames, image_size)
-            self.block_mask = make_train_mask(batch_size, self.num_heads, n_frames, image_size)
+            self.train_mask = make_train_mask(batch_size, self.num_heads, n_frames, image_size)
             self.last_x_shape = x.shape
 
         y = self.attn_qkv(x)
@@ -47,7 +46,7 @@ class VideoAttention(nn.Module):
 
         if not self.training:
             if cache is not None:
-                cached_k, cached_v = cache
+                cached_k, cached_v = cache # TODO: check if we need to clone the tensors to avoid modification of the cache
                 k, v = torch.cat(cached_k, k, dim=-3), torch.cat(cached_v, v, dim=-3)
             # TODO: this can be optimized because you only need to update the cache only at the last diffusion step
             # but maybe since i'm just updating the pointer it could not be a big deal
@@ -57,13 +56,15 @@ class VideoAttention(nn.Module):
         v = einops.rearrange(v, ' b m t hw c -> b m (t hw) c') # q and k are already rearranged inside of rope
 
         if self.training:
-            # During training we use flex attention because it's very efficient and can use spare attention
-            y = self.flex_attention(q, k, v, self.block_mask)
+            y = self.flex_attention(q, k, v, self.train_mask)
         else:
-            # During inference we don't need flex attention to leverage sparse attention, and compilation is couterproductive
-            # TODO: masking when n_frames != 1 fuck fuck fuck
-            attention = F.softmax(q @ k.transpose(-2,-1), dim=-1)
-            y = attention @ v
+            if q.shape[-1] == h*w:
+                F.scaled_dot_product_attention(q, k, v)
+                # attention = F.softmax(q @ k.transpose(-2,-1), dim=-1)
+                # y = attention @ v
+            else:
+                inference_mask = make_infer_mask(batch_size, self.num_heads, n_frames, h*w)
+                y = self.jit_flex_attention(q, k, v, inference_mask)
 
         y = einops.rearrange(y, 'b m (t h w) c -> (b t) (c m) h w', b=batch_size, h=h, w=w)
         y = self.attn_proj(y)
@@ -75,25 +76,9 @@ class VideoAttention(nn.Module):
     def flex_attention(self, q, k, v, block_mask): 
         return flex_attention(q, k, v, block_mask=block_mask)
 
-    def attention_with_kv_cache(self, x, kv_cache):
-        assert x.dim == 4
-        batch_size = x.shape[0]
-        self.eval()
-        y = self.attn_qkv(x).unsqueeze(1)
-        y = einops.rearrange(y, 'b t (s m c) h w -> s b m t (h w) c', s=3, m=self.num_heads)
-        q, k, v = y.unbind(0)
-
-        cached_q, cached_k = kv_cache
-        q, k = torch.cat(cached_q, q, dim = 1), torch.cat(cached_k, k, dim = 1)
-        kv_cache = (q, k)
-        q, k = self.rope(q, k)
-        
-        v = einops.rearrange(v, ' b m t hw c -> b m (t hw) c') # q and k are already rearranged inside of rope
-        attention = F.softmax(q @ k.transpose(-2,-1), dim=-1)
-        y = attention @ v
-
-        y = einops.rearrange(y, 'b m (t h w) c -> (b t) (c m) h w', b=batch_size, h=x.shape[-2], w=x.shape[-1])
-
+    @torch.jit.script
+    def jit_flex_attention(self, q, k, v, block_mask):
+        return flex_attention(q, k, v, block_mask=block_mask)
 
         
         

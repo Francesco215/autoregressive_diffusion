@@ -63,7 +63,7 @@ class Block(torch.nn.Module):
         if self.num_heads > 0: 
             assert (out_channels & (out_channels - 1) == 0) and out_channels != 0, f"out_channels must be a power of 2, got {out_channels}"
 
-    def forward(self, x, emb, batch_size, cache=None):
+    def forward(self, x, emb, batch_size, cache={}):
         # Main branch.
         x = resample(x, f=self.resample_filter, mode=self.resample_mode)
         if self.flavor == 'enc':
@@ -72,13 +72,13 @@ class Block(torch.nn.Module):
             x = normalize(x, dim=1) # pixel norm
 
         # Residual branch.
-        y, cache = self.conv_res0.forward(mp_silu(x),batch_size=batch_size, cache=cache) # TODO: fix this cache
+        y, cache['conv_res0'] = self.conv_res0.forward(mp_silu(x), emb, batch_size=batch_size, cache=cache.get('conv_res0', None)) 
         c = self.emb_linear(emb, gain=self.emb_gain) + 1
         y = bmult(y, c.to(y.dtype)) 
         y = mp_silu(y)
         if self.training and self.dropout != 0:
             y = torch.nn.functional.dropout(y, p=self.dropout)
-        y, cache = self.conv_res1(y, batch_size=batch_size, cache=cache) #TODO: fix this cache
+        y, cache['conv_res1'] = self.conv_res1(y, emb, batch_size=batch_size, cache=cache.get('conv_res1', None)) 
 
         # Connect the branches.
         if self.flavor == 'dec' and self.conv_skip is not None:
@@ -86,7 +86,7 @@ class Block(torch.nn.Module):
         x = mp_sum(x, y, t=self.res_balance)
 
         # Self-attention.
-        x, cache = self.attn(x, batch_size, cache)
+        x, cache['attn'] = self.attn(x, batch_size, cache.get('attn', None))
 
         # Clip activations.
         if self.clip_act is not None:
@@ -124,9 +124,9 @@ class UNet(torch.nn.Module):
 
         # Embedding.
         self.emb_fourier_sigma = MPFourier(cnoise)
-        self.emb_sigma = MPConv(cnoise, cemb, kernel=[]) # this are actually linear layers with normalized weights. the kernel is empty
-        self.emb_fourier_time = MPFourier(cnoise)
-        self.emb_time = MPConv(cnoise, cemb, kernel=[]) # this are actually linear layers with normalized weights. the kernel is empty
+        self.emb_sigma = MPConv(cnoise, cemb, kernel=[]) 
+        self.emb_fourier_frame = MPFourier(cnoise)
+        self.emb_frame = MPConv(cnoise, cemb, kernel=[]) 
         self.emb_label = MPConv(label_dim, cemb, kernel=[]) if label_dim != 0 else None
 
         # Encoder.
@@ -164,22 +164,22 @@ class UNet(torch.nn.Module):
     def forward(self, x, c_noise, conditioning = None, cache:dict={}):
         cache = cache.copy()
         batch_size, time_dimention = x.shape[:2]
+        n_context_frames = cache.get('n_context_frames', 0)
 
         res = x.clone()
-        out_res, cache['n_context_frames'] = self.out_res(c_noise, cache.get('n_context_frames', None))
+        out_res, cache['n_context_frames'] = self.out_res(c_noise, n_context_frames)
 
         # Reshaping
         x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
         c_noise = einops.rearrange(c_noise, 'b t -> (b t)')
 
-        if self.training:
-            time_labels = torch.arange(time_dimention, device=x.device).repeat(batch_size).log1p().to(c_noise.dtype) / 4 # Embedding
-        else:
-            time_labels = (torch.ones_like(c_noise) * cache['n_context_frames']).log1p().to(c_noise.dtype) / 4
+        # Time embedding
+        frame_labels = torch.arange(time_dimention, device=x.device).repeat(batch_size) + n_context_frames
+        frame_labels = frame_labels.log1p().to(c_noise.dtype) / 4 
+        frame_embeddings = self.emb_frame(self.emb_fourier_frame(frame_labels))
 
-        time_embeddings = self.emb_time(self.emb_fourier_time(time_labels))
         emb = self.emb_sigma(self.emb_fourier_sigma(c_noise))
-        emb = mp_sum(emb, time_embeddings, t=0.5)
+        emb = mp_sum(emb, frame_embeddings, t=0.5)
         if self.emb_label is not None and conditioning is not None:
             if self.training:
                 conditioning = einops.rearrange(conditioning, 'b t -> (b t)')
@@ -193,18 +193,15 @@ class UNet(torch.nn.Module):
         x = torch.cat([x, torch.ones_like(x[:, :1])], dim=1)
         skips = []
         for name, block in self.enc.items():
-            if 'conv' in name:
-                x, cache['enc', name] = block(x, batch_size=batch_size, cache=cache.get(name, None))
-            else: 
-                x, cache['enc', name] =block(x, emb, batch_size=batch_size, cache=cache.get(name, None))
+            x, cache['enc', name] =block(x, emb, batch_size=batch_size, cache=cache.get(name, {}))
             skips.append(x)
 
         # Decoder.
         for name, block in self.dec.items():
             if 'block' in name:
                 x = mp_cat(x, skips.pop(), t=self.concat_balance)
-            x, cache['dec', name] = block(x, emb, batch_size=batch_size, cache=cache.get(name, None))
-        x, cache['out_conv'] = self.out_conv(x, batch_size=batch_size, cache=cache.get('out_conv', None))
+            x, cache['dec', name] = block(x, emb, batch_size=batch_size, cache=cache.get(name, {}))
+        x, cache['out_conv'] = self.out_conv(x, emb, batch_size=batch_size, cache=cache.get('out_conv', None))
 
         x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
         x = mp_sum(x, res, out_res)
@@ -230,7 +227,7 @@ class Precond(torch.nn.Module):
     def forward(self, x:Tensor, sigma:Tensor, conditioning:Tensor=None, force_fp32:bool=False, cache:dict={}):
         x = x.to(torch.float32)
         sigma = sigma.to(torch.float32)
-        sigma = einops.rearrange(sigma, '... -> ... 1 1 1')
+        sigma = einops.rearrange(sigma, 'b t -> b t 1 1 1')
 
         dtype = torch.float16 if (self.use_fp16 and not force_fp32 and x.device.type == 'cuda') else torch.float32
 
@@ -244,7 +241,6 @@ class Precond(torch.nn.Module):
         x_in = (c_in * x).to(dtype)
         F_x, cache = self.unet(x_in, c_noise, conditioning, cache)
         D_x = c_skip * x + c_out * F_x.to(torch.float32)
-        # D_x = D_x * std + mean
         return D_x, cache
 
 #----------------------------------------------------------------------------
@@ -260,24 +256,13 @@ class Gating(torch.nn.Module):
         self.mult = nn.Parameter(torch.tensor([1.5,-0.5]))
         self.activation = nn.Sigmoid()
 
-    def forward(self, c_noise:Tensor, n_context_frames:int=None):
-        n_context_frames = n_context_frames or 0
+    def forward(self, c_noise:Tensor, n_context_frames:int=0):
         batch_size, time_dimention = c_noise.shape
-        if self.training:
-            positions = torch.arange(batch_size*time_dimention, device = c_noise.device) % time_dimention
-        else:
-            # TODO: should be arange for when the input is first initialized
-            raise NotImplementedError
-            positions = torch.ones_like(c_noise)*n_context_frames
+        positions = torch.arange(batch_size*time_dimention, device=c_noise.device) % time_dimention
+        positions = einops.rearrange(positions, '(b t) -> b t', b=batch_size) + n_context_frames
 
-        positions = einops.rearrange(positions, '(b t) -> b t', b=batch_size)
         positions = positions.to(c_noise.dtype).log1p()
         state_vector = torch.stack([c_noise, positions], dim=-1)
         state_vector = (state_vector * self.mult + self.offset).sum(dim=-1)
-        return self.activation(state_vector), n_context_frames+1
+        return self.activation(state_vector), n_context_frames+time_dimention # TODO:check this thing
 
-
-
-
-
-        
