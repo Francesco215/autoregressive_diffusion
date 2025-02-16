@@ -63,7 +63,9 @@ class Block(torch.nn.Module):
         if self.num_heads > 0: 
             assert (out_channels & (out_channels - 1) == 0) and out_channels != 0, f"out_channels must be a power of 2, got {out_channels}"
 
-    def forward(self, x, emb, batch_size, cache={}):
+    def forward(self, x, emb, batch_size, cache=None):
+        if cache is None: cache = {}
+
         # Main branch.
         x = resample(x, f=self.resample_filter, mode=self.resample_mode)
         if self.flavor == 'enc':
@@ -125,8 +127,8 @@ class UNet(torch.nn.Module):
         # Embedding.
         self.emb_fourier_sigma = MPFourier(cnoise)
         self.emb_sigma = MPConv(cnoise, cemb, kernel=[]) 
-        self.emb_fourier_frame = MPFourier(cnoise)
-        self.emb_frame = MPConv(cnoise, cemb, kernel=[]) 
+        self.emb_fourier_time = MPFourier(cnoise)
+        self.emb_time = MPConv(cnoise, cemb, kernel=[]) 
         self.emb_label = MPConv(label_dim, cemb, kernel=[]) if label_dim != 0 else None
 
         # Encoder.
@@ -162,7 +164,6 @@ class UNet(torch.nn.Module):
         self.out_conv = MPCausal3DConv(cout, img_channels, kernel=[3,3,3])
 
     def forward(self, x, c_noise, conditioning = None, cache:dict={}):
-        cache = cache.copy()
         batch_size, time_dimention = x.shape[:2]
         n_context_frames = cache.get('n_context_frames', 0)
 
@@ -176,13 +177,12 @@ class UNet(torch.nn.Module):
         # Time embedding
         frame_labels = torch.arange(time_dimention, device=x.device).repeat(batch_size) + n_context_frames
         frame_labels = frame_labels.log1p().to(c_noise.dtype) / 4 
-        frame_embeddings = self.emb_frame(self.emb_fourier_frame(frame_labels))
+        frame_embeddings = self.emb_time(self.emb_fourier_time(frame_labels))
 
         emb = self.emb_sigma(self.emb_fourier_sigma(c_noise))
         emb = mp_sum(emb, frame_embeddings, t=0.5)
         if self.emb_label is not None and conditioning is not None:
-            if self.training:
-                conditioning = einops.rearrange(conditioning, 'b t -> (b t)')
+            conditioning = einops.rearrange(conditioning, 'b t -> (b t)')
             conditioning = F.one_hot(conditioning, num_classes=self.label_dim).to(c_noise.dtype)*self.label_dim**(0.5)
             conditioning = self.emb_label(conditioning)
             emb = mp_sum(emb, conditioning, t=1/3)
@@ -193,14 +193,14 @@ class UNet(torch.nn.Module):
         x = torch.cat([x, torch.ones_like(x[:, :1])], dim=1)
         skips = []
         for name, block in self.enc.items():
-            x, cache['enc', name] =block(x, emb, batch_size=batch_size, cache=cache.get(name, {}))
+            x, cache['enc', name] = block(x, emb, batch_size=batch_size, cache=cache.get(name, None))
             skips.append(x)
 
         # Decoder.
         for name, block in self.dec.items():
             if 'block' in name:
                 x = mp_cat(x, skips.pop(), t=self.concat_balance)
-            x, cache['dec', name] = block(x, emb, batch_size=batch_size, cache=cache.get(name, {}))
+            x, cache['dec', name] = block(x, emb, batch_size=batch_size, cache=cache.get(name, None))
         x, cache['out_conv'] = self.out_conv(x, emb, batch_size=batch_size, cache=cache.get('out_conv', None))
 
         x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
@@ -225,6 +225,7 @@ class Precond(torch.nn.Module):
         self.sigma_data = sigma_data
 
     def forward(self, x:Tensor, sigma:Tensor, conditioning:Tensor=None, force_fp32:bool=False, cache:dict={}):
+        cache['shape'] = x.shape
         x = x.to(torch.float32)
         sigma = sigma.to(torch.float32)
         sigma = einops.rearrange(sigma, 'b t -> b t 1 1 1')
@@ -242,6 +243,10 @@ class Precond(torch.nn.Module):
         F_x, cache = self.unet(x_in, c_noise, conditioning, cache)
         D_x = c_skip * x + c_out * F_x.to(torch.float32)
         return D_x, cache
+    
+    @property
+    def device(self):
+        return next(self.parameters()).device
 
 #----------------------------------------------------------------------------
 

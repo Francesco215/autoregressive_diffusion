@@ -58,13 +58,16 @@ class VideoAttention(nn.Module):
         if self.training:
             y = self.flex_attention(q, k, v, self.train_mask)
         else:
-            if q.shape[-1] == h*w:
-                F.scaled_dot_product_attention(q, k, v)
+            if q.shape[-2] == h*w:
+                y = F.scaled_dot_product_attention(q, k, v)
                 # attention = F.softmax(q @ k.transpose(-2,-1), dim=-1)
                 # y = attention @ v
-            else:
+            elif q.shape == k.shape:
+                n_frames = q.shape[-2]//(h*w)
                 inference_mask = make_infer_mask(batch_size, self.num_heads, n_frames, h*w)
-                y = self.jit_flex_attention(q, k, v, inference_mask)
+                y = self.infer_flex_attention(q, k, v, inference_mask)
+            else:
+                raise NotImplementedError("The inference mask is not implemented for this case")
 
         y = einops.rearrange(y, 'b m (t h w) c -> (b t) (c m) h w', b=batch_size, h=h, w=w)
         y = self.attn_proj(y)
@@ -76,8 +79,8 @@ class VideoAttention(nn.Module):
     def flex_attention(self, q, k, v, block_mask): 
         return flex_attention(q, k, v, block_mask=block_mask)
 
-    @torch.jit.script
-    def jit_flex_attention(self, q, k, v, block_mask):
+    # @torch.jit.script
+    def infer_flex_attention(self, q, k, v, block_mask):
         return flex_attention(q, k, v, block_mask=block_mask)
 
         
