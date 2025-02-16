@@ -52,13 +52,13 @@ class TestUNet(unittest.TestCase):
         self.attention.train()
         x = torch.randn(BATCH_SIZE * 2 * N_FRAMES, 4*IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
         noise_level = torch.zeros(x.shape[:2], device="cuda", dtype=dtype)
-        y_train, None = self.attention(x, BATCH_SIZE)
+        y_train, _ = self.attention(x, BATCH_SIZE)
         
         self.attention.eval()
         x = einops.rearrange(x,'(b l) ... -> b l ...', b=BATCH_SIZE)
         x_eval = torch.cat((x[:, :CUT_FRAME], x[:, CUT_FRAME + N_FRAMES].unsqueeze(1)), dim=1)
         x_eval = einops.rearrange(x_eval, 'b l ... -> (b l ) ...')
-        y_eval = self.attention(x_eval, BATCH_SIZE)
+        y_eval, _ = self.attention(x_eval, BATCH_SIZE)
 
         y_train, y_eval = einops.rearrange(y_train,'(b l) ... -> b l ...', b=BATCH_SIZE), einops.rearrange(y_eval,'(b l) ... -> b l ...', b=BATCH_SIZE)
 
