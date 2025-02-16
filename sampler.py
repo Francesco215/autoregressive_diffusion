@@ -57,7 +57,7 @@ unet = UNet(img_resolution=32, # Match your latent resolution
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
 sigma_data = 1.
 precond = Precond(unet, use_fp16=True, sigma_data=sigma_data)
-precond_state_dict = torch.load("lunar_lander_68.0M.pt",map_location=device,weights_only=False)['model_state_dict']
+precond_state_dict = torch.load("lunar_lander_68.0M_asd.pt",map_location=device,weights_only=False)['model_state_dict']
 precond.load_state_dict(precond_state_dict)
 precond.to(device)
 

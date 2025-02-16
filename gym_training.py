@@ -56,7 +56,7 @@ if __name__=="__main__":
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
     loss_fn = EDM2Loss(P_mean=0.3,P_std=2., sigma_data=sigma_data, noise_weight=MultiNoiseLoss(), context_noise_reduction=0.5)
 
-    ref_lr = 1e-2
+    ref_lr = 1e-4
     current_lr = ref_lr
     optimizer = MARS(precond.parameters(), lr=ref_lr, eps = 1e-4)
     optimizer.zero_grad()
@@ -65,7 +65,7 @@ if __name__=="__main__":
     losses = []
 
     resume_training_run = 'lunar_lander_68.0M_trained.pt'
-    resume_training_run = None
+    # resume_training_run = None
 
     if resume_training_run is not None:
         checkpoint = torch.load(resume_training_run, weights_only=False, map_location='cuda')

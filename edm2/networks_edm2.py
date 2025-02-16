@@ -72,13 +72,13 @@ class Block(torch.nn.Module):
             x = normalize(x, dim=1) # pixel norm
 
         # Residual branch.
-        y = self.conv_res0(mp_silu(x),batch_size=batch_size)
+        y, cache = self.conv_res0.forward(mp_silu(x),batch_size=batch_size, cache=cache) # TODO: fix this cache
         c = self.emb_linear(emb, gain=self.emb_gain) + 1
         y = bmult(y, c.to(y.dtype)) 
         y = mp_silu(y)
         if self.training and self.dropout != 0:
             y = torch.nn.functional.dropout(y, p=self.dropout)
-        y = self.conv_res1(y, batch_size=batch_size)
+        y, cache = self.conv_res1(y, batch_size=batch_size, cache=cache) #TODO: fix this cache
 
         # Connect the branches.
         if self.flavor == 'dec' and self.conv_skip is not None:
@@ -143,7 +143,7 @@ class UNet(torch.nn.Module):
             for idx in range(num_blocks):
                 cin = cout
                 cout = channels
-                self.enc[f'enc_{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='enc', attention=(res in attn_resolutions), **block_kwargs)
+                self.enc[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='enc', attention=(res in attn_resolutions), **block_kwargs)
 
         # Decoder.
         self.dec = torch.nn.ModuleDict()
@@ -158,17 +158,22 @@ class UNet(torch.nn.Module):
             for idx in range(num_blocks + 1):
                 cin = cout + skips.pop()
                 cout = channels
-                self.dec[f'dec_{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=(res in attn_resolutions), **block_kwargs)
+                self.dec[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=(res in attn_resolutions), **block_kwargs)
         self.out_conv = MPCausal3DConv(cout, img_channels, kernel=[3,3,3])
 
     def forward(self, x, c_noise, conditioning = None, cache:dict={}):
-        batch_size = x.shape[0]
+        cache = cache.copy()
+        batch_size, time_dimention = x.shape[:2]
+
+        res = x.clone()
+        out_res, cache['n_context_frames'] = self.out_res(c_noise, cache.get('n_context_frames', None))
+
+        # Reshaping
+        x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
+        c_noise = einops.rearrange(c_noise, 'b t -> (b t)')
 
         if self.training:
-            time_labels = torch.arange(x.shape[1], device=x.device).repeat(batch_size).log1p().to(c_noise.dtype) / 4 # Embedding
-            # Reshaping
-            x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
-            c_noise = einops.rearrange(c_noise, 'b t -> (b t)')
+            time_labels = torch.arange(time_dimention, device=x.device).repeat(batch_size).log1p().to(c_noise.dtype) / 4 # Embedding
         else:
             time_labels = (torch.ones_like(c_noise) * cache['n_context_frames']).log1p().to(c_noise.dtype) / 4
 
@@ -183,28 +188,26 @@ class UNet(torch.nn.Module):
             emb = mp_sum(emb, conditioning, t=1/3)
         emb = mp_silu(emb)
 
-        res = x.clone()
-        out_res, cache['n_context_frames'] = self.out_res(c_noise, cache.get('n_context_frames', None))
 
         # Encoder.
         x = torch.cat([x, torch.ones_like(x[:, :1])], dim=1)
         skips = []
         for name, block in self.enc.items():
             if 'conv' in name:
-                x, cache[name] = block(x, batch_size=batch_size, cache=cache.get(name, None))
-            x, cache[name] =block(x, emb, batch_size=batch_size, cache=cache.get(name, None))
+                x, cache['enc', name] = block(x, batch_size=batch_size, cache=cache.get(name, None))
+            else: 
+                x, cache['enc', name] =block(x, emb, batch_size=batch_size, cache=cache.get(name, None))
             skips.append(x)
 
         # Decoder.
         for name, block in self.dec.items():
             if 'block' in name:
                 x = mp_cat(x, skips.pop(), t=self.concat_balance)
-            x, cache[name] = block(x, emb, batch_size=batch_size, cache=cache.get(name, None))
+            x, cache['dec', name] = block(x, emb, batch_size=batch_size, cache=cache.get(name, None))
         x, cache['out_conv'] = self.out_conv(x, batch_size=batch_size, cache=cache.get('out_conv', None))
 
+        x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
         x = mp_sum(x, res, out_res)
-        if self.training:
-            x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
         return x, cache
 
 #----------------------------------------------------------------------------
@@ -257,13 +260,17 @@ class Gating(torch.nn.Module):
         self.mult = nn.Parameter(torch.tensor([1.5,-0.5]))
         self.activation = nn.Sigmoid()
 
-    def forward(self, c_noise:Tensor, batch_size:int, n_context_frames:int=None):
+    def forward(self, c_noise:Tensor, n_context_frames:int=None):
+        n_context_frames = n_context_frames or 0
+        batch_size, time_dimention = c_noise.shape
         if self.training:
-            time_dimention = len(c_noise) // batch_size
-            positions = torch.arange(len(c_noise), device = c_noise.device) % time_dimention
+            positions = torch.arange(batch_size*time_dimention, device = c_noise.device) % time_dimention
         else:
+            # TODO: should be arange for when the input is first initialized
+            raise NotImplementedError
             positions = torch.ones_like(c_noise)*n_context_frames
 
+        positions = einops.rearrange(positions, '(b t) -> b t', b=batch_size)
         positions = positions.to(c_noise.dtype).log1p()
         state_vector = torch.stack([c_noise, positions], dim=-1)
         state_vector = (state_vector * self.mult + self.offset).sum(dim=-1)
