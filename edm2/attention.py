@@ -50,7 +50,7 @@ class VideoAttention(nn.Module):
                 k, v = torch.cat((cached_k, k), dim=-3), torch.cat((cached_v, v), dim=-3)
             # TODO: this can be optimized because you only need to update the cache only at the last diffusion step
             # but maybe since i'm just updating the pointer it could not be a big deal
-            cache = (k, v)
+            cache = (k.detach(), v.detach())
 
         q, k = self.rope(q, k)
         v = einops.rearrange(v, ' b m t hw c -> b m (t hw) c') # q and k are already rearranged inside of rope
@@ -64,8 +64,8 @@ class VideoAttention(nn.Module):
                 # y = attention @ v
             elif q.shape == k.shape:
                 n_frames = q.shape[-2]//(h*w)
-                inference_mask = make_infer_mask(batch_size, self.num_heads, n_frames, h*w)
-                y = self.infer_flex_attention(q, k, v, inference_mask)
+                inference_mask, score_mod = make_infer_mask(batch_size, self.num_heads, n_frames, h*w)
+                y = self.infer_flex_attention(q, k, v, score_mod, inference_mask)
             else:
                 raise NotImplementedError("The inference mask is not implemented for this case")
 
@@ -80,8 +80,9 @@ class VideoAttention(nn.Module):
         return flex_attention(q, k, v, block_mask=block_mask)
 
     # @torch.jit.script
-    def infer_flex_attention(self, q, k, v, block_mask):
-        return flex_attention(q, k, v, block_mask=block_mask)
+    def infer_flex_attention(self, q, k, v, score_mod, block_mask):
+        assert score_mod is not None or block_mask is not None
+        return flex_attention(q, k, v, score_mod=score_mod, block_mask=block_mask)
 
         
         

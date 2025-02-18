@@ -91,7 +91,7 @@ def edm_sampler_with_mse(
     
     # Guided denoiser (same as original)
     def denoise(x, t, cache):
-        cache = cache.copy()
+        cache = copy.deepcopy(cache)
         t = torch.ones(batch_size, 1, device=device, dtype=dtype) * t
         
         # cache = cache.copy()

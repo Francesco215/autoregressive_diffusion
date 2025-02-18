@@ -93,5 +93,5 @@ class MPCausal3DConv(torch.nn.Module):
         x = F.conv3d(x, w, padding=image_padding)
 
         x = einops.rearrange(x, 'b c t h w -> (b t) c h w')
-        return x, cache
+        return x, cache.detach()
 
