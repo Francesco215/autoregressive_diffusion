@@ -10,20 +10,20 @@ import gymnasium as gym
 class GymDataGenerator(IterableDataset):
     def __init__(self, state_size=6, environment_name="CartPole-v1", training_examples=10_000):
         self.state_size = state_size
-
-        self.env = gym.make(environment_name,render_mode="rgb_array")
-
+        self.environment_name = environment_name
         self.evolution_time = 10
+        self.terminate_size = 50
         self.training_examples = training_examples
 
     @torch.no_grad()
     def __iter__(self):
+        env = gym.make(self.environment_name,render_mode="rgb_array")
         terminated = True
         n_data_yielded = 0
 
         while n_data_yielded < self.training_examples:
             if terminated:
-                observation, _ = self.env.reset()
+                observation, _ = env.reset()
                 terminated = False
                 reward = 0
                 action = 0
@@ -31,14 +31,14 @@ class GymDataGenerator(IterableDataset):
                 action_history = []
                 step_count = -self.evolution_time
             else:
-                action = self.env.action_space.sample()  # Random action
-                _ , reward, terminated, _, _ = self.env.step(action)
+                action = env.action_space.sample()  # Random action
+                _ , reward, terminated, _, _ = env.step(action)
             
             # action_history.append(action)
             # action_history = action_history[-self.state_size:]
 
             if step_count >= 0: # This if can be removed, but having it avoids rendering useless frames
-                frame = self.env.render()
+                frame = env.render()
                 frame = resize_image(frame)
                 # frame_image = Image.fromarray(frame)
                 frame_history.append(torch.tensor(frame))
@@ -57,6 +57,9 @@ class GymDataGenerator(IterableDataset):
                 yield frames, actions, torch.tensor(reward).clone()
                 n_data_yielded += 1
                 frame_history = []
+            
+            if step_count > self.terminate_size:
+                terminated = True
                 
             step_count += 1
 
