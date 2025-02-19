@@ -79,7 +79,7 @@ class VideoAttention(nn.Module):
     def flex_attention(self, q, k, v, block_mask): 
         return flex_attention(q, k, v, block_mask=block_mask)
 
-    # @torch.jit.script
+    @torch.compile
     def infer_flex_attention(self, q, k, v, score_mod, block_mask):
         assert score_mod is not None or block_mask is not None
         return flex_attention(q, k, v, score_mod=score_mod, block_mask=block_mask)

@@ -1,10 +1,8 @@
 #%%
 import numpy as np
 import torch
-from torch import nn, optim, Tensor
 from torch.utils.data import DataLoader
 
-import einops
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
@@ -14,7 +12,6 @@ from diffusers import AutoencoderKL
 from edm2.gym_dataloader import GymDataGenerator, gym_collate_function, frames_to_latents
 from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
-from edm2.loss_weight import MultiNoiseLoss
 from edm2.mars import MARS
 from edm2.phema import PowerFunctionEMA
 
@@ -75,7 +72,7 @@ if __name__=="__main__":
         print(f"Resuming training from batch {checkpoint['batch']} with loss {losses[-1]:.4f}")
         current_lr = optimizer.param_groups[0]['lr']
         ref_lr = checkpoint['ref_lr']
-        steps_taken = len(losses)
+        steps_taken = checkpoint['batch']
 
     #%%
     pbar = tqdm(enumerate(dataloader, start=steps_taken),total=total_number_of_steps)

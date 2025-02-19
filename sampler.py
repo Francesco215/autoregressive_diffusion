@@ -59,7 +59,7 @@ print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1
 sigma_data = 1.
 precond = Precond(unet, use_fp16=True, sigma_data=sigma_data)
 precond_state_dict = torch.load("lunar_lander_68.0M_trained.pt",map_location=device,weights_only=False)['model_state_dict']
-precond.load_state_dict(precond_state_dict)
+precond.load_state_dict(precond_state_dict, strict=False)
 precond.to(device)
 
 # g_net_state_dict = torch.load("lunar_lander_68.0M_trained.pt",map_location=device,weights_only=False)['model_state_dict']
@@ -202,10 +202,6 @@ plt.grid(True)
 plt.legend()
 plt.show()
 print(mse_steps[-1])
-
-# %%
-
-context.shape
 # %%
 for i in tqdm(range(8)):
     x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, gnet=g_net, sigma_max = 80, num_steps=32, rho=7, guidance=1)

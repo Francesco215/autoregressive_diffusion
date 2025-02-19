@@ -16,7 +16,7 @@ torch._logging.set_logs(dynamo=logging.INFO)
 
 # Constants
 IMG_RESOLUTION = 64
-BATCH_SIZE = 16
+BATCH_SIZE = 4
 IMG_CHANNELS = 16
 N_FRAMES = 8
 CUT_FRAME = 3
@@ -68,18 +68,64 @@ class TestUNet(unittest.TestCase):
         self.assertLessEqual(std_diff_1, error_bound, f"Test failed: std deviation {std_diff_1} exceeded {error_bound}")
         self.assertLessEqual(std_diff_2, error_bound, f"Test failed: std deviation {std_diff_2} exceeded {error_bound}")
 
+    def test_attention_consistrency_between_cached_and_non_cached(self):
+        self.attention.eval()
+        x = torch.randn(BATCH_SIZE, N_FRAMES, 4*IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
+        context, last_frame = x[:, :-1], x[:,-1:]
+        x = einops.rearrange(x, 'b t ... -> (b t) ...')
+        context = einops.rearrange(context, 'b t ... -> (b t) ...')
+        last_frame = einops.rearrange(last_frame, 'b t ... -> (b t) ...')
+        y_non_cached, _ =  self.attention(x, BATCH_SIZE)
+        y_non_cached = einops.rearrange(y_non_cached, '(b t) ... -> b t ...', b=BATCH_SIZE)
+
+        y_cached, cache = self.attention(context, BATCH_SIZE)
+        out, _ = self.attention(last_frame, BATCH_SIZE, cache)
+        y_cached = einops.rearrange(y_cached, '(b t) ... -> b t ...', b = BATCH_SIZE)
+        out = einops.rearrange(out, '(b t) ... -> b t ...', b = BATCH_SIZE)
+        y_cached = torch.cat((y_cached, out), dim=1)
+
+        std_diff = (y_non_cached - y_cached).std().item()
+        self.assertLessEqual(std_diff, error_bound, f"Test failed: std deviation {std_diff} exceeded {error_bound}")
+
+    def test_attention_consistrency_between_cached_and_non_cached_multistep(self):
+        self.attention.eval()
+        b = 1
+        img_res = 16
+        x = torch.randn(b, N_FRAMES, 4*IMG_CHANNELS, img_res, img_res, device="cuda", dtype=dtype)
+        context, second_last, last_frame = x[:, :-2], x[:,-2:-1], x[:,-1:]
+
+        x = einops.rearrange(x, 'b t ... -> (b t) ...')
+        context = einops.rearrange(context, 'b t ... -> (b t) ...')
+        second_last = einops.rearrange(second_last, 'b t ... -> (b t) ...')
+        last_frame = einops.rearrange(last_frame, 'b t ... -> (b t) ...')
+
+        y_non_cached, _ =  self.attention(x, b)
+        y_cached, cache = self.attention(context, b)
+        out1, cache = self.attention(second_last, b, cache)
+        out2, _ = self.attention(last_frame, b, cache)
+
+        y_non_cached = einops.rearrange(y_non_cached, '(b t) ... -> b t ...', b=b)
+        y_cached = einops.rearrange(y_cached, '(b t) ... -> b t ...', b=b)
+        out1 = einops.rearrange(out1, '(b t) ... -> b t ...', b=b)
+        out2 = einops.rearrange(out2, '(b t) ... -> b t ...', b=b)
+        y_cached = torch.cat((y_cached, out1, out2), dim=1)
+        
+
+
+        std_diff = (y_non_cached - y_cached).std().item()
+        self.assertLessEqual(std_diff, error_bound, f"Test failed: std deviation {std_diff} exceeded {error_bound}")
 
     def test_3d_conv_consistency_between_train_and_eval(self):
         self.conv3d.train()
         x = torch.randn(BATCH_SIZE * 2 * N_FRAMES, IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
         noise_level = torch.zeros(x.shape[:2], device="cuda", dtype=dtype)
-        y_train = self.conv3d(x, BATCH_SIZE)
+        y_train, _ = self.conv3d(x, None, BATCH_SIZE)
         
         self.conv3d.eval()
         x = einops.rearrange(x,'(b l) ... -> b l ...', b=BATCH_SIZE)
         x_eval = torch.cat((x[:, :CUT_FRAME], x[:, CUT_FRAME + N_FRAMES].unsqueeze(1)), dim=1)
         x_eval = einops.rearrange(x_eval, 'b l ... -> (b l ) ...')
-        y_eval = self.conv3d(x_eval, BATCH_SIZE)
+        y_eval, _ = self.conv3d(x_eval, None, BATCH_SIZE)
 
         y_train, y_eval = einops.rearrange(y_train,'(b l) ... -> b l ...', b=BATCH_SIZE), einops.rearrange(y_eval,'(b l) ... -> b l ...', b=BATCH_SIZE)
 
@@ -91,6 +137,7 @@ class TestUNet(unittest.TestCase):
         self.assertLessEqual(std_diff_1, error_bound, f"Test failed: std deviation {std_diff_1} exceeded {error_bound}")
         self.assertLessEqual(std_diff_2, error_bound, f"Test failed: std deviation {std_diff_2} exceeded {error_bound}")
     
+    ## from this point onward the tests are obsolete so they might 
     def test_unet_consistency_between_train_and_eval(self):
         # Test consistency between training and evaluation modes
         self.unet.train()
