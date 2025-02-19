@@ -21,15 +21,14 @@ from .loss_weight import MultiNoiseLoss
 # paper "Analyzing and Improving the Training Dynamics of Diffusion Models".
 
 class EDM2Loss:
-    def __init__(self, P_mean=0.5, P_std=2., sigma_data=1., context_noise_reduction=0.1, noise_weight:MultiNoiseLoss = None):
+    def __init__(self, P_mean=0.5, P_std=2., sigma_data=1., context_noise_reduction=0.1):
         self.P_mean = P_mean
         self.P_std = P_std
         self.sigma_data = sigma_data
         self.context_noise_reduction = context_noise_reduction
-        self.noise_weight = noise_weight
         assert context_noise_reduction >= 0 and context_noise_reduction <= 1, f"context_noise_reduction must be in [0,1], what are you doing? {context_noise_reduction}"
 
-    def __call__(self, net, images, conditioning=None, use_loss_weight=False, sigma=None):
+    def __call__(self, net, images, conditioning=None, sigma=None):
         batch_size, n_frames, channels, height, width = images.shape    
         assert net.training, "The model should be in training mode"
         cat_images = torch.cat((images,images),dim=1).clone()
@@ -54,12 +53,10 @@ class EDM2Loss:
 
         un_weighted_avg_loss = losses.mean().detach().cpu().item()
 
-        if self.noise_weight is not None:
-            self.noise_weight.add_data(sigma, losses)
-            if use_loss_weight:
-                mean_loss = self.noise_weight.calculate_mean_loss(sigma)
-                mean_loss = torch.clamp(mean_loss, min=1e-4, max=1)
-                losses = losses / mean_loss
+        net.noise_weight.add_data(sigma, losses)
+        mean_loss = net.noise_weight.calculate_mean_loss(sigma)
+        mean_loss = torch.clamp(mean_loss, min=1e-4, max=1)
+        losses = losses / mean_loss
         return losses.mean(), un_weighted_avg_loss
 #----------------------------------------------------------------------------
 # Learning rate decay schedule used in the paper "Analyzing and Improving

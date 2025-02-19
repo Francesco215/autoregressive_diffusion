@@ -14,6 +14,7 @@ from torch import nn, Tensor
 from torch.nn import functional as F
 import einops
 
+from .loss_weight import MultiNoiseLoss
 from .utils import normalize, resample, mp_silu, mp_sum, mp_cat, MPFourier, bmult
 from .conv import MPCausal3DConv, MPConv
 from .attention import FrameAttention, VideoAttention
@@ -223,6 +224,7 @@ class Precond(torch.nn.Module):
         self.label_dim = unet.label_dim
         self.use_fp16 = use_fp16
         self.sigma_data = sigma_data
+        self.noise_weight = MultiNoiseLoss()
 
     def forward(self, x:Tensor, sigma:Tensor, conditioning:Tensor=None, force_fp32:bool=False, cache:dict={}):
         cache['shape'] = x.shape
