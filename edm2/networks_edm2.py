@@ -164,7 +164,8 @@ class UNet(torch.nn.Module):
                 self.dec[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=(res in attn_resolutions), **block_kwargs)
         self.out_conv = MPCausal3DConv(cout, img_channels, kernel=[3,3,3])
 
-    def forward(self, x, c_noise, conditioning = None, cache:dict={}):
+    def forward(self, x, c_noise, conditioning = None, cache:dict=None):
+        if cache is None: cache = {}
         batch_size, time_dimention = x.shape[:2]
         n_context_frames = cache.get('n_context_frames', 0)
 
@@ -226,7 +227,8 @@ class Precond(torch.nn.Module):
         self.sigma_data = sigma_data
         self.noise_weight = MultiNoiseLoss()
 
-    def forward(self, x:Tensor, sigma:Tensor, conditioning:Tensor=None, force_fp32:bool=False, cache:dict={}):
+    def forward(self, x:Tensor, sigma:Tensor, conditioning:Tensor=None, force_fp32:bool=False, cache:dict=None):
+        if cache is None: cache = {}
         cache['shape'] = x.shape
         x = x.to(torch.float32)
         sigma = sigma.to(torch.float32)
@@ -256,16 +258,14 @@ class Precond(torch.nn.Module):
 class Gating(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        # self.linear_layer_start = nn.Linear(2, 2)
-        # self.linear_layer = nn.Linear(2, 1)
-
         self.offset = nn.Parameter(torch.tensor([0.,0.]))
         self.mult = nn.Parameter(torch.tensor([1.5,-0.5]))
         self.activation = nn.Sigmoid()
 
     def forward(self, c_noise:Tensor, n_context_frames:int=0):
         batch_size, time_dimention = c_noise.shape
-        positions = torch.arange(batch_size*time_dimention, device=c_noise.device) % time_dimention
+        if self.training: time_dimention = time_dimention//2
+        positions = torch.arange(c_noise.numel(), device=c_noise.device) % time_dimention
         positions = einops.rearrange(positions, '(b t) -> b t', b=batch_size) + n_context_frames
 
         positions = positions.to(c_noise.dtype).log1p()

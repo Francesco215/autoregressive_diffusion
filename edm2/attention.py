@@ -56,16 +56,15 @@ class VideoAttention(nn.Module):
         v = einops.rearrange(v, ' b m t hw c -> b m (t hw) c') # q and k are already rearranged inside of rope
 
         if self.training:
-            y = self.flex_attention(q, k, v, self.train_mask)
+            y = compiled_flex_attention(q, k, v, block_mask=self.train_mask)
         else:
             if q.shape[-2] == h*w:
                 y = F.scaled_dot_product_attention(q, k, v)
-                # attention = F.softmax(q @ k.transpose(-2,-1), dim=-1)
-                # y = attention @ v
+
             elif q.shape == k.shape:
                 n_frames = q.shape[-2]//(h*w)
-                inference_mask, score_mod = make_infer_mask(batch_size, self.num_heads, n_frames, h*w)
-                y = self.infer_flex_attention(q, k, v, score_mod, inference_mask)
+                score_mod, inference_mask = make_infer_mask(batch_size, self.num_heads, n_frames, h*w)
+                y = compiled_flex_attention(q, k, v, score_mod, inference_mask)
             else:
                 raise NotImplementedError("The inference mask is not implemented for this case")
 
@@ -74,15 +73,11 @@ class VideoAttention(nn.Module):
         
         return mp_sum(x, y, t=self.attn_balance), cache
     
-    # To log all recompilation reasons, use TORCH_LOGS="recompiles" or torch._logging.set_logs(dynamo=logging.INFO)
-    @torch.compile
-    def flex_attention(self, q, k, v, block_mask): 
-        return flex_attention(q, k, v, block_mask=block_mask)
-
-    @torch.compile
-    def infer_flex_attention(self, q, k, v, score_mod, block_mask):
-        assert score_mod is not None or block_mask is not None
-        return flex_attention(q, k, v, score_mod=score_mod, block_mask=block_mask)
+# To log all recompilation reasons, use TORCH_LOGS="recompiles" or torch._logging.set_logs(dynamo=logging.INFO)
+@torch.compile
+def compiled_flex_attention(q, k, v, score_mod=None, block_mask=None):
+    assert score_mod is not None or block_mask is not None
+    return flex_attention(q, k, v, score_mod=score_mod, block_mask=block_mask)
 
         
         
