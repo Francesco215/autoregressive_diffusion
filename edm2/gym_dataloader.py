@@ -23,7 +23,7 @@ class GymDataGenerator(IterableDataset):
 
         while n_data_yielded < self.training_examples:
             if terminated:
-                observation, _ = env.reset()
+                env.reset()
                 terminated = False
                 reward = 0
                 action = 0
@@ -34,29 +34,19 @@ class GymDataGenerator(IterableDataset):
                 action = env.action_space.sample()  # Random action
                 _ , reward, terminated, _, _ = env.step(action)
             
-            # action_history.append(action)
-            # action_history = action_history[-self.state_size:]
-
             if step_count >= 0: # This if can be removed, but having it avoids rendering useless frames
                 frame = env.render()
                 frame = resize_image(frame)
-                # frame_image = Image.fromarray(frame)
                 frame_history.append(torch.tensor(frame))
-                frame_history = frame_history[-self.state_size:]
-
                 action_history.append(action)
-                action_history = action_history[-self.state_size:]
             
             if step_count > 0 and step_count%self.state_size==0:  # Skip the first step as we don't have a previous state
-                assert len(frame_history)>=self.state_size
                 frames = torch.stack(frame_history[-self.state_size:])
-
                 actions = torch.tensor(action_history[-self.state_size:])
-                # if step_count%self.evolution_time==self.evolution_time-1:
 
                 yield frames, actions, torch.tensor(reward).clone()
                 n_data_yielded += 1
-                frame_history = []
+                frame_history, action_history = [], []
             
             if step_count > self.terminate_size:
                 terminated = True
