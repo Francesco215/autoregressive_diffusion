@@ -5,7 +5,7 @@ This repository shows a novel way for training diffusion models for video genera
 - The frames are generated sequencially given the previous known frames (just like LLMs generate tokens)
 - The training is sample efficient. (just like LLM training)
 - Each frame is generated via a reverse diffusion process.
-- The architecture, the training and the reverse-diffusion process is a generalization of what can be found on the paper ["Analyzing and Improving the Training Dynamics of Diffusion Models"](https://arxiv.org/abs/2312.02696)
+- The architecture, the training and the reverse-diffusion process is a generalization on the time domain of what can be found on the paper ["Analyzing and Improving the Training Dynamics of Diffusion Models"](https://arxiv.org/abs/2312.02696)
 
 ## Comparison with other types of models
 To this day 3 main techniques have been used to generate a sequence of frames (image taken from [the DIAMOND paper](https://arxiv.org/pdf/2405.12399))
@@ -77,6 +77,11 @@ Here is how you make sure that each one of them is really efficient and preserve
 ### Video Attention module
 Here is an illustrative image that shows how the information moves
 
+<p align="center">
+    <img src="readme_images/attention_ugly.jpg" width="90%">
+</p>
+
+> Here is a schematic representation on how the inputs and output interact. TODO: make this better!
 
 This can be archieved by doing block-sparse masking using [FlexAttention](https://pytorch.org/blog/flexattention/). Thanks to it no computation is wasted.
 <p align="center">
@@ -93,12 +98,32 @@ I'll write later how it works exactly. For now you can read the code
 During inference the model caches only the activations inside of convolutional filter. This leads to yet another big improvement in speed making the per-frame inference computation ~O(1).
 
 
-# Loss
-The training loss in computed indipendently for each frame and it is taken from the paper ["Elucidating the Design Space of Diffusion-Based Generative Models"](https://arxiv.org/pdf/2206.00364)
+## Loss
+The loss is computed indipendently for each frame. The equations are adapted from [[1](https://arxiv.org/pdf/2206.00364),[2](https://arxiv.org/abs/2312.02696)]
+
+Here are the (slightly oversiplified) equations. Let $D_\theta$ be the trainable model, $x_c$ the clean images and $x$ the images fed into the model (see Training section).
+
+$$
+\mathcal L(x,\sigma) = \lambda(x,\sigma)\cdot\mathbb E_{x_c}||D_\theta (x,\sigma)-x_c||^2
+$$
+
+where 
+$$
+\lambda(\sigma) = (\sigma^2 +\sigma_\textrm{data}^2)/(\sigma\cdot \sigma_\textrm{data})
+$$
+And this is what you see in the graph below
 
 <p align="center">
     <img src="readme_images/losses.png" width="49%">
     <img src="readme_images/plot.png" width="49%">
 </p>
 
+
+However the losses are normalized by their expected value with respect to $\sigma$ before being averaged inside of the batch.
+
+$$
+L(x,\sigma)=\frac {\mathcal L(x,\sigma)}{\mathbb E_x[\mathcal L(x,\sigma)]}
+$$
+
+This ensures that the loss $L$ that is passed to the autograd engine has always an average of one for every $\sigma$. The expectation value is computed with a best fit (see image above on the right)
 > In the image above on the left how the average loss goes down as the training progresses (~12h of a RTX4090). On the right it is shown the relashionship between the loss, the noise applied and the position along the sequence.
