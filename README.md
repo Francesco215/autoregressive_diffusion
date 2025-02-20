@@ -8,21 +8,21 @@ This repository shows a novel way for training diffusion models for video genera
 - The architecture, the training and the reverse-diffusion process is a generalization of what can be found on the paper ["Analyzing and Improving the Training Dynamics of Diffusion Models"](https://arxiv.org/abs/2312.02696)
 
 ## Comparison with other types of models
-To this day 3 main tecniques have been used to generate a sequence of frames (image taken from [the DIAMOND paper](https://arxiv.org/pdf/2405.12399))
+To this day 3 main techniques have been used to generate a sequence of frames (image taken from [the DIAMOND paper](https://arxiv.org/pdf/2405.12399))
 ![](readme_images/training_regimes.png)
 
 All of them have deal-breaking problems:
 
-1. *__The Diffusion for video generation__* can only effectively generate video of fixed time duration, and it's of no use for world-modelling.
+1. *__The Diffusion for video generation__* can only effectively generate videos of fixed time duration, and it's of no use for world-modelling.
 
 2. *__The Frame-stacking architecture__* can't attend in an effective way to previous frames, so it suffers from severe amnesia.
 
 3. *__The Cross-attention architecture__* is the one that makes most sense. However, it's extremely inefficient during training because cost per sample increases linearly with the number of context frames. 
 
 ### This model has all of the strenghs and none of the weakness of all of the above.
-1. It is sample efficient like diffusion video generation. __On top of that__ it can be used for world-modelling.
+1. It is sample efficient like diffusion video generation. __On top of that__ it can generate videos of any length and can be used for world-modelling.
 
-2. It implicitly employs Frame-stacking because it uses 3D convolutional layers-- They can be thought as stacking frames channel-wise and then doing 2D convoluions. __On top of that__ it doesn't suffer from amnesia because it can attend all of the previous frames with the attention mechanism.
+2. It implicitly employs Frame-stacking because it uses 3D convolutional layers-- They can be thought as stacking frames channel-wise and then doing 2D convolutions. __On top of that__ it doesn't suffer from amnesia because it can attend all of the previous frames with the attention mechanism.
 
 3. It can attend to all of the previous frames. __On top of that__ It $N$ times more efficient during training (where $N$ is the number of frames in the context) because it is sample efficient.
 
@@ -49,12 +49,11 @@ The transformer architecture allows to train such a model in a sample efficient 
 To generate a video where each frame if generated autoregressively we need to unite the two paradigms by estimating the score given all of the previous frames.
 
 
-$$s(x_{i+1},\sigma,x_i,\dots,x_0)=-\nabla_x \log p(x_{i+1},\sigma|x_i,\dots,x_0) $$
+$$s(x_{i+1},\sigma,x_i,\dots,x_0)=-\nabla_{x_{i+1}} \log p(x_{i+1},\sigma|x_i,\dots,x_0) $$
 
 Where $x_i,\dots,x_0$ are the noise-free context frames, $x_{i+1}$ is the noisy (to be denoised) frame, and $\sigma$ is the noise level
 
-
-
+>During inference the model caches only the relevant activations. The effective time complexity to generate a frame is very weakly dependent from the number of context frames ~O(1). This is because the convolutions overshadow the quadratic contribuition of the attention mechanism.
 ## Training
 Here is how you make the training in a way that is sample efficient.
 
@@ -69,12 +68,6 @@ $$
 x = x_c \oplus x_n = (x_1,\dots,x_n,\tilde x_1,\dots,\tilde x_n)
 $$
 
-<!-- To maintain causality we have to make sure that the $i$-th output of the network $N(x)_i$ is only dependent from the noised frame $\tilde x_i$ and all of the previous frames $\{x_j\}_{j<i}$
-
-$$
-N(x)_i=f(\tilde x_i,  \{x_j\}_{j<i},\sigma_i)
-$$ -->
-
 In this model there are two modules that can transfer information between frames
 - `VideoAttention`
 - `3DCausalConvolution`
@@ -86,10 +79,26 @@ Here is an illustrative image that shows how the information moves
 
 
 This can be archieved by doing block-sparse masking using [FlexAttention](https://pytorch.org/blog/flexattention/). Thanks to it no computation is wasted.
-![](readme_images/masking.png)
+<p align="center">
+    <img src="readme_images/masking.png" width="49%">
+</p>
+
+During inference the model uses KV-caching to make it faster. Since most of the computation is in the convolutional and feed-forward layers with KV-caching the model doesn't recompute the activations of the context frames leading to a substantial reduction in inference cost.
 
 ### 3D Causal Convolution
-Wierdly enough, the convolution layer is the hardest to explain because it relies on a couple of tricks to make sure that the code runs as fast as possible during training.
+Wierdly enough, the convolution layer is the hardest to explain because it relies on a couple of tricks to make sure that the code runs as fast and efficiently as possible during training.
 
 I'll write later how it works exactly. For now you can read the code
 
+During inference the model caches only the activations inside of convolutional filter. This leads to yet another big improvement in speed making the per-frame inference computation ~O(1).
+
+
+# Loss
+The training loss in computed indipendently for each frame and it is taken from the paper ["Elucidating the Design Space of Diffusion-Based Generative Models"](https://arxiv.org/pdf/2206.00364)
+
+<p align="center">
+    <img src="readme_images/losses.png" width="49%">
+    <img src="readme_images/plot.png" width="49%">
+</p>
+
+> In the image above on the left how the average loss goes down as the training progresses (~12h of a RTX4090). On the right it is shown the relashionship between the loss, the noise applied and the position along the sequence.

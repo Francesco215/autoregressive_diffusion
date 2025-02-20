@@ -2,7 +2,6 @@
 encoded_latents/
 *.mp4
 *.pt
-*.png
 uv.lock
 .venv/
 autoregressive_diffusion.egg-info/
@@ -10,3 +9,4 @@ autoregressive_diffusion.egg-info/
 aws/
 pretrained_ckpts/
 log/
+temp_images/

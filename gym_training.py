@@ -38,7 +38,7 @@ if __name__=="__main__":
                 )
 
     micro_batch_size = 8
-    batch_size = 8
+    batch_size = micro_batch_size
     accumulation_steps = batch_size//micro_batch_size
     state_size = 16 
     total_number_of_steps = 40_000
@@ -61,6 +61,7 @@ if __name__=="__main__":
     losses = []
 
     resume_training_run = None
+    resume_training_run = 'lunar_lander_68.0M.pt'
     steps_taken = 0
     if resume_training_run is not None:
         print(f"Resuming training from {resume_training_run}")
