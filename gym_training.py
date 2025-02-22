@@ -37,14 +37,14 @@ if __name__=="__main__":
                 attn_resolutions=[8,4]
                 )
 
-    micro_batch_size = 8
-    batch_size = 8
+    micro_batch_size = 2
+    batch_size = 4
     accumulation_steps = batch_size//micro_batch_size
-    state_size = 16 
+    state_size = 64 
     total_number_of_steps = 40_000
     training_steps = total_number_of_steps * batch_size
     dataset = GymDataGenerator(state_size, original_env, training_steps)
-    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=micro_batch_size)
+    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=16)
 
     unet_params = sum(p.numel() for p in unet.parameters())
     print(f"Number of UNet parameters: {unet_params//1e6}M")

@@ -1,11 +1,22 @@
-# Sample Efficient Autoregressive Diffusion
+# Next-Gen Frame Diffusion: Autoregressive and Sample-Efficient
+This repository shows an universal and novel way of training diffusion models for video generation and world-modelling-- It generalizes and improves upon all of the previously known methods of video diffusion models and diffusion-based world-modelling
 
-This repository shows a novel way for training diffusion models for video generation and world-modelling.
+- Each frame is generated sequencially can attent to all of its context frames (just like LLMs generate tokens)
+- The training is sample-efficient. (just like LLM training)
+- Each frame is generated via a reverse-diffusion process. (just like diffusion for image generation)
+- The architecture is a generalization of what can be found on the paper ["Analyzing and Improving the Training Dynamics of Diffusion Models"](https://arxiv.org/abs/2312.02696)
 
-- The frames are generated sequencially given the previous known frames (just like LLMs generate tokens)
-- The training is sample efficient. (just like LLM training)
-- Each frame is generated via a reverse diffusion process.
-- The architecture, the training and the reverse-diffusion process is a generalization on the time domain of what can be found on the paper ["Analyzing and Improving the Training Dynamics of Diffusion Models"](https://arxiv.org/abs/2312.02696)
+> [!WARNING]
+> This repository is still in development. For now there are no instructions on how to run the code because it is subject to change
+
+## Early Results
+This are the results of a ~1 hour training run with a Nvidia RTX 4090. The model was trained on the Lunar-Lander gymnasium environment. 
+<p align="center">
+    <img src="readme_images/output.png" width="40%">
+</p>
+
+> [!IMPORTANT]
+> Working on training it on Counter-Strike. Stay tuned
 
 ## Comparison with other types of models
 To this day 3 main techniques have been used to generate a sequence of frames (image taken from [the DIAMOND paper](https://arxiv.org/pdf/2405.12399))
@@ -17,22 +28,23 @@ All of them have deal-breaking problems:
 
 2. *__The Frame-stacking architecture__* can't attend in an effective way to previous frames, so it suffers from severe amnesia.
 
-3. *__The Cross-attention architecture__* is the one that makes most sense. However, it's extremely inefficient during training because cost per sample increases linearly with the number of context frames. 
+3. *__The Cross-attention architecture__* is the one that makes most sense. However, it's extremely inefficient during training because cost per sample increases (super-)linearly with the number of context frames. 
 
-### This model has all of the strenghs and none of the weakness of all of the above.
-1. It is sample efficient like diffusion video generation. __On top of that__ it can generate videos of any length and can be used for world-modelling.
+### This model has ALL OF THE STRENGHTS and NONE OF THE WEAKNESSNES of all of the above.
+1. It is sample-efficient like diffusion video generation. __On top of that__ it can generate videos of any length and can be used for world-modelling.
 
-2. It implicitly employs Frame-stacking because it uses 3D convolutional layers-- They can be thought as stacking frames channel-wise and then doing 2D convolutions. __On top of that__ it doesn't suffer from amnesia because it can attend all of the previous frames with the attention mechanism.
+2. It implicitly employs frame-stacking because it uses 3D convolutional layers-- They can be thought as stacking frames channel-wise and then doing 2D convolutions. __On top of that__ it doesn't suffer from amnesia because it can attend all of the previous frames with the attention mechanism.
 
-3. It can attend to all of the previous frames. __On top of that__ It $N$ times more efficient during training (where $N$ is the number of frames in the context) because it is sample efficient.
+3. It can attend to all of the previous frames. __On top of that__ during training the computational cost per-sample is (roughly) constant as the context lenght increases.
 
 
 # How it works
-Here I give a very brief explanation on how it works, in the future I hope to write a paper that goes into detail.
+> [!WARNING]
+> The information provided below is just a brief overview of what's going on under the hood.
 
 ## Inference
 
-One way to train a Diffusion model is to learn to predict the score function
+<!-- One way to train a Diffusion model is to learn to predict the score function
 
 $$ s(x,\sigma) = -\nabla_x \log p(x,\sigma)$$
 
@@ -43,29 +55,30 @@ Language models work by estimating the probablilty distribuition of the last tok
 
 $$F(x_i,\dots,x_0)=-\log p(x_{i+1}|x_i,\dots,x_0)$$
 
-The transformer architecture allows to train such a model in a sample efficient way. This is very important because it multiplies the effictive batch size by the sequence lenght.
+The transformer architecture allows to train such a model in a sample-efficient way. This is very important because it multiplies the effictive batch size by the sequence lenght.
 
 ---
-To generate a video where each frame if generated autoregressively we need to unite the two paradigms by estimating the score given all of the previous frames.
+To generate a video where each frame if generated autoregressively we need to unite the two paradigms by estimating the score given all of the previous frames. -->
 
+Last-frame generation can be thought as image generation conditioned on the previous frames.
 
-$$s(x_{i+1},\sigma,x_i,\dots,x_0)=-\nabla_{x_{i+1}} \log p(x_{i+1},\sigma|x_i,\dots,x_0) $$
+$$s(x_i,\sigma,x_{i-1},\dots,x_0)=-\nabla_{x_i} \log p(x_i,\sigma|x_{i-1},\dots,x_0) $$
 
-Where $x_i,\dots,x_0$ are the noise-free context frames, $x_{i+1}$ is the noisy (to be denoised) frame, and $\sigma$ is the noise level
+Where $x_{i-1},\dots,x_0$ are the noise-free context frames, $x_i$ is the noisy (to be denoised) frame, and $\sigma$ is the noise level
 
 >During inference the model caches only the relevant activations. The effective time complexity to generate a frame is very weakly dependent from the number of context frames ~O(1). This is because the convolutions overshadow the quadratic contribuition of the attention mechanism.
 ## Training
-Here is how you make the training in a way that is sample efficient.
+Here is how you make the training in a way that is sample-efficient.
 
 Let $(x_1,\dots,x_n)$ be a sequence of frames from the training set.
-To train the model in a way that is sample efficient we create two copies of the input sequence:
+To train the model in a way that is sample-efficient we create two copies of the input sequence:
 - The first part is not noised $x_c=(x_1,\dots,x_n)$
-- The second part is noised $x_n=(\tilde x_1,\dots,\tilde x_n)$ where each frame is noised as $\tilde x_i = x_i +\sigma_i\epsilon$.
+- The second part is noised $x_\epsilon=(\tilde x_1,\dots,\tilde x_n)$ where each frame is noised as $\tilde x_{\epsilon,i} = x_i +\sigma_i\epsilon$.
 
 The input sequence $x$ is formed by concatenating the two sequences
 
 $$
-x = x_c \oplus x_n = (x_1,\dots,x_n,\tilde x_1,\dots,\tilde x_n)
+x = x_c \oplus x_\epsilon = (x_1,\dots,x_n,\tilde x_1,\dots,\tilde x_n)
 $$
 
 In this model there are two modules that can transfer information between frames
@@ -118,6 +131,8 @@ And this is what you see in the graph below
     <img src="readme_images/plot.png" width="49%">
 </p>
 
+> In the image above on the left how the average loss goes down as the training progresses (~12h of a RTX4090). On the right it is shown the relashionship between the loss, the noise applied and the position along the sequence.
+
 
 However the losses are normalized by their expected value with respect to $\sigma$ before being averaged inside of the batch.
 
@@ -126,4 +141,3 @@ L(x,\sigma)=\frac {\mathcal L(x,\sigma)}{\mathbb E_x[\mathcal L(x,\sigma)]}
 $$
 
 This ensures that the loss $L$ that is passed to the autograd engine has always an average of one for every $\sigma$. The expectation value is computed with a best fit (see image above on the right)
-> In the image above on the left how the average loss goes down as the training progresses (~12h of a RTX4090). On the right it is shown the relashionship between the loss, the noise applied and the position along the sequence.
