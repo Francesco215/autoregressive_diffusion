@@ -69,7 +69,8 @@ def gym_collate_function(batch):
     padded_actions = torch.stack(action_histories)
     return padded_frames, padded_actions, torch.Tensor(rewards)
 
-    
+std_latent = 0.439
+mean_latent = torch.load("mean_LunarLander-v3_latent.pt")
 @torch.no_grad()
 def frames_to_latents(autoencoder, frames)->Tensor:
     """
@@ -92,6 +93,7 @@ def frames_to_latents(autoencoder, frames)->Tensor:
 
     # Apply scaling factor
     latents = latents * autoencoder.config.scaling_factor
+    latents = (latents - mean_latent)/std_latent
 
     latents = einops.rearrange(latents, '(b t) c h w -> b t c h w', b=batch_size)
     return latents
@@ -113,6 +115,7 @@ def latents_to_frames(autoencoder,latents):
     batch_size = latents.shape[0]
     latents = einops.rearrange(latents, 'b t c h w -> (b t) c h w')
     # Apply inverse scaling factor
+    latents = (latents * std_latent) + mean_latent
     latents = latents / autoencoder.config.scaling_factor
 
     #split the conversion to not overload the GPU RAM
