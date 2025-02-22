@@ -1,7 +1,7 @@
 # Next-Gen Frame Diffusion: Autoregressive and Sample-Efficient
 This repository shows an universal and novel way of training diffusion models for video generation and world-modelling-- It generalizes and improves upon all of the previously known methods of video diffusion models and diffusion-based world-modelling
 
-- Each frame is generated sequencially can attent to all of its context frames (just like LLMs generate tokens)
+- Each frame is generated sequencially and can attent to all of its context frames (just like LLMs generate tokens)
 - The training is sample-efficient. (just like LLM training)
 - Each frame is generated via a reverse-diffusion process. (just like diffusion for image generation)
 - The architecture is a generalization of what can be found on the paper ["Analyzing and Improving the Training Dynamics of Diffusion Models"](https://arxiv.org/abs/2312.02696)
