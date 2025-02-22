@@ -1,7 +1,6 @@
 *__pycache__*
 encoded_latents/
 *.mp4
-*.pt
 uv.lock
 .venv/
 autoregressive_diffusion.egg-info/
