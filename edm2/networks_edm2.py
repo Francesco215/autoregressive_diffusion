@@ -14,6 +14,7 @@ from torch import nn, Tensor
 from torch.nn import functional as F
 import einops
 
+from .loss_weight import MultiNoiseLoss
 from .utils import normalize, resample, mp_silu, mp_sum, mp_cat, MPFourier, bmult
 from .conv import MPCausal3DConv, MPConv
 from .attention import FrameAttention, VideoAttention
@@ -63,7 +64,9 @@ class Block(torch.nn.Module):
         if self.num_heads > 0: 
             assert (out_channels & (out_channels - 1) == 0) and out_channels != 0, f"out_channels must be a power of 2, got {out_channels}"
 
-    def forward(self, x, emb, batch_size):
+    def forward(self, x, emb, batch_size, cache=None):
+        if cache is None: cache = {}
+
         # Main branch.
         x = resample(x, f=self.resample_filter, mode=self.resample_mode)
         if self.flavor == 'enc':
@@ -72,13 +75,13 @@ class Block(torch.nn.Module):
             x = normalize(x, dim=1) # pixel norm
 
         # Residual branch.
-        y = self.conv_res0(mp_silu(x),batch_size=batch_size)
+        y, cache['conv_res0'] = self.conv_res0.forward(mp_silu(x), emb, batch_size=batch_size, cache=cache.get('conv_res0', None)) 
         c = self.emb_linear(emb, gain=self.emb_gain) + 1
-        y = einops.einsum(y, c.to(y.dtype),'b c h w, b c -> b c h w') 
+        y = bmult(y, c.to(y.dtype)) 
         y = mp_silu(y)
         if self.training and self.dropout != 0:
             y = torch.nn.functional.dropout(y, p=self.dropout)
-        y = self.conv_res1(y, batch_size=batch_size)
+        y, cache['conv_res1'] = self.conv_res1(y, emb, batch_size=batch_size, cache=cache.get('conv_res1', None)) 
 
         # Connect the branches.
         if self.flavor == 'dec' and self.conv_skip is not None:
@@ -86,12 +89,12 @@ class Block(torch.nn.Module):
         x = mp_sum(x, y, t=self.res_balance)
 
         # Self-attention.
-        x = self.attn(x, batch_size)
+        x, cache['attn'] = self.attn(x, batch_size, cache.get('attn', None))
 
         # Clip activations.
         if self.clip_act is not None:
             x = x.clip_(-self.clip_act, self.clip_act)
-        return x
+        return x, cache
 
 #----------------------------------------------------------------------------
 # EDM2 U-Net model (Figure 21).
@@ -121,13 +124,12 @@ class UNet(torch.nn.Module):
         self.label_balance = label_balance
         self.concat_balance = concat_balance
         self.out_res = Gating()
-        # self.out_gain = Gating()
 
         # Embedding.
         self.emb_fourier_sigma = MPFourier(cnoise)
-        self.emb_sigma = MPConv(cnoise, cemb, kernel=[]) # this are actually linear layers with normalized weights. the kernel is empty
+        self.emb_sigma = MPConv(cnoise, cemb, kernel=[]) 
         self.emb_fourier_time = MPFourier(cnoise)
-        self.emb_time = MPConv(cnoise, cemb, kernel=[]) # this are actually linear layers with normalized weights. the kernel is empty
+        self.emb_time = MPConv(cnoise, cemb, kernel=[]) 
         self.emb_label = MPConv(label_dim, cemb, kernel=[]) if label_dim != 0 else None
 
         # Encoder.
@@ -162,50 +164,50 @@ class UNet(torch.nn.Module):
                 self.dec[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=(res in attn_resolutions), **block_kwargs)
         self.out_conv = MPCausal3DConv(cout, img_channels, kernel=[3,3,3])
 
-    def forward(self, x, c_noise, conditioning = None):
-        # x.shape = b t c h w
+    def forward(self, x, c_noise, conditioning = None, cache:dict=None):
+        if cache is None: cache = {}
         batch_size, time_dimention = x.shape[:2]
-        res = x.clone()
-        out_res = self.out_res(c_noise)
-        # out_gain = self.out_gain(c_noise)
+        n_context_frames = cache.get('n_context_frames', 0)
 
+        res = x.clone()
+        out_res, cache['n_context_frames'] = self.out_res(c_noise, n_context_frames)
+
+        # Reshaping
         x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
         c_noise = einops.rearrange(c_noise, 'b t -> (b t)')
 
-        # Embedding.
-        time_labels = torch.arange(time_dimention, device=x.device).repeat(batch_size).log1p().to(c_noise.dtype) / 4
-        time_embeddings = self.emb_time(self.emb_fourier_time(time_labels))
+        # Time embedding
+        frame_labels = torch.arange(time_dimention, device=x.device).repeat(batch_size) + n_context_frames
+        frame_labels = frame_labels.log1p().to(c_noise.dtype) / 4 
+        frame_embeddings = self.emb_time(self.emb_fourier_time(frame_labels))
+
         emb = self.emb_sigma(self.emb_fourier_sigma(c_noise))
-        emb = mp_sum(emb, time_embeddings, t=0.5)
+        emb = mp_sum(emb, frame_embeddings, t=0.5)
         if self.emb_label is not None and conditioning is not None:
-            # TODO: might need to change this for when the class label is not none
             conditioning = einops.rearrange(conditioning, 'b t -> (b t)')
             conditioning = F.one_hot(conditioning, num_classes=self.label_dim).to(c_noise.dtype)*self.label_dim**(0.5)
             conditioning = self.emb_label(conditioning)
-            # conditioning = self.emb_label(conditioning/1.5)
-            # if conditioning.shape[0]!=1:
-            #     conditioning = torch.repeat_interleave(conditioning, time_dimention, dim = 0)
             emb = mp_sum(emb, conditioning, t=1/3)
         emb = mp_silu(emb)
+
 
         # Encoder.
         x = torch.cat([x, torch.ones_like(x[:, :1])], dim=1)
         skips = []
         for name, block in self.enc.items():
-            x = block(x, batch_size=batch_size) if 'conv' in name else block(x, emb, batch_size=batch_size)
+            x, cache['enc', name] = block(x, emb, batch_size=batch_size, cache=cache.get(('enc',name), None))
             skips.append(x)
 
         # Decoder.
         for name, block in self.dec.items():
             if 'block' in name:
                 x = mp_cat(x, skips.pop(), t=self.concat_balance)
-            x = block(x, emb, batch_size=batch_size)
-        x = self.out_conv(x, batch_size=batch_size)
+            x, cache['dec', name] = block(x, emb, batch_size=batch_size, cache=cache.get(('dec',name), None))
+        x, cache['out_conv'] = self.out_conv(x, emb, batch_size=batch_size, cache=cache.get('out_conv', None))
 
         x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
         x = mp_sum(x, res, out_res)
-        # x = bmult(x, out_gain)
-        return x
+        return x, cache
 
 #----------------------------------------------------------------------------
 # Preconditioning and uncertainty estimation.
@@ -223,17 +225,15 @@ class Precond(torch.nn.Module):
         self.label_dim = unet.label_dim
         self.use_fp16 = use_fp16
         self.sigma_data = sigma_data
+        self.noise_weight = MultiNoiseLoss()
 
-    def forward(self, x:Tensor, sigma:Tensor, conditioning:Tensor=None, force_fp32=False, **unet_kwargs):
-        b, t, c, h, w = x.shape
+    def forward(self, x:Tensor, sigma:Tensor, conditioning:Tensor=None, force_fp32:bool=False, cache:dict=None):
+        if cache is None: cache = {}
+        cache['shape'] = x.shape
         x = x.to(torch.float32)
         sigma = sigma.to(torch.float32)
-        sigma = einops.rearrange(sigma, '... -> ... 1 1 1')
+        sigma = einops.rearrange(sigma, 'b t -> b t 1 1 1')
 
-        # mean, std = x.mean(dim=(2,3,4), keepdim=True), x.std(dim=(2,3,4), keepdim=True)
-        # x=(x-mean)/(std + 1e-4)
-
-        # text_embeddings = None if self.label_dim == 0 else torch.zeros([1, self.label_dim], device=x.device) if text_embeddings is None else text_embeddings#.to(torch.float32)
         dtype = torch.float16 if (self.use_fp16 and not force_fp32 and x.device.type == 'cuda') else torch.float32
 
         # Preconditioning weights.
@@ -244,10 +244,13 @@ class Precond(torch.nn.Module):
  
         # Run the model.
         x_in = (c_in * x).to(dtype)
-        F_x = self.unet(x_in, c_noise, conditioning, **unet_kwargs)
+        F_x, cache = self.unet(x_in, c_noise, conditioning, cache)
         D_x = c_skip * x + c_out * F_x.to(torch.float32)
-        # D_x = D_x * std + mean
-        return D_x
+        return D_x, cache
+    
+    @property
+    def device(self):
+        return next(self.parameters()).device
 
 #----------------------------------------------------------------------------
 
@@ -255,24 +258,18 @@ class Precond(torch.nn.Module):
 class Gating(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        # self.linear_layer_start = nn.Linear(2, 2)
-        # self.linear_layer = nn.Linear(2, 1)
-
         self.offset = nn.Parameter(torch.tensor([0.,0.]))
         self.mult = nn.Parameter(torch.tensor([1.5,-0.5]))
         self.activation = nn.Sigmoid()
 
-    def forward(self, c_noise:Tensor):
-        b, t = c_noise.shape
-        positions = torch.arange(b*t, device = c_noise.device) % t
-        positions = einops.rearrange(positions, '(b t) -> b t', b=b).to(c_noise.dtype).log1p()
+    def forward(self, c_noise:Tensor, n_context_frames:int=0):
+        batch_size, time_dimention = c_noise.shape
+        if self.training: time_dimention = time_dimention//2
+        positions = torch.arange(c_noise.numel(), device=c_noise.device) % time_dimention
+        positions = einops.rearrange(positions, '(b t) -> b t', b=batch_size) + n_context_frames
 
+        positions = positions.to(c_noise.dtype).log1p()
         state_vector = torch.stack([c_noise, positions], dim=-1)
         state_vector = (state_vector * self.mult + self.offset).sum(dim=-1)
-        return self.activation(state_vector)
+        return self.activation(state_vector), n_context_frames+time_dimention # TODO:check this thing
 
-
-
-
-
-        

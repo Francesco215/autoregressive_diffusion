@@ -39,8 +39,7 @@ class RotaryEmbedding(nn.Module):
         self.register_buffer("pos_emb", pos_emb.to(torch.float16), persistent=False)
         self.register_buffer("pos_emb_scale", scale.to(torch.float16), persistent=False)
         return pos_emb, scale
-    
-    # @torch.compile
+
     def forward(self, q:Tensor, k:Tensor):
         # q,k shape = b m t (h w) c
         
@@ -49,10 +48,13 @@ class RotaryEmbedding(nn.Module):
             q = einops.rearrange(q, 'b m (a t) hw c -> b m a t hw c', a=2)
             k = einops.rearrange(k, 'b m (a t) hw c -> b m a t hw c', a=2)
 
-        pos, scale=self.get_rotary_embedding(q.shape[-3])
+        pos, scale=self.get_rotary_embedding(k.shape[-3])
 
-        q = (q * pos.cos() + rotate_half(q) * pos.sin())*scale
         k = (k * pos.cos() + rotate_half(k) * pos.sin())/scale
+        if not self.training:
+            q_seq_len = q.shape[-3]
+            pos, scale = pos[-q_seq_len:], scale[-q_seq_len:]
+        q = (q * pos.cos() + rotate_half(q) * pos.sin())*scale
 
         #'b m ... c -> b m (...) c'
         if self.training:

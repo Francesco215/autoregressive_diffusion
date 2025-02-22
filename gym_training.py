@@ -1,10 +1,8 @@
 #%%
 import numpy as np
 import torch
-from torch import nn, optim, Tensor
 from torch.utils.data import DataLoader
 
-import einops
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
@@ -14,7 +12,6 @@ from diffusers import AutoencoderKL
 from edm2.gym_dataloader import GymDataGenerator, gym_collate_function, frames_to_latents
 from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
-from edm2.loss_weight import MultiNoiseLoss
 from edm2.mars import MARS
 from edm2.phema import PowerFunctionEMA
 
@@ -26,7 +23,7 @@ if __name__=="__main__":
     original_env = "LunarLander-v3"
     model_id="stabilityai/stable-diffusion-2-1"
 
-    autoencoder = AutoencoderKL.from_pretrained(model_id, subfolder="vae").to(device).requires_grad_(False)
+    autoencoder = AutoencoderKL.from_pretrained(model_id, subfolder="vae").to(device).eval().requires_grad_(False)
     latent_channels = autoencoder.config.latent_channels
 
     unet = UNet(img_resolution=32, # Match your latent resolution
@@ -40,11 +37,11 @@ if __name__=="__main__":
                 attn_resolutions=[8,4]
                 )
 
-    micro_batch_size = 16
-    batch_size = 16
+    micro_batch_size = 8
+    batch_size = 8
     accumulation_steps = batch_size//micro_batch_size
     state_size = 16 
-    total_number_of_steps = 20_000
+    total_number_of_steps = 40_000
     training_steps = total_number_of_steps * batch_size
     dataset = GymDataGenerator(state_size, original_env, training_steps)
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=micro_batch_size)
@@ -54,20 +51,20 @@ if __name__=="__main__":
     # sigma_data = 0.434
     sigma_data = 1.
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
-    loss_fn = EDM2Loss(P_mean=0.3,P_std=2., sigma_data=sigma_data, noise_weight=MultiNoiseLoss(), context_noise_reduction=0.5)
+    loss_fn = EDM2Loss(P_mean=0.3,P_std=2., sigma_data=sigma_data, context_noise_reduction=0.5)
 
     ref_lr = 1e-2
     current_lr = ref_lr
     optimizer = MARS(precond.parameters(), lr=ref_lr, eps = 1e-4)
     optimizer.zero_grad()
-
     ema_tracker = PowerFunctionEMA(precond, stds=[0.050, 0.100])
     losses = []
 
-    resume_training_run = 'lunar_lander_68.0M_trained.pt'
     resume_training_run = None
-
+    # resume_training_run = 'lunar_lander_68.0M.pt'
+    steps_taken = 0
     if resume_training_run is not None:
+        print(f"Resuming training from {resume_training_run}")
         checkpoint = torch.load(resume_training_run, weights_only=False, map_location='cuda')
         precond.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -76,19 +73,19 @@ if __name__=="__main__":
         print(f"Resuming training from batch {checkpoint['batch']} with loss {losses[-1]:.4f}")
         current_lr = optimizer.param_groups[0]['lr']
         ref_lr = checkpoint['ref_lr']
-    #%%
-    ulw=False
-    pbar = tqdm(enumerate(dataloader),total=total_number_of_steps)
-    for i, batch in pbar:
-        frames, actions, reward = batch
-        frames = frames.to(device)
-        actions = None if i%4==0 else actions.to(device)
-        # action_emb = diffusion.action_embedder(action)
+        steps_taken = checkpoint['batch']
 
-        latents = frames_to_latents(autoencoder, frames)
+    #%%
+    pbar = tqdm(enumerate(dataloader, start=steps_taken),total=total_number_of_steps)
+    for i, batch in pbar:
+        with torch.no_grad():
+            frames, actions, reward = batch
+            frames = frames.to(device)
+            actions = None if i%4==0 else actions.to(device)
+            latents = frames_to_latents(autoencoder, frames)
 
         # Calculate loss    
-        loss, un_weighted_loss = loss_fn(precond, latents, actions, use_loss_weight=ulw)
+        loss, un_weighted_loss = loss_fn(precond, latents, actions)
         losses.append(un_weighted_loss)
         # Backpropagation and optimization
         loss.backward()
@@ -106,8 +103,8 @@ if __name__=="__main__":
 
         # Save model checkpoint (optional)
         if i % 50 * accumulation_steps == 0 and i!=0:
-            loss_fn.noise_weight.fit_loss_curve()
-            loss_fn.noise_weight.plot('plot.png')
+            precond.noise_weight.fit_loss_curve()
+            precond.noise_weight.plot('plot.png')
             n_clips = np.linspace(0, i * micro_batch_size, len(losses))
             plt.plot(n_clips, losses, label='Loss', color='blue', alpha=0.5)
             if len(losses) >= 100:
@@ -136,3 +133,4 @@ if __name__=="__main__":
 
         if i == total_number_of_steps:
             break
+# %%

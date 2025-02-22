@@ -1,4 +1,5 @@
 #%%
+import copy
 from tqdm import tqdm
 import numpy as np
 from matplotlib import pyplot as plt
@@ -58,7 +59,7 @@ print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1
 sigma_data = 1.
 precond = Precond(unet, use_fp16=True, sigma_data=sigma_data)
 precond_state_dict = torch.load("lunar_lander_68.0M.pt",map_location=device,weights_only=False)['model_state_dict']
-precond.load_state_dict(precond_state_dict)
+precond.load_state_dict(precond_state_dict, strict=False)
 precond.to(device)
 
 # g_net_state_dict = torch.load("lunar_lander_68.0M_trained.pt",map_location=device,weights_only=False)['model_state_dict']
@@ -80,47 +81,45 @@ g_net=None
 #%%
 @torch.no_grad()
 def edm_sampler_with_mse(
-    net, context, target=None,  # Added target for MSE calculation
-    gnet=None, text_embeddings=None, num_steps=32, sigma_min=0.002, sigma_max=80, 
+    net, cache, target=None,  # Added target for MSE calculation
+    gnet=None, conditioning=None, num_steps=32, sigma_min=0.002, sigma_max=80, 
     rho=7, guidance=1, S_churn=0, S_min=0, S_max=float('inf'), S_noise=1,
     dtype=torch.float32,
 ):
-    context = context.to(dtype)
-    batch_size, n_frames, channels, height, width = context.shape
+    batch_size, n_frames, channels, height, width = cache.get('shape', (None, None, None, None, None)) # TODO: change this
+    device = net.device
     
     # Guided denoiser (same as original)
-    def denoise(x, t):
-        context_t = torch.ones(batch_size, n_frames, device=t.device, dtype=dtype) * 0.03
-        t = torch.ones(batch_size, 1, device=t.device, dtype=dtype) * t
-        t = torch.cat((context_t, t), dim=1)
+    def denoise(x, t, cache):
+        cache = copy.deepcopy(cache)
+        t = torch.ones(batch_size, 1, device=device, dtype=dtype) * t
         
-        Dx = net(x, t, text_embeddings).to(dtype)
+        # cache = cache.copy()
+        Dx, cache = net(x, t, conditioning, cache=cache)
         if guidance == 1:
-            return Dx
-        ref_Dx = gnet(x, t, text_embeddings).to(dtype)
-        return ref_Dx.lerp(Dx, guidance)
+            return Dx, cache
+        ref_Dx, _ = gnet(x, t, conditioning, cache = {}) # TODO: play with the cache
+        return ref_Dx.lerp(Dx, guidance), cache
 
     # Time step discretization
-    step_indices = torch.arange(num_steps, dtype=dtype, device=context.device)
+    step_indices = torch.arange(num_steps, dtype=dtype, device=device)
     t_steps = (sigma_max ** (1 / rho) + step_indices / (num_steps - 1) * 
               (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
     t_steps = torch.cat([t_steps, torch.zeros_like(t_steps[:1])])
     
     # Main sampling loop with MSE tracking
-    noise = torch.randn_like(latents[:,-1]) * t_steps[0]
-    x_next = torch.cat((context, noise.unsqueeze(1)), dim=1)
+    x_next = torch.randn(batch_size, 1, channels, height, width, device=device) * t_steps[0]
     mse_values = []
     mse_pred_values = []
     if target is not None:
         target = target.to(dtype)
-        noise = noise + target
+        x_next = x_next + target
 
     net.eval()
-    if gnet is not None:
-        gnet.eval()
+    if gnet is not None: gnet.eval()
+
     for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])):
         x_cur = x_next
-        x_cur[:, :-1] = context  # Keep original context frames
         
         # Noise injection step
         if S_churn > 0 and S_min <= t_cur <= S_max:
@@ -132,27 +131,28 @@ def edm_sampler_with_mse(
             x_hat = x_cur
 
         # Euler step
-        x_pred=denoise(x_hat, t_hat)
+        if i == num_steps:
+            x_pred, cache=denoise(x_hat, t_hat, cache)
+        else:
+            x_pred, _ = denoise(x_hat, t_hat, cache)
         d_cur = (x_hat - x_pred) / t_hat
         x_next = x_hat + (t_next - t_hat) * d_cur
 
         # 2nd order correction
         if i < num_steps - 1:
-            x_next[:, :-1] = context
-            d_prime = (x_next - denoise(x_next, t_next)) / t_next
+            x_pred, _ = denoise(x_next, t_next, cache)
+            d_prime = (x_next - x_pred) / t_next
             x_next = x_hat + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)
 
         # Calculate MSE after each step
-        pred_frame = x_next[:, -1]
         if target is not None:
-            mse_pred = torch.mean((x_pred[:,-1] - target) ** 2).item()
-            mse = torch.mean((pred_frame - target) ** 2).item()
+            mse_pred = torch.mean((x_pred - target) ** 2).item()
+            mse = torch.mean((x_next - target) ** 2).item()
             mse_values.append(mse)
             mse_pred_values.append(mse_pred)
 
     net.train()
-    x_next[:,:-1] = context
-    return x_next, mse_values, mse_pred_values
+    return x_next, mse_values, mse_pred_values, cache
 
 #%%
 
@@ -164,26 +164,29 @@ def edm_sampler_with_mse(
 start = 0
 num_samples = 4
 frames, action, reward = batch
+action = action.to(device)
 frames = frames.to(device)
 latents = frames_to_latents(autoencoder, frames)
 # latents = batch["latents"][start:start+num_samples].to(device)
 # text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
-context = latents[:, :-1]  # First t-1 frames
-target = latents[:, -1]    # Last frame (ground truth)
-
+context = latents[:, :-1]  # First frames (context)
+target = latents[:, -1:]    # Last frame (ground truth)
+precond.eval()
+sigma = torch.ones(context.shape[:2], device=device) * 0.05
+x, cache = precond(context, sigma, action[:,:-1])
 
 #%%
 # Run sampler with sigma_max=0.5 for initial noise level
-_, mse_steps, mse_pred_values = edm_sampler_with_mse(
+_, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(
     net=precond,
-    context=context,
+    cache=cache,
     target=target,
-    sigma_max=0.4,  # Initial noise level matches our test
+    sigma_max=3,  # Initial noise level matches our test
     num_steps=32,
-    gnet=g_net,
-    # text_embeddings=text_embeddings,
+    conditioning=action[:,-1:],
+    # gnet=g_net,
     rho = 7,
-    guidance = 2,
+    guidance = 1,
 )
 
 # Plot results
@@ -199,18 +202,14 @@ plt.grid(True)
 plt.legend()
 plt.show()
 print(mse_steps[-1])
-
 # %%
+for i in tqdm(range(8)):
+    x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, gnet=g_net, sigma_max = 80, num_steps=32, rho=7, guidance=1)
+    latents = torch.cat((latents,x),dim=1)
 
-context.shape
+print(latents.shape)
 # %%
-x=latents.clone()
-for i in range(8):
-    x, _, _= edm_sampler_with_mse(precond, x, gnet=g_net, sigma_max = 80, num_steps=32, rho=7, guidance=1)
-
-print(x.shape)
-# %%
-torch.save(x, "x.pt")
+torch.save(latents, "x.pt")
 
 # %%
 import torch
@@ -223,7 +222,7 @@ frames = latents_to_frames(autoencoder, x)
 from matplotlib.pyplot import imshow
 
 x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t1=4)
-imshow(x[4])
+imshow(x[3])
 
 
 # %%

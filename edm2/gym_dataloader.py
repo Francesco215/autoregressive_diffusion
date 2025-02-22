@@ -10,20 +10,20 @@ import gymnasium as gym
 class GymDataGenerator(IterableDataset):
     def __init__(self, state_size=6, environment_name="CartPole-v1", training_examples=10_000):
         self.state_size = state_size
-
-        self.env = gym.make(environment_name,render_mode="rgb_array")
-
+        self.environment_name = environment_name
         self.evolution_time = 10
+        self.terminate_size = 50
         self.training_examples = training_examples
 
     @torch.no_grad()
     def __iter__(self):
+        env = gym.make(self.environment_name,render_mode="rgb_array")
         terminated = True
         n_data_yielded = 0
 
         while n_data_yielded < self.training_examples:
             if terminated:
-                observation, _ = self.env.reset()
+                env.reset()
                 terminated = False
                 reward = 0
                 action = 0
@@ -31,32 +31,25 @@ class GymDataGenerator(IterableDataset):
                 action_history = []
                 step_count = -self.evolution_time
             else:
-                action = self.env.action_space.sample()  # Random action
-                _ , reward, terminated, _, _ = self.env.step(action)
+                action = env.action_space.sample()  # Random action
+                _ , reward, terminated, _, _ = env.step(action)
             
-            # action_history.append(action)
-            # action_history = action_history[-self.state_size:]
-
             if step_count >= 0: # This if can be removed, but having it avoids rendering useless frames
-                frame = self.env.render()
+                frame = env.render()
                 frame = resize_image(frame)
-                # frame_image = Image.fromarray(frame)
                 frame_history.append(torch.tensor(frame))
-                frame_history = frame_history[-self.state_size:]
-
                 action_history.append(action)
-                action_history = action_history[-self.state_size:]
             
             if step_count > 0 and step_count%self.state_size==0:  # Skip the first step as we don't have a previous state
-                assert len(frame_history)>=self.state_size
                 frames = torch.stack(frame_history[-self.state_size:])
-
                 actions = torch.tensor(action_history[-self.state_size:])
-                # if step_count%self.evolution_time==self.evolution_time-1:
 
                 yield frames, actions, torch.tensor(reward).clone()
                 n_data_yielded += 1
-                frame_history = []
+                frame_history, action_history = [], []
+            
+            if step_count > self.terminate_size:
+                terminated = True
                 
             step_count += 1
 
@@ -76,7 +69,8 @@ def gym_collate_function(batch):
     padded_actions = torch.stack(action_histories)
     return padded_frames, padded_actions, torch.Tensor(rewards)
 
-    
+std_latent = 0.439
+mean_latent = torch.load("mean_LunarLander-v3_latent.pt")
 @torch.no_grad()
 def frames_to_latents(autoencoder, frames)->Tensor:
     """
@@ -99,6 +93,7 @@ def frames_to_latents(autoencoder, frames)->Tensor:
 
     # Apply scaling factor
     latents = latents * autoencoder.config.scaling_factor
+    latents = (latents - mean_latent)/std_latent
 
     latents = einops.rearrange(latents, '(b t) c h w -> b t c h w', b=batch_size)
     return latents
@@ -120,6 +115,7 @@ def latents_to_frames(autoencoder,latents):
     batch_size = latents.shape[0]
     latents = einops.rearrange(latents, 'b t c h w -> (b t) c h w')
     # Apply inverse scaling factor
+    latents = (latents * std_latent) + mean_latent
     latents = latents / autoencoder.config.scaling_factor
 
     #split the conversion to not overload the GPU RAM
