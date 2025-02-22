@@ -119,7 +119,7 @@ def latents_to_frames(autoencoder,latents):
     latents = latents / autoencoder.config.scaling_factor
 
     #split the conversion to not overload the GPU RAM
-    split_size = 64
+    split_size = 16
     for i in range (0, latents.shape[0], split_size):
         l = autoencoder.decode(latents[i:i+split_size]).sample
         if i == 0:
