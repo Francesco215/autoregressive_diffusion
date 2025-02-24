@@ -1,4 +1,7 @@
 # Next-Gen Frame Diffusion: Autoregressive and Sample-Efficient
+> [!WARNING]
+> This repository is still in development. For now there are no instructions on how to run the code because it is subject to change
+
 This repository shows an universal and novel way of training diffusion models for video generation and world-modelling-- It generalizes and improves upon all of the previously known methods of video diffusion models and diffusion-based world-modelling
 
 - Each frame is generated sequencially and can attent to all of its context frames (just like LLMs generate tokens)
@@ -6,17 +9,16 @@ This repository shows an universal and novel way of training diffusion models fo
 - Each frame is generated via a reverse-diffusion process. (just like diffusion for image generation)
 - The architecture is a generalization of what can be found on the paper ["Analyzing and Improving the Training Dynamics of Diffusion Models"](https://arxiv.org/abs/2312.02696)
 
-> [!WARNING]
-> This repository is still in development. For now there are no instructions on how to run the code because it is subject to change
 
 ## Early Results
+> [!IMPORTANT]
+> Working on training it on Counter-Strike. Stay tuned, for now here are the results with the lunar lander
+
 This are the results of a ~1 hour training run with a Nvidia RTX 4090. The model was trained on the Lunar-Lander gymnasium environment. 
 <p align="center">
     <img src="readme_images/output.png" width="40%">
 </p>
 
-> [!IMPORTANT]
-> Working on training it on Counter-Strike. Stay tuned
 
 ## Comparison with other types of models
 To this day 3 main techniques have been used to generate a sequence of frames (image taken from [the DIAMOND paper](https://arxiv.org/pdf/2405.12399))
@@ -31,7 +33,7 @@ All of them have deal-breaking problems:
 3. *__The Cross-attention architecture__* is the one that makes most sense. However, it's extremely inefficient during training because cost per sample increases (super-)linearly with the number of context frames. 
 
 ### This model has ALL OF THE STRENGHTS and NONE OF THE WEAKNESSNES of all of the above.
-1. It is sample-efficient like diffusion video generation. __On top of that__ it can generate videos of any length and can be used for world-modelling.
+1. It is sample-efficient like diffusion video generation. __On top of that__ it can generate videos of any length and can be used for world-modelling. (In the future this model can be expanded to be able to generate multiple frames at the same time)
 
 2. It implicitly employs frame-stacking because it uses 3D convolutional layers-- They can be thought as stacking frames channel-wise and then doing 2D convolutions. __On top of that__ it doesn't suffer from amnesia because it can attend all of the previous frames with the attention mechanism.
 
@@ -42,7 +44,7 @@ All of them have deal-breaking problems:
 > [!WARNING]
 > The information provided below is just a brief overview of what's going on under the hood.
 
-## Inference
+# Inference
 
 <!-- One way to train a Diffusion model is to learn to predict the score function
 
@@ -66,8 +68,16 @@ $$s(x_i,\sigma,x_{i-1},\dots,x_0)=-\nabla_{x_i} \log p(x_i,\sigma|x_{i-1},\dots,
 
 Where $x_{i-1},\dots,x_0$ are the noise-free context frames, $x_i$ is the noisy (to be denoised) frame, and $\sigma$ is the noise level
 
->During inference the model caches only the relevant activations. The effective time complexity to generate a frame is very weakly dependent from the number of context frames ~O(1). This is because the convolutions overshadow the quadratic contribuition of the attention mechanism.
-## Training
+### Video Attention Module (Inference)
+During inference the attention module implements causal attention masking in a manner similar to how it's done in autoregressive language modelling
+<p align="center">
+    <img src="readme_images/inference_mask.png" width="49%">
+</p>
+The only difference is that the mask is block-sparse
+
+>During inference the model uses KV-caching to make it fast.
+
+# Training
 Here is how you make the training in a way that is sample-efficient.
 
 Let $(x_1,\dots,x_n)$ be a sequence of frames from the training set.
@@ -87,7 +97,7 @@ In this model there are two modules that can transfer information between frames
 
 Here is how you make sure that each one of them is really efficient and preserves causality. 
 
-### Video Attention module
+### Video Attention Module (Training)
 Here is an illustrative image that shows how the information moves
 
 <p align="center">
@@ -101,12 +111,10 @@ This can be archieved by doing block-sparse masking using [FlexAttention](https:
     <img src="readme_images/masking.png" width="49%">
 </p>
 
-During inference the model uses KV-caching to make it faster. Since most of the computation is in the convolutional and feed-forward layers with KV-caching the model doesn't recompute the activations of the context frames leading to a substantial reduction in inference cost.
-
-### 3D Causal Convolution
+### 3D Causal Convolution (Training)
 Wierdly enough, the convolution layer is the hardest to explain because it relies on a couple of tricks to make sure that the code runs as fast and efficiently as possible during training.
 
-I'll write later how it works exactly. For now you can read the code
+I'll write later how it works exactly. [For now you can read the code](edm2/conv.py)
 
 During inference the model caches only the activations inside of convolutional filter. This leads to yet another big improvement in speed making the per-frame inference computation ~O(1).
 
