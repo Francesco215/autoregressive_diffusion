@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-from diffusers import AutoencoderKL
+from diffusers import AutoencoderKL, AutoencoderKLCogVideoX, AutoencoderKLMochi
 
 
 from edm2.gym_dataloader import GymDataGenerator, gym_collate_function, frames_to_latents
@@ -23,7 +23,10 @@ if __name__=="__main__":
     original_env = "LunarLander-v3"
     model_id="stabilityai/stable-diffusion-2-1"
 
-    autoencoder = AutoencoderKL.from_pretrained(model_id, subfolder="vae").to(device).eval().requires_grad_(False)
+    # autoencoder = AutoencoderKL.from_pretrained(model_id, subfolder="vae").to(device).eval().requires_grad_(False)
+
+    # autoencoder = AutoencoderKLCogVideoX.from_pretrained("THUDM/CogVideoX-2b", subfolder="vae", torch_dtype=torch.float32).to("cuda")
+    autoencoder = AutoencoderKLMochi.from_pretrained("genmo/mochi-1-preview", subfolder="vae", torch_dtype=torch.float32).to("cuda")
     latent_channels = autoencoder.config.latent_channels
 
     unet = UNet(img_resolution=32, # Match your latent resolution
@@ -40,10 +43,10 @@ if __name__=="__main__":
     micro_batch_size = 2
     batch_size = 4
     accumulation_steps = batch_size//micro_batch_size
-    state_size = 64 
+    state_size = 48 
     total_number_of_steps = 40_000
     training_steps = total_number_of_steps * batch_size
-    dataset = GymDataGenerator(state_size, original_env, training_steps)
+    dataset = GymDataGenerator(state_size, original_env, training_steps, autoencoder_time_compression = 6)
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=16)
 
     unet_params = sum(p.numel() for p in unet.parameters())
