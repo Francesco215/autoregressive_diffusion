@@ -40,10 +40,10 @@ if __name__=="__main__":
                 attn_resolutions=[8,4]
                 )
 
-    micro_batch_size = 2
+    micro_batch_size = 1
     batch_size = 4
     accumulation_steps = batch_size//micro_batch_size
-    state_size = 48 
+    state_size = 96 
     total_number_of_steps = 40_000
     training_steps = total_number_of_steps * batch_size
     dataset = GymDataGenerator(state_size, original_env, training_steps, autoencoder_time_compression = 6)
@@ -107,7 +107,7 @@ if __name__=="__main__":
         # Save model checkpoint (optional)
         if i % 50 * accumulation_steps == 0 and i!=0:
             precond.noise_weight.fit_loss_curve()
-            precond.noise_weight.plot('plot.png')
+            precond.noise_weight.plot('images_training/plot.png')
             n_clips = np.linspace(0, i * micro_batch_size, len(losses))
             plt.plot(n_clips, losses, label='Loss', color='blue', alpha=0.5)
             if len(losses) >= 100:
@@ -119,7 +119,7 @@ if __name__=="__main__":
             plt.ylabel('loss')
             plt.yscale('log')
             plt.title(f'Losses with {unet_params} parameters')
-            plt.savefig('losses.png')
+            plt.savefig('images_training/losses.png')
             plt.show()
             plt.close()
             ulw=True

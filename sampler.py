@@ -16,7 +16,7 @@ from edm2.gym_dataloader import GymDataGenerator, frames_to_latents, gym_collate
 from edm2.phema import PowerFunctionEMA
 
 
-from diffusers import AutoencoderKL
+from diffusers import AutoencoderKL, AutoencoderKLCogVideoX, AutoencoderKLMochi
 
 # import logging
 # torch._logging.set_logs(dynamo=logging.INFO)
@@ -24,21 +24,22 @@ from diffusers import AutoencoderKL
 torch._dynamo.config.recompile_limit = 100
 # Example usage:
 n_clips = 100_000
-micro_batch_size = 8 
-batch_size = 32
+micro_batch_size = 1 
+batch_size = 2
 accumulation_steps = batch_size//micro_batch_size
 total_number_of_batches = n_clips // batch_size
 total_number_of_steps = total_number_of_batches * accumulation_steps
 
 num_workers = 8 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-state_size = 8
+state_size = 48 
 original_env = "LunarLander-v3"
 latent_channels = 0
 
 model_id="stabilityai/stable-diffusion-2-1"
-autoencoder = AutoencoderKL.from_pretrained(model_id, subfolder="vae").to(device).requires_grad_(False)
-dataset = GymDataGenerator(state_size, original_env)
+# autoencoder = AutoencoderKL.from_pretrained(model_id, subfolder="vae").to(device).requires_grad_(False)
+autoencoder = AutoencoderKLMochi.from_pretrained("genmo/mochi-1-preview", subfolder="vae", torch_dtype=torch.float32).to("cuda")
+dataset = GymDataGenerator(state_size, original_env, autoencoder_time_compression = 6)
 dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=gym_collate_function, num_workers=2)
 batch = next(iter(dataloader))
 #%%
@@ -188,7 +189,6 @@ _, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(
     rho = 7,
     guidance = 1,
 )
-
 # Plot results
 import matplotlib.pyplot as plt
 plt.figure(figsize=(10, 6))
@@ -203,7 +203,7 @@ plt.legend()
 plt.show()
 print(mse_steps[-1])
 # %%
-for i in tqdm(range(64-16)):
+for i in tqdm(range(8)):
     x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, gnet=g_net, sigma_max = 80, num_steps=32, rho=7, guidance=1)
     latents = torch.cat((latents,x),dim=1)
 
@@ -217,13 +217,17 @@ from edm2.gym_dataloader import latents_to_frames
 import einops
 
 x = torch.load("x.pt").to(device)
-frames = latents_to_frames(autoencoder, x)
+frames = latents_to_frames(autoencoder, x[:1])
 
 # %%
-from matplotlib.pyplot import imshow
 
+from matplotlib import pyplot as plt
+frames = frames[:,:64]
 x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t1=8)
-imshow(x[3])
+#set high resolution
+plt.imshow(x[0])
+plt.axis('off')
+plt.savefig("lunar_lander.png",bbox_inches='tight',pad_inches=0, dpi=1000)
 
 
 # %%
