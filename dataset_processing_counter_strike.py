@@ -10,13 +10,9 @@ import cv2
 import tarfile
 from streaming import MDSWriter
 from tqdm import tqdm
+import threading
+from huggingface_hub import hf_hub_download, HfApi
 
-from huggingface_hub import hf_hub_download
-
-autoencoder = AutoencoderKLMochi.from_pretrained("genmo/mochi-1-preview", subfolder="vae", torch_dtype=torch.float32).to("cuda").requires_grad_(False)
-
-hf_repo_id="TeaPearce/CounterStrike_Deathmatch"
-hf_filename = "dataset_aim_expert.tar"
 #%%
 # Load with h5py
 def read_frames_and_actions(filename):
@@ -48,28 +44,27 @@ def encode_frames(autoencoder, frames, actions):
 
     frames = einops.rearrange(frames, '(b t) h w c -> b c t h w', b=n_stacks)
     frames = frames / 127.5 - 1  # Normalize from (0,255) to (-1,1)
-    frames = torch.tensor(frames).float().to("cuda")
+    frames = torch.tensor(frames).to(torch.float16).to("cuda")
 
     autoencoder.enable_slicing()
-    # print(frames.shape)
     encoded_frames = autoencoder.encode(frames).latent_dist
     means, logvars = encoded_frames.mean.cpu().numpy(), encoded_frames.logvar.cpu().numpy()
 
     for mean, logvar, action in zip(means, logvars, actions):
         yield {"mean": mean, "logvar": logvar, "action": action}
 
-def compress_huggingface_filename(hf_repo_id, hf_filename):
+
+def download_tar_file(hf_repo_id, hf_filename):
     tar_file_path = hf_hub_download(hf_repo_id, hf_filename, repo_type = "dataset")
 
     # Extract the downloaded .tar file
-    save_folder = f"/tmp/{hf_filename.split('.')[0]}"
     with tarfile.open(tar_file_path, "r") as tar:
         tar.extractall("/tmp/")  
 
     #delete the tar file
     os.remove(tar_file_path)
 
-    # get the path of each file
+def compress_huggingface_filename(save_folder):
     file_list = os.listdir(save_folder)
 
     for file in file_list:
@@ -79,14 +74,45 @@ def compress_huggingface_filename(hf_repo_id, hf_filename):
         yield from encode_frames(autoencoder, frames, actions)
 
 
-def write_mds(hf_repo_id, hf_filename, mds_dirname):
+def write_mds(save_folder, mds_dirname):
     columns = {'mean': 'ndarray', 'logvar': 'ndarray', 'action': 'ndarray'}
-    mds_dirname = mds_dirname+"_"+hf_filename.split('.')[0]
-    # os.makedirs(mds_dirname, exist_ok=True)
+
     with MDSWriter(out=mds_dirname, columns=columns, compression='zstd') as writer:
-        for encoded_frame in tqdm(compress_huggingface_filename(hf_repo_id, hf_filename)):
+        for encoded_frame in tqdm(compress_huggingface_filename(save_folder), total=len(os.listdir(save_folder))):
             writer.write(encoded_frame)
 
 #%%
-write_mds(hf_repo_id, hf_filename, "s3://counter-strike-data/dataset_1/")
-# %%
+# for hf_filename in hf_filenames:
+#     write_mds(hf_repo_id, hf_filename, "s3://counter-strike-data/dataset_1/")
+
+api = HfApi()
+
+hf_repo_id="TeaPearce/CounterStrike_Deathmatch"
+dataset_filenames = api.list_repo_files(repo_id=hf_repo_id, repo_type="dataset")
+hf_filenames = [f for f in dataset_filenames if f.endswith('.tar')]
+print(hf_filenames)
+hf_filenames = ["dataset_aim_expert.tar","dataset_dm_expert_othermaps.tar"]
+
+autoencoder = AutoencoderKLMochi.from_pretrained("genmo/mochi-1-preview", subfolder="vae", torch_dtype=torch.float16).to("cuda").requires_grad_(False)
+
+# Download the first tar file
+download_tar_file(hf_repo_id, hf_filenames[0])
+
+for i in range(len(hf_filenames)):
+    save_folder = f"/tmp/{hf_filenames[i].split('.')[0]}"
+    
+    # Start downloading the next tar file (if there is one)
+    if i < len(hf_filenames) - 1:
+        next_tar_file = hf_filenames[i + 1]
+        download_thread = threading.Thread(
+            target=download_tar_file,
+            args=(hf_repo_id, next_tar_file)
+        )
+        download_thread.start()
+    
+    # Process the current tar file
+    write_mds(save_folder, f"s3://counter-strike-data/dataset_small/{hf_filenames[i].split('.')[0]}")
+    
+    # Wait for the next download to finish (if applicable)
+    if i < len(hf_filenames) - 1:
+        download_thread.join()
