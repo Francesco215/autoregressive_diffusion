@@ -1,10 +1,8 @@
 #%%
 # Import necessary libraries
-from PIL import Image
 import einops
 import numpy as np
 import torch
-from datasets import load_dataset
 from diffusers import AutoencoderKLMochi
 import os
 import h5py
@@ -12,7 +10,6 @@ import cv2
 import tarfile
 from streaming import MDSWriter
 from tqdm import tqdm
-from typing import Tuple
 
 from huggingface_hub import hf_hub_download
 
@@ -84,11 +81,12 @@ def compress_huggingface_filename(hf_repo_id, hf_filename):
 
 def write_mds(hf_repo_id, hf_filename, mds_dirname):
     columns = {'mean': 'ndarray', 'logvar': 'ndarray', 'action': 'ndarray'}
-    os.makedirs(mds_dirname, exist_ok=True)
+    mds_dirname = mds_dirname+"_"+hf_filename.split('.')[0]
+    # os.makedirs(mds_dirname, exist_ok=True)
     with MDSWriter(out=mds_dirname, columns=columns, compression='zstd') as writer:
         for encoded_frame in tqdm(compress_huggingface_filename(hf_repo_id, hf_filename)):
             writer.write(encoded_frame)
 
 #%%
-write_mds(hf_repo_id, hf_filename, "counter_strike")
+write_mds(hf_repo_id, hf_filename, "s3://counter-strike-data/dataset_1/")
 # %%
