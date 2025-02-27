@@ -71,7 +71,7 @@ def gym_collate_function(batch):
     padded_actions = torch.stack(action_histories)
     return padded_frames, padded_actions, torch.Tensor(rewards)
 
-saved_mean = torch.load('mean_LunarLander-v3_latent.pt').mean(dim=(1,2))
+# saved_mean = torch.load('mean_LunarLander-v3_latent.pt').mean(dim=(1,2))
 # std_latent = 12446.0
 @torch.no_grad()
 def frames_to_latents(autoencoder, frames)->Tensor:
@@ -96,7 +96,7 @@ def frames_to_latents(autoencoder, frames)->Tensor:
     # Apply scaling factor
     # latents = latents * autoencoder.config.scaling_factor
     mean,std = torch.tensor(autoencoder.config.latents_mean)[:,None, None, None].to(latents), torch.tensor(autoencoder.config.latents_std)[:, None, None, None].to(latents)
-    mean = mean + saved_mean.view(mean.shape).to(latents) 
+    # mean = mean + saved_mean.view(mean.shape).to(latents) 
     latents = (latents - mean)/std
 
     latents = einops.rearrange(latents, 'b c t h w -> b t c h w', b=batch_size)
@@ -121,7 +121,7 @@ def latents_to_frames(autoencoder,latents):
 
     # Apply inverse scaling factor
     mean,std = torch.tensor(autoencoder.latents_mean).to(latents)[:,None, None, None], torch.tensor(autoencoder.latents_std).to(latents)[:, None, None, None]
-    mean = mean + saved_mean.view(mean.shape).to(latents) 
+    # mean = mean + saved_mean.view(mean.shape).to(latents) 
     latents = (latents * std) + mean
     # latents = latents / autoencoder.config.scaling_factor
 
