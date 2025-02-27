@@ -77,14 +77,14 @@ def compress_huggingface_filename(save_folder):
 def write_mds(save_folder, mds_dirname):
     columns = {'mean': 'ndarray', 'logvar': 'ndarray', 'action': 'ndarray'}
 
+    # the mdswriter uploads the data to the s3 bucket and deletes the local files
     with MDSWriter(out=mds_dirname, columns=columns, compression='zstd') as writer:
         for encoded_frame in tqdm(compress_huggingface_filename(save_folder), total=len(os.listdir(save_folder))):
             writer.write(encoded_frame)
+    
+    os.rmdir(save_folder)
 
 #%%
-# for hf_filename in hf_filenames:
-#     write_mds(hf_repo_id, hf_filename, "s3://counter-strike-data/dataset_1/")
-
 api = HfApi()
 
 hf_repo_id="TeaPearce/CounterStrike_Deathmatch"
