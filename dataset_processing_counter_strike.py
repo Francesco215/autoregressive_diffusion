@@ -13,6 +13,7 @@ from tqdm import tqdm
 import threading
 from huggingface_hub import hf_hub_download, HfApi
 import re
+import tempfile
 
 #%%
 # Load with h5py
@@ -55,14 +56,18 @@ def encode_frames(autoencoder, frames, actions, stack_size):
 
 
 def download_tar_file(hf_repo_id, hf_filename):
-    tar_file_path = hf_hub_download(hf_repo_id, hf_filename, repo_type = "dataset")
+    with tempfile.TemporaryDirectory() as temp_cache_dir:
+        # Download the tar file to the temporary cache directory
+        tar_file_path = hf_hub_download(
+            repo_id=hf_repo_id,
+            filename=hf_filename,
+            repo_type="dataset",
+            cache_dir=temp_cache_dir
+        )
+        # Extract the tar file to /tmp/{filename}
+        with tarfile.open(tar_file_path, "r") as tar:
+            tar.extractall(f"/tmp/{hf_filename.split('.')[0]}")
 
-    # Extract the downloaded .tar file
-    with tarfile.open(tar_file_path, "r") as tar:
-        tar.extractall(f"/tmp/{hf_filename.split('.')[0]}")  
-
-    #delete the tar file
-    os.remove(tar_file_path)
 
 def compress_huggingface_filename(save_folder, stack_size):
     file_list = os.listdir(save_folder)
