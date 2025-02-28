@@ -12,6 +12,7 @@ from streaming import MDSWriter
 from tqdm import tqdm
 import threading
 from huggingface_hub import hf_hub_download, HfApi
+import re
 
 #%%
 # Load with h5py
@@ -58,7 +59,7 @@ def download_tar_file(hf_repo_id, hf_filename):
 
     # Extract the downloaded .tar file
     with tarfile.open(tar_file_path, "r") as tar:
-        tar.extractall("/tmp/")  
+        tar.extractall(f"/tmp/{hf_filename.split('.')[0]}")  
 
     #delete the tar file
     os.remove(tar_file_path)
@@ -91,11 +92,14 @@ api = HfApi()
 
 hf_repo_id="TeaPearce/CounterStrike_Deathmatch"
 dataset_filenames = api.list_repo_files(repo_id=hf_repo_id, repo_type="dataset")
-hf_filenames = [f for f in dataset_filenames if f.endswith('.tar')]
+
+#have to filter out some of the data because its's saved slightly differently...
+hf_filenames = [f for f in dataset_filenames if re.match(r"^hdf5_dm_july2021_.*_to_.*\.tar$", f)]
 stack_size = 64*6
 
 autoencoder = AutoencoderKLMochi.from_pretrained("genmo/mochi-1-preview", subfolder="vae", torch_dtype=torch.float16).to("cuda").requires_grad_(False)
 
+#%%
 # Download the first tar file
 download_tar_file(hf_repo_id, hf_filenames[0])
 
@@ -104,7 +108,7 @@ for i in range(len(hf_filenames)):
     
     # Start downloading the next tar file (if there is one)
     if i < len(hf_filenames) - 1:
-        next_tar_file = hf_filenames[i + 1]
+        next_tar_file = hf_filenames[i+1]
         download_thread = threading.Thread(
             target=download_tar_file,
             args=(hf_repo_id, next_tar_file)
