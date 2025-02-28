@@ -32,9 +32,8 @@ def read_frames_and_actions(filename):
     return frames, actions
 
 @torch.no_grad()
-def encode_frames(autoencoder, frames, actions):
+def encode_frames(autoencoder, frames, actions, stack_size):
     # TODO: add caching to the autoencoder source code to make sure it can work with long sequences
-    stack_size = 32*6
     n_stacks = len(frames) // stack_size
     frames = frames[:n_stacks * stack_size] # for simplicity we are going to ignore the last set of frames
     actions = actions[:n_stacks * stack_size]
@@ -64,22 +63,25 @@ def download_tar_file(hf_repo_id, hf_filename):
     #delete the tar file
     os.remove(tar_file_path)
 
-def compress_huggingface_filename(save_folder):
+def compress_huggingface_filename(save_folder, stack_size):
     file_list = os.listdir(save_folder)
 
     for file in file_list:
         frames, actions = read_frames_and_actions(f"{save_folder}/{file}")
         os.remove(f"{save_folder}/{file}")
 
-        yield from encode_frames(autoencoder, frames, actions)
+        yield from encode_frames(autoencoder, frames, actions, stack_size)
 
 
-def write_mds(save_folder, mds_dirname):
+def write_mds(save_folder, mds_dirname, stack_size):
     columns = {'mean': 'ndarray', 'logvar': 'ndarray', 'action': 'ndarray'}
+
+    n_clips, n_frames = len(os.listdir(save_folder)), 1000
+    total = (n_clips * n_frames) // stack_size
 
     # the mdswriter uploads the data to the s3 bucket and deletes the local files
     with MDSWriter(out=mds_dirname, columns=columns, compression='zstd') as writer:
-        for encoded_frame in tqdm(compress_huggingface_filename(save_folder), total=len(os.listdir(save_folder))):
+        for encoded_frame in tqdm(compress_huggingface_filename(save_folder, stack_size), total=total):
             writer.write(encoded_frame)
     
     os.rmdir(save_folder)
@@ -90,8 +92,7 @@ api = HfApi()
 hf_repo_id="TeaPearce/CounterStrike_Deathmatch"
 dataset_filenames = api.list_repo_files(repo_id=hf_repo_id, repo_type="dataset")
 hf_filenames = [f for f in dataset_filenames if f.endswith('.tar')]
-print(hf_filenames)
-hf_filenames = ["dataset_aim_expert.tar","dataset_dm_expert_othermaps.tar"]
+stack_size = 64*6
 
 autoencoder = AutoencoderKLMochi.from_pretrained("genmo/mochi-1-preview", subfolder="vae", torch_dtype=torch.float16).to("cuda").requires_grad_(False)
 
@@ -111,7 +112,7 @@ for i in range(len(hf_filenames)):
         download_thread.start()
     
     # Process the current tar file
-    write_mds(save_folder, f"s3://counter-strike-data/dataset_small/{hf_filenames[i].split('.')[0]}")
+    write_mds(save_folder, f"s3://counter-strike-data/dataset_small/{hf_filenames[i].split('.')[0]}", stack_size)
     
     # Wait for the next download to finish (if applicable)
     if i < len(hf_filenames) - 1:
