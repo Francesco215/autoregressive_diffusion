@@ -1,8 +1,10 @@
 #%%
 import copy
+from streaming import StreamingDataset
 from tqdm import tqdm
 import numpy as np
 from matplotlib import pyplot as plt
+import einops
 
 import torch
 from torch.utils.data import DataLoader
@@ -20,6 +22,21 @@ from diffusers import AutoencoderKL, AutoencoderKLCogVideoX, AutoencoderKLMochi
 
 # import logging
 # torch._logging.set_logs(dynamo=logging.INFO)
+autoencoder = AutoencoderKLMochi.from_pretrained("genmo/mochi-1-preview", subfolder="vae", torch_dtype=torch.float32).to("cuda").requires_grad_(False)
+vae_mean, vae_std = torch.tensor(autoencoder.config.latents_mean)[:, None, None], torch.tensor(autoencoder.config.latents_std)[:, None, None]
+def collate_function(batch):
+    # batch is a list of dicts with keys 'mean', 'logvar', 'actions'
+    # we want to return a tuple of tensors (means, logvars, actions)
+    means = torch.tensor(np.array([b['mean'] for b in batch]))
+    logvars = torch.tensor(np.array([b['logvar'] for b in batch]), dtype = torch.float32)
+    actions = torch.tensor(np.array([b['action'] for b in batch]), dtype = torch.float32)
+
+    # now i sample a frame 
+    frames = means + torch.exp(0.5 * logvars) * torch.randn_like(means)
+    frames = einops.rearrange(frames, 'b c t h w -> b t c h w')
+    frames = (frames - vae_mean)/vae_std
+    # frames = frames[:, :16]
+    return frames*0.7, actions
 
 torch._dynamo.config.recompile_limit = 100
 # Example usage:
@@ -37,10 +54,8 @@ original_env = "LunarLander-v3"
 latent_channels = 0
 
 model_id="stabilityai/stable-diffusion-2-1"
-# autoencoder = AutoencoderKL.from_pretrained(model_id, subfolder="vae").to(device).requires_grad_(False)
-autoencoder = AutoencoderKLMochi.from_pretrained("genmo/mochi-1-preview", subfolder="vae", torch_dtype=torch.float32).to("cuda")
-dataset = GymDataGenerator(state_size, original_env, autoencoder_time_compression = 6)
-dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=gym_collate_function, num_workers=2)
+dataset = StreamingDataset(remote='s3://counter-strike-data/dataset_small/', local='/tmp/c396c3dc407cfbb47ad5233946e3a235/',batch_size=micro_batch_size)
+dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=collate_function, num_workers=16)
 batch = next(iter(dataloader))
 #%%
 
@@ -49,7 +64,7 @@ latent_channels = autoencoder.config.latent_channels
 unet = UNet(img_resolution=32, # Match your latent resolution
             img_channels=latent_channels, # Match your latent channels
             label_dim = 4,
-            model_channels=64,
+            model_channels=128,
             channel_mult=[1,2,2,4],
             channel_mult_noise=None,
             channel_mult_emb=None,
@@ -59,7 +74,7 @@ unet = UNet(img_resolution=32, # Match your latent resolution
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
 sigma_data = 1.
 precond = Precond(unet, use_fp16=True, sigma_data=sigma_data)
-precond_state_dict = torch.load("lunar_lander_68.0M.pt",map_location=device,weights_only=False)['model_state_dict']
+precond_state_dict = torch.load("lunar_lander_273.0M.pt",map_location=device,weights_only=False)['model_state_dict']
 precond.load_state_dict(precond_state_dict, strict=False)
 precond.to(device)
 
@@ -164,17 +179,16 @@ def edm_sampler_with_mse(
 # Prepare data
 start = 0
 num_samples = 4
-frames, action, reward = batch
-action = action.to(device)
-frames = frames.to(device)
-latents = frames_to_latents(autoencoder, frames)
+frames, actions = batch
+latents = frames[:,:8].to(device)
+actions = None #if i%4==0 else actions.to(device)
 # latents = batch["latents"][start:start+num_samples].to(device)
 # text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
-context = latents[:, :-1]  # First frames (context)
-target = latents[:, -1:]    # Last frame (ground truth)
+context = latents[:1, :-1]  # First frames (context)
+target = latents[:1, -1:]    # Last frame (ground truth)
 precond.eval()
 sigma = torch.ones(context.shape[:2], device=device) * 0.05
-x, cache = precond(context, sigma, action[:,:-1])
+x, cache = precond(context, sigma)
 
 #%%
 # Run sampler with sigma_max=0.5 for initial noise level
@@ -184,7 +198,7 @@ _, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(
     target=target,
     sigma_max=3,  # Initial noise level matches our test
     num_steps=32,
-    conditioning=action[:,-1:],
+    conditioning=None,
     # gnet=g_net,
     rho = 7,
     guidance = 1,
@@ -222,8 +236,9 @@ frames = latents_to_frames(autoencoder, x[:1])
 # %%
 
 from matplotlib import pyplot as plt
-frames = frames[:,:64]
-x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t1=8)
+# frames = frames
+f = frames[:,:90]
+x = einops.rearrange(f, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=6)
 #set high resolution
 plt.imshow(x[0])
 plt.axis('off')

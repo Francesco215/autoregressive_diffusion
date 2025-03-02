@@ -32,6 +32,7 @@ def collate_function(batch):
     frames = means + torch.exp(0.5 * logvars) * torch.randn_like(means)
     frames = einops.rearrange(frames, 'b c t h w -> b t c h w')
     frames = (frames - vae_mean)/vae_std
+    # frames = frames[:, :16]
     return frames*0.7, actions
         
 #%%
@@ -51,17 +52,17 @@ if __name__=="__main__":
                 img_channels=latent_channels, # Match your latent channels
                 label_dim = 4,
                 model_channels=128,
-                channel_mult=[1,2,2,4],
+                channel_mult=[1,2,4,4],
                 channel_mult_noise=None,
                 channel_mult_emb=None,
                 num_blocks=3,
                 attn_resolutions=[8,4]
                 )
 
-    micro_batch_size = 2
+    micro_batch_size = 1
     batch_size = 8
     accumulation_steps = batch_size//micro_batch_size
-    # state_size = 64*6 
+    state_size = 64 
     # training_steps = total_number_of_steps * batch_size
     dataset = StreamingDataset(remote='s3://counter-strike-data/dataset_small/',batch_size=micro_batch_size)
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=collate_function, num_workers=16)
