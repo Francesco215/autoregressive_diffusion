@@ -1,21 +1,20 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-import numpy as np
+
 import einops
-from typing import Optional
 
 from ..utils import mp_sum, normalize, mp_silu
 from ..conv import MPConv, NormalizedWeight
 
 
 class MPGroupCausal3DConvVAE(torch.nn.Module):
-    def __init__(self, in_channels, out_channels, group_size, kernel, dilation = (1,1,1)):
+    def __init__(self, in_channels, out_channels, kernel, group_size, dilation = (1,1,1)):
         super().__init__()
         self.out_channels = out_channels
         self.group_size = group_size
         self.dilation = dilation
-        self.weight = NormalizedWeight(out_channels*group_size, in_channels, kernel)
+        self.weight = NormalizedWeight(in_channels, out_channels*group_size, kernel)
 
         kt, kw, kh = kernel
         dt, dw, dh = dilation
@@ -23,35 +22,41 @@ class MPGroupCausal3DConvVAE(torch.nn.Module):
         self.time_padding_size = kt*dt-self.group_size
 
     def forward(self, x, gain=1, cache=None):
-        batch_size, channels, time, height, width = x.shape
-
-        w = self.weight(gain).to(x.dtype)
 
         if cache is None:
-            cache = torch.ones(batch_size, channels, self.time_padding_size, height, width, device=x.device, dtype=x.dtype)
+            cache = torch.ones(x.shape[:2], self.time_padding_size, x.shape[3:], device=x.device, dtype=x.dtype)
 
         x = torch.cat((cache, x), dim=-3)
         cache = x[:,:,-self.time_padding_size:].clone().detach()
 
+        w = self.weight(gain).to(x.dtype)
         x = F.conv3d(x, w, padding=self.image_padding, stride = (self.group_size, 1, 1), dilation=self.dilation)
 
         x = einops.rearrange(x, 'b (c g) t h w -> b c (t g) h w', g=self.group_size)
 
         return x, cache
 
-def downsample(x):
-    return einops.rearrange(x, 'b c (t ts) (h hs) (w ws) -> b (c ts hs ws) t h w', ts=4, hs=2, ws=2)
+def downsample(x, time_compression, spatial_compression):
+    return einops.rearrange(x, 'b c (t ts) (h hs) (w ws) -> b (c ts hs ws) t h w', ts=time_compression, hs=spatial_compression, ws=spatial_compression)
 
-def upsample(x):
-    return einops.rearrange(x, 'b (c ts hs ws) t h w -> b c (t ts) (h hs) (w ws)', ts=4, hs=2, ws=2)
+def upsample(x, time_compression, spatial_compression):
+    return einops.rearrange(x, 'b (c ts hs ws) t h w -> b c (t ts) (h hs) (w ws)', ts=time_compression, hs=spatial_compression, ws=spatial_compression)
+
+
+
+
+
+
+
+
 
 class ResBlock(nn.Module):
-    def __init__(self, channels: int, group_size:int, kernel_size=(8,3,3)):
+    def __init__(self, channels: int, kernel_size=(8,3,3), group_size=1):
         super().__init__()
         self.channels = channels
 
-        self.conv_res0 = MPGroupCausal3DConvVAE(channels, channels, group_size, kernel_size, dilation = (1,1,1))
-        self.conv_res1 = MPGroupCausal3DConvVAE(channels, channels, group_size, kernel_size, dilation = (3,3,3))
+        self.conv_res0 = MPGroupCausal3DConvVAE(channels, channels, kernel_size, group_size, dilation = (1,1,1))
+        self.conv_res1 = MPGroupCausal3DConvVAE(channels, channels, kernel_size, group_size, dilation = (3,3,3))
                                                                    
         # self.attn_block = VAEAttention(channels, num_heads=4)
     

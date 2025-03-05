@@ -24,17 +24,20 @@ class NormalizedWeight(torch.nn.Module):
 # with force weight normalization (Equation 66).
 
 class MPConv(torch.nn.Module):
-    def __init__(self, in_channels, out_channels, kernel):
+    def __init__(self, in_channels, out_channels, kernel, dilation=1):
         super().__init__()
         self.out_channels = out_channels
         self.weight = NormalizedWeight(in_channels, out_channels, kernel)
+
+        self.dilation = dilation
+        self.padding = dilation*(kernel[-1]-1)//2
 
     def forward(self, x, gain=1, batch_size=None):
         w = self.weight(gain).to(x.dtype)
         if w.ndim == 2:
             return x @ w.t()
         assert w.ndim == 4
-        return F.conv2d(x, w, padding=(w.shape[-1]//2,))
+        return F.conv2d(x, w, padding=(self.padding,), dilation=self.dilation)
 
 
 
