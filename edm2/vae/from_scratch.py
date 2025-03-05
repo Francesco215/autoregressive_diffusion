@@ -9,13 +9,16 @@ from ..utils import mp_sum, normalize, mp_silu
 from ..conv import MPConv
 
 
-class MPCausal3DConvVAE(torch.nn.Module):
-    def __init__(self, in_channels, out_channels, kernel):
+class MPGroupCausal3DConvVAE(torch.nn.Module):
+    def __init__(self, in_channels, out_channels, kernel, group_size=1, dilation = (1,1,1)):
         super().__init__()
         # TODO: make sure that the window of interaction is quite big
         self.out_channels = out_channels
-        assert len(kernel)==3
-        self.weight = torch.nn.Parameter(torch.randn(out_channels, in_channels, *kernel))
+        self.kernel = kernel
+        self.group_size = group_size
+        self.dilation = dilation
+        assert len(dilation)==len(kernel)
+        self.weight = torch.nn.Parameter(torch.randn(out_channels*group_size, in_channels, *kernel))
 
     def forward(self, x, gain=1, cache=None):
         batch_size, channels, time, height, width = x.shape
@@ -28,20 +31,23 @@ class MPCausal3DConvVAE(torch.nn.Module):
         w = w * (gain / np.sqrt(w[0].numel())) # magnitude-preserving scaling
         w = w.to(x.dtype)
 
-        image_padding = (0, w.shape[-2]//2, w.shape[-1]//2)
-        causal_pad = torch.ones(batch_size, channels, w.shape[2]-1, height, width, device=x.device, dtype=x.dtype)
+        kt, kw, kh = self.kernel
+        dt, dw, dh = self.dilation
+        image_padding = (0, dh * (kh-1)//2, dw * (kw-1)//2)
+        time_padding_size = kt*dt-self.group_size
 
         if cache is None:
-            cache = causal_pad
+            cache = torch.ones(batch_size, channels, time_padding_size, height, width, device=x.device, dtype=x.dtype)
 
         # during inference is much simpler
         x = torch.cat((cache, x), dim=-3)
-        cache = x[:,:,-(w.shape[2]-1):].clone()
+        cache = x[:,:,-time_padding_size:].clone()
 
-        x = F.conv3d(x, w, padding=image_padding)
+        x = F.conv3d(x, w, padding=image_padding, stride = (self.group_size, 1, 1), dilation=self.dilation)
+
+        x = einops.rearrange(x, 'b (c g) t h w -> b c (t g) h w', g=self.group_size)
 
         return x, cache.detach()
-
 
 def downsample(x):
     return einops.rearrange(x, 'b c (t ts) (h hs) (w ws) -> b (c ts hs ws) t h w', ts=4, hs=2, ws=2)
@@ -85,8 +91,8 @@ class ResBlock(nn.Module):
         super().__init__()
         self.channels = channels
 
-        self.conv_res0 = MPCausal3DConvVAE(channels, channels, kernel_size=(3, 3, 3))
-        self.conv_res1 = MPCausal3DConvVAE(channels, channels, kernel_size=(3, 3, 3))
+        self.conv_res0 = MPGroupCausal3DConvVAE(channels, channels, kernel_size=(3, 3, 3))
+        self.conv_res1 = MPGroupCausal3DConvVAE(channels, channels, kernel_size=(3, 3, 3))
 
         self.attn_block = VAEAttention(channels, num_heads=4)
     
