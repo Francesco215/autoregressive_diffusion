@@ -4,6 +4,20 @@ from torch.nn import functional as F
 import numpy as np
 from .utils import normalize, mp_cat
 
+class NormalizedWeight(torch.nn.Module):
+    
+    def __init__(self, in_channels, out_channels, kernel):
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.randn(out_channels, in_channels, *kernel))
+
+    def forward(self, gain=1):
+        w = self.weight.to(torch.float32)
+        if self.training:
+            with torch.no_grad():
+                self.weight.copy_(normalize(w)) # forced weight normalization
+        w = normalize(w) # traditional weight normalization. for the gradients 
+        w = w * (gain / np.sqrt(w[0].numel())) # magnitude-preserving scaling
+        return w
 
 #----------------------------------------------------------------------------
 # Magnitude-preserving convolution or fully-connected layer (Equation 47)
@@ -13,16 +27,10 @@ class MPConv(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel):
         super().__init__()
         self.out_channels = out_channels
-        self.weight = torch.nn.Parameter(torch.randn(out_channels, in_channels, *kernel))
+        self.weight = NormalizedWeight(in_channels, out_channels, kernel)
 
     def forward(self, x, gain=1, batch_size=None):
-        w = self.weight.to(torch.float32)
-        if self.training:
-            with torch.no_grad():
-                self.weight.copy_(normalize(w)) # forced weight normalization
-        w = normalize(w) # traditional weight normalization. for the gradients 
-        w = w * (gain / np.sqrt(w[0].numel())) # magnitude-preserving scaling
-        w = w.to(x.dtype)
+        w = self.weight(gain).to(x.dtype)
         if w.ndim == 2:
             return x @ w.t()
         assert w.ndim == 4
@@ -38,16 +46,10 @@ class MPCausal3DConv(torch.nn.Module):
         super().__init__()
         self.out_channels = out_channels
         assert len(kernel)==3
-        self.weight = torch.nn.Parameter(torch.randn(out_channels, in_channels, *kernel))
+        self.weight = NormalizedWeight(in_channels, out_channels, kernel)
 
     def forward(self, x, emb, batch_size, gain=1, cache=None):
-        w = self.weight.to(torch.float32)
-        if self.training:
-            with torch.no_grad():
-                self.weight.copy_(normalize(w)) # forced weight normalization
-        w = normalize(w) # traditional weight normalization. for the gradients 
-        w = w * (gain / np.sqrt(w[0].numel())) # magnitude-preserving scaling
-        w = w.to(x.dtype)
+        w = self.weight(gain).to(x.dtype)
 
         image_padding = (0, w.shape[-2]//2, w.shape[-1]//2)
 

@@ -6,7 +6,7 @@ import einops
 from typing import Optional
 
 from ..utils import mp_sum, normalize, mp_silu
-from ..conv import MPConv
+from ..conv import MPConv, NormalizedWeight
 
 
 class MPGroupCausal3DConvVAE(torch.nn.Module):
@@ -15,7 +15,7 @@ class MPGroupCausal3DConvVAE(torch.nn.Module):
         self.out_channels = out_channels
         self.group_size = group_size
         self.dilation = dilation
-        self.weight = torch.nn.Parameter(torch.randn(out_channels*group_size, in_channels, *kernel))
+        self.weight = NormalizedWeight(out_channels*group_size, in_channels, kernel)
 
         kt, kw, kh = kernel
         dt, dw, dh = dilation
@@ -25,14 +25,7 @@ class MPGroupCausal3DConvVAE(torch.nn.Module):
     def forward(self, x, gain=1, cache=None):
         batch_size, channels, time, height, width = x.shape
 
-        w = self.weight.to(torch.float32)
-        if self.training:
-            with torch.no_grad():
-                self.weight.copy_(normalize(w)) # forced weight normalization
-        w = normalize(w) # traditional weight normalization. for the gradients 
-        w = w * (gain / np.sqrt(w[0].numel())) # magnitude-preserving scaling
-        w = w.to(x.dtype)
-
+        w = self.weight(gain).to(x.dtype)
 
         if cache is None:
             cache = torch.ones(batch_size, channels, self.time_padding_size, height, width, device=x.device, dtype=x.dtype)
