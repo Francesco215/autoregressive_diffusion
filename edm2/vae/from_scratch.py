@@ -61,6 +61,7 @@ class ResBlock(nn.Module):
         self.weight_sum0 = nn.Parameter(torch.tensor(0.))
         self.weight_sum1 = nn.Parameter(torch.tensor(0.))
 
+        # TODO: maybe add attention later
         # self.attn_block = VAEAttention(channels, num_heads=4)
     
     def forward(self, x, cache = None):
@@ -87,7 +88,7 @@ class EncoderDecoderBlock(nn.Module):
         total_compression = self.downsample_block.total_compression
 
         self.decompression_block = GroupCausal3DConvVAE(in_channels, out_channels*total_compression, kernel, group_size//time_compression) if type=='decoder' else None
-        self.compression_block  =   GroupCausal3DConvVAE(in_channels*total_compression, out_channels, kernel, group_size) if type=='encoder' else None
+        self.compression_block  =  GroupCausal3DConvVAE(in_channels*total_compression, out_channels, kernel, group_size) if type=='encoder' else None
 
         self.res_blocks = nn.ModuleList([ResBlock(out_channels, kernel, group_size) for _ in range(n_res_blocks)])
 
@@ -125,86 +126,39 @@ class UpDownBlock:
 
 
 
-class Encoder(nn.Module):
+class EncoderDecoder(nn.Module):
     def __init__(self, latent_channels, n_res_blocks, time_compressions = [1,2,2], spatial_compressions = [1,2,2], type='encoder'):
         super().__init__()
         self.time_compressions = time_compressions
         self.spatial_compressions = spatial_compressions
+        self.encoding_type = type
 
-        group_sizes = np.cumprod(time_compressions)[::-1]
-        channels = (3, 4, 4, 2*latent_channels)
-        in_channels, out_channels = channels[:-1], channels[1:]
+        group_sizes = np.cumprod(time_compressions)
+        channels = [3, 4, 4, latent_channels] #assuming the input is always rgb
         kernel = (8,3,3)
-        n_blocks = len(time_compressions)
+        
+        if type=='encoder':
+            group_sizes = group_sizes[::-1]
+            channels[-1]=channels[-1]*2
+        else:
+            channels = channels[::-1]
 
-        #assuming the input is always rgb
-        self.encoder_blocks = nn.ModuleList([EncoderDecoderBlock(in_channels[i], out_channels[i], time_compressions[i], spatial_compressions[i], kernel, group_sizes[i], n_res_blocks, type) for i in range(n_blocks)])
+        in_channels, out_channels = channels[:-1], channels[1:]
+        
+        self.encoder_blocks = nn.ModuleList([EncoderDecoderBlock(in_channels[i], out_channels[i], time_compressions[i], spatial_compressions[i], kernel, group_sizes[i], n_res_blocks, type) for i in range(len(group_sizes))])
 
     def forward(self, x:Tensor, cache = None):
         if cache is None: cache = {}
 
         for i, block in enumerate(self.encoder_blocks):
             x, cache[f'encoder_block_{i}'] = block(x, cache.get(f'encoder_block_{i}', None))
+
+        if self.encoding_type == 'decoder':
+            return x
 
         mean, logvar = x.split(split_size=x.shape[1]//2, dim = 1)
 
         return mean, logvar
 
 
-class Decoder(nn.Module):
-    def __init__(self, latent_channels, n_res_blocks, time_compressions = [1,2,2], spatial_compressions = [1,2,2], type='decoder'):
-        super().__init__()
-        self.time_compressions = time_compressions
-        self.spatial_compressions = spatial_compressions
-
-        group_sizes = np.cumprod(time_compressions)
-        channels = (3, 4, 4, latent_channels)[::-1]
-        in_channels, out_channels = channels[:-1], channels[1:]
-        kernel = (8,3,3)
-        n_blocks = len(time_compressions)
-
-        #assuming the input is always rgb
-        self.encoder_blocks = nn.ModuleList([EncoderDecoderBlock(in_channels[i], out_channels[i], time_compressions[i], spatial_compressions[i], kernel, group_sizes[i], n_res_blocks, type) for i in range(n_blocks)])
-
-    def forward(self, x:Tensor, cache = None):
-        if cache is None: cache = {}
-
-        for i, block in enumerate(self.encoder_blocks):
-            x, cache[f'encoder_block_{i}'] = block(x, cache.get(f'encoder_block_{i}', None))
-
-        return x
-
-
-
-
-class VAEAttention(nn.Module):
-    def __init__(self, channels, num_heads, image_size, attn_balance = 0.3):
-        super().__init__()
-        self.channels = channels
-        self.num_heads = num_heads
-        self.attn_balance = attn_balance
-        self.image_size = image_size
-        if num_heads == 0:
-            return
-
-        effective_size = channels * image_size
-        self.attn_qkv = MPConv(effective_size, effective_size, kernel=[]) 
-        self.attn_proj = MPConv(effective_size, effective_size, kernel=[]) 
-
-    def forward(self, x):
-        if self.num_heads==0:
-            return x
-        batch_size, channels, time, height, width = x.shape
-        x = einops.rearrange(x, 'b c t h w -> b t (c h w)') # this is going to lead to huge latents
-
-        y = self.attn_qkv(x)
-
-        y = einops.rearrange(y, 'b t (s m chw) -> s b m t chw', s=3, m=self.num_heads)
-        q, k, v =y.unbind(0)
-
-        y = F.scaled_dot_product_attention(q, k, v)
-        y = einops.rearrange(y, 'b m t (c h w) -> b c t h w', h=height, w=width)
-
-        y = self.attn_proj(y)
-        return mp_sum(x, y, t=self.attn_balance)
 
