@@ -80,29 +80,53 @@ class ResBlock(nn.Module):
 
         return x, cache
 
-class EncoderBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, time_compression, spatial_compression, kernel, group_size, n_res_blocks):
+class EncoderDecoderBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, time_compression, spatial_compression, kernel, group_size, n_res_blocks, type='encoder'):
         super().__init__()
-        self.downsample_block = UpDownBlock(time_compression, spatial_compression, direction = 'down')
-        self.total_compression = self.downsample_block.total_compression
+        self.downsample_block = UpDownBlock(time_compression, spatial_compression, 'down' if type=='encoder' else 'up')
+        total_compression = self.downsample_block.total_compression
 
-        self.compresion_block = GroupCausal3DConvVAE(in_channels*self.total_compression, out_channels, kernel, group_size)
-        self.res_blocks =nn.ModuleList([ResBlock(out_channels, kernel, group_size) for _ in range(n_res_blocks)])
+        self.decompression_block = GroupCausal3DConvVAE(in_channels, out_channels*total_compression, kernel, group_size//time_compression) if type=='decoder' else None
+        self.compression_block  =   GroupCausal3DConvVAE(in_channels*total_compression, out_channels, kernel, group_size) if type=='encoder' else None
+
+        self.res_blocks = nn.ModuleList([ResBlock(out_channels, kernel, group_size) for _ in range(n_res_blocks)])
 
     def forward(self,x, cache=None):
         if cache is None: cache = {}
 
+        if self.decompression_block is not None:
+            x, cache['decompression_block'] = self.decompression_block(x, cache = cache.get('decompression_block', None))
+
         x = self.downsample_block(x)
-        x, cache['compresion_block'] = self.compresion_block(x, cache = cache.get('compresion_block', None))
+
+        if self.compression_block is not None:
+            x, cache['compression_block'] = self.compression_block(x, cache = cache.get('compression_block', None))
+
         for i, res_block in enumerate(self.res_blocks):
             x, cache[f'res_block_{i}'] = res_block(x, cache.get(f'res_block_{i}', None))
 
         return x, cache
 
 
-class Encoder(nn.Module):
+class UpDownBlock:
+    def __init__(self, time_compression, spatial_compression, direction):
+        self.direction = direction
+        self.time_compression = time_compression
+        self.spatial_compression = spatial_compression
+        self.total_compression = time_compression*spatial_compression**2
 
-    def __init__(self, latent_channels, n_res_blocks, time_compressions = [1,2,2], spatial_compressions = [1,2,2]):
+    def __call__(self, x):
+        if self.total_compression==1: return x
+
+        if self.direction=='down':
+            return einops.rearrange(x, 'b c (t tc) (h hc) (w wc) -> b (c tc hc wc) t h w', tc=self.time_compression, hc=self.spatial_compression, wc=self.spatial_compression)
+
+        return einops.rearrange(x, 'b (c tc hc wc) t h w -> b c (t tc) (h hc) (w wc)', tc=self.time_compression, hc=self.spatial_compression, wc=self.spatial_compression)
+
+
+
+class Encoder(nn.Module):
+    def __init__(self, latent_channels, n_res_blocks, time_compressions = [1,2,2], spatial_compressions = [1,2,2], type='encoder'):
         super().__init__()
         self.time_compressions = time_compressions
         self.spatial_compressions = spatial_compressions
@@ -114,7 +138,7 @@ class Encoder(nn.Module):
         n_blocks = len(time_compressions)
 
         #assuming the input is always rgb
-        self.encoder_blocks = nn.ModuleList([EncoderBlock(in_channels[i], out_channels[i], time_compressions[i], spatial_compressions[i], kernel, group_sizes[i], n_res_blocks) for i in range(n_blocks)])
+        self.encoder_blocks = nn.ModuleList([EncoderDecoderBlock(in_channels[i], out_channels[i], time_compressions[i], spatial_compressions[i], kernel, group_sizes[i], n_res_blocks, type) for i in range(n_blocks)])
 
     def forward(self, x:Tensor, cache = None):
         if cache is None: cache = {}
@@ -127,24 +151,30 @@ class Encoder(nn.Module):
         return mean, logvar
 
 
+class Decoder(nn.Module):
+    def __init__(self, latent_channels, n_res_blocks, time_compressions = [1,2,2], spatial_compressions = [1,2,2], type='decoder'):
+        super().__init__()
+        self.time_compressions = time_compressions
+        self.spatial_compressions = spatial_compressions
+
+        group_sizes = np.cumprod(time_compressions)
+        channels = (3, 4, 4, latent_channels)[::-1]
+        in_channels, out_channels = channels[:-1], channels[1:]
+        kernel = (8,3,3)
+        n_blocks = len(time_compressions)
+
+        #assuming the input is always rgb
+        self.encoder_blocks = nn.ModuleList([EncoderDecoderBlock(in_channels[i], out_channels[i], time_compressions[i], spatial_compressions[i], kernel, group_sizes[i], n_res_blocks, type) for i in range(n_blocks)])
+
+    def forward(self, x:Tensor, cache = None):
+        if cache is None: cache = {}
+
+        for i, block in enumerate(self.encoder_blocks):
+            x, cache[f'encoder_block_{i}'] = block(x, cache.get(f'encoder_block_{i}', None))
+
+        return x
 
 
-
-class UpDownBlock:
-    def __init__(self, time_compression, spatial_compression, direction):
-        self.direction = direction
-        self.ti=me_compression = time_compression
-        self.spatial_compression = spatial_compression
-        self.total_compression = time_compression*spatial_compression**2
-
-    def __call__(self, x):
-
-        if self.total_compression==1: return x
-
-        if self.direction=='down':
-            return einops.rearrange(x, 'b c (t ts) (h hs) (w ws) -> b (c ts hs ws) t h w', ts=self.time_compression, hs=self.spatial_compression, ws=self.spatial_compression)
-
-        return einops.rearrange(x, 'b (c ts hs ws) t h w -> b c (t ts) (h hs) (w ws)', ts=self.time_compression, hs=self.spatial_compression, ws=self.spatial_compression)
 
 
 class VAEAttention(nn.Module):
