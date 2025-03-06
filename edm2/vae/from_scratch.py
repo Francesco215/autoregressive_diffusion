@@ -1,14 +1,16 @@
 import torch
-from torch import nn
+from torch import nn, Tensor
 from torch.nn import functional as F
 
-import einops
 
-from ..utils import mp_sum, normalize, mp_silu
+import einops
+import numpy as np
+
+from ..utils import mp_sum, mp_silu
 from ..conv import MPConv, NormalizedWeight
 
 
-class MPGroupCausal3DConvVAE(torch.nn.Module):
+class GroupCausal3DConvVAE(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel, group_size, dilation = (1,1,1)):
         super().__init__()
         self.out_channels = out_channels
@@ -34,16 +36,14 @@ class MPGroupCausal3DConvVAE(torch.nn.Module):
 
         x = einops.rearrange(x, 'b (c g) t h w -> b c (t g) h w', g=self.group_size)
 
+        if self.training: cache = None
         return x, cache
 
-def downsample(x, time_compression, spatial_compression):
-    return einops.rearrange(x, 'b c (t ts) (h hs) (w ws) -> b (c ts hs ws) t h w', ts=time_compression, hs=spatial_compression, ws=spatial_compression)
-
-def upsample(x, time_compression, spatial_compression):
-    return einops.rearrange(x, 'b (c ts hs ws) t h w -> b c (t ts) (h hs) (w ws)', ts=time_compression, hs=spatial_compression, ws=spatial_compression)
-
-
-
+class ConvVAE(MPConv):
+    def forward(self,x, gain=1):
+        x = einops.rearrange(x, 'b c t h w -> (b t) c h w')
+        super().forward(x,gain)
+        return einops.rearrange(x, '(b t) c h w -> b c t h w')
 
 
 
@@ -53,17 +53,29 @@ def upsample(x, time_compression, spatial_compression):
 class ResBlock(nn.Module):
     def __init__(self, channels: int, kernel_size=(8,3,3), group_size=1):
         super().__init__()
-        self.channels = channels
 
-        self.conv_res0 = MPGroupCausal3DConvVAE(channels, channels, kernel_size, group_size, dilation = (1,1,1))
-        self.conv_res1 = MPGroupCausal3DConvVAE(channels, channels, kernel_size, group_size, dilation = (3,3,3))
+        self.conv3d0 = GroupCausal3DConvVAE(channels, channels,  kernel_size, group_size, dilation = (1,1,1))
+        self.conv3d1 = GroupCausal3DConvVAE(channels, channels, kernel_size, group_size, dilation = (3,3,3))
+
+        self.conv2d0 = ConvVAE(channels, channels,  kernel_size[1:], group_size, dilation = (1,1))
+        self.conv2d1 = ConvVAE(channels, channels, kernel_size[1:], group_size, dilation = (3,3))
                                                                    
+        self.weight_sum0 = nn.Parameter(torch.tensor(0.))
+        self.weight_sum1 = nn.Parameter(torch.tensor(0.))
+
         # self.attn_block = VAEAttention(channels, num_heads=4)
     
-    def forward(self, x):
-        y = self.conv_res0(x)
+    def forward(self, x, cache = None):
+        if cache is None: cache = {}
+
+        y, cache['conv3d_res0'] = self.conv3d0(x, cache=cache.get('conv3d_res0', None))
+        y = mp_sum(y, self.conv2d0(x), F.sigmoid(self.weight_sum0))
         y = mp_silu(y)
-        y = self.conv_res1(y)
+
+        t = y.clone()
+        
+        y, cache['conv3d_res1'] = self.conv3d1(t, cache=cache.get('conv3d_res1', None))
+        y = mp_sum(y, self.conv2d1(t), F.sigmoid(self.weight_sum1))
         y = mp_silu(y)
 
         x = mp_sum(x,y)
@@ -73,11 +85,58 @@ class ResBlock(nn.Module):
 
 
 
+class Encoder(nn.Module):
+
+    def __init__(self, latent_channels, time_compressions = (2,2), spatial_compressions = (2,2)):
+        super().__init__()
+
+        time_compression = np.prod(time_compressions)
+
+        self.time_compressions = time_compressions
+        self.spatial_compressions = spatial_compressions
+
+        #assuming the input is always rgb
+        self.initial_conv = GroupCausal3DConvVAE(in_channels = 3, out_channels = 4, kernel_size = (8,3,3), group_size = time_compression)
+        self.res_block1 = ResBlock(channels = 4, kernel_size=(8,3,3), group_size=time_compression)
+
+        self.compression_block2 = GroupCausal3DConvVAE(in_channels = 4 * time_compressions[0]*spatial_compressions[0]**2, out_channels=4, kernel_size = (8,3,3), group_size = time_compressions[1])
+        self.res_block2 = ResBlock(channels = 4, kernel_size=(8,3,3), group_size=time_compressions[1])
+
+        self.compression_block3 = GroupCausal3DConvVAE(in_channels = 4 * time_compressions[1]*spatial_compressions[1]**2, out_channels=latent_channels*2, kernel_size = (8,3,3), group_size = 1)
+        self.res_block3 = ResBlock(channels = latent_channels*2, kernel_size=(8,3,3), group_size= 1)
+
+
+    def forward(self, x:Tensor, cache = None):
+        if cache is None: cache = {}
+
+        x, cache['initial_conv'] = self.initial_conv(x, cache = cache.get('initial_conv', None))
+        x, cache['res_block1'] = self.res_block1(x, cache.get('res_block1',None))
+
+        x = downsample(x, self.time_compressions[0], self.spatial_compressions[0])
+
+        x, cache['compression_block2']= self.compression_block2(x, cache.get('compression_block2',None))
+        x, cache['res_block2'] = self.res_block2(x, cache.get('res_block2',None))
+
+        x = downsample(x, self.time_compressions[1], self.spatial_compression[1])
+
+        x, cache['compression_block3']= self.compression_block3(x, cache.get('compression_block3',None))
+        x, cache['res_block3'] = self.res_block3(x, cache.get('res_block3',None))
+
+        mean, logvar = x.split(split_size=self.latent_channels, dim = 1)
+
+        return mean, logvar
 
 
 
 
 
+
+
+def downsample(x, time_compression, spatial_compression):
+    return einops.rearrange(x, 'b c (t ts) (h hs) (w ws) -> b (c ts hs ws) t h w', ts=time_compression, hs=spatial_compression, ws=spatial_compression)
+
+def upsample(x, time_compression, spatial_compression):
+    return einops.rearrange(x, 'b (c ts hs ws) t h w -> b c (t ts) (h hs) (w ws)', ts=time_compression, hs=spatial_compression, ws=spatial_compression)
 
 
 
