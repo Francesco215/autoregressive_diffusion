@@ -78,6 +78,8 @@ class MPFourier(torch.nn.Module):
 
         
 def bmult(x:Tensor, t:Tensor):
+    if t.dim() == 0:
+        return t*x
     if t.dim() == 1:
         return einops.einsum(x,t,' b ..., b -> b ...')
     return einops.einsum(x,t,' b c ..., b c-> b c ...')
