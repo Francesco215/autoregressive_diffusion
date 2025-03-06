@@ -162,3 +162,68 @@ class EncoderDecoder(nn.Module):
 
 
 
+class VAE(nn.Module):
+    def __init__(self, latent_channels, n_res_blocks, time_compressions=[1, 2, 2], spatial_compressions=[1, 2, 2]):
+        super().__init__()
+        # Encoder: compresses input to latent space, outputs mean and logvar
+        self.encoder = EncoderDecoder(
+            latent_channels=latent_channels,
+            n_res_blocks=n_res_blocks,
+            time_compressions=time_compressions,
+            spatial_compressions=spatial_compressions,
+            type='encoder'
+        )
+        # Decoder: reconstructs input from latent vector
+        self.decoder = EncoderDecoder(
+            latent_channels=latent_channels,
+            n_res_blocks=n_res_blocks,
+            time_compressions=time_compressions,
+            spatial_compressions=spatial_compressions,
+            type='decoder'
+        )
+
+    def forward(self, x, cache=None):
+        if cache is None:
+            cache = {}
+        
+        # Encode input to get mean and log-variance
+        mean, logvar, cache['encoder'] = self.encoder(x, cache.get('encoder', None))
+        
+        # Reparameterization trick: sample z from N(mean, std)
+        std = torch.exp(0.5 * logvar)  # Compute standard deviation
+        eps = torch.randn_like(std)    # Sample noise from standard normal
+        z = mean + eps * std           # Latent vector
+        
+        # Decode latent vector to reconstruct input
+        recon, cache['decoder'] = self.decoder(z, cache.get('decoder', None))
+        
+        return recon, mean, logvar, cache
+
+        
+
+class Discriminator(nn.Module):
+    def __init__(self, n_res_blocks, time_compressions=[1, 2, 2], spatial_compressions=[1, 2, 2]):
+        super().__init__()
+        # Configure EncoderDecoder as an encoder with a single output channel
+        self.encoder = EncoderDecoder(
+            latent_channels=1,  # Single channel for discrimination
+            n_res_blocks=n_res_blocks,
+            time_compressions=time_compressions,
+            spatial_compressions=spatial_compressions,
+            type='encoder'
+        )
+
+    def forward(self, x, cache=None):
+        if cache is None:
+            cache = {}
+        
+        # Pass input through the encoder
+        feature_map, _, cache['encoder'] = self.encoder(x, cache.get('encoder', None))
+        
+        # Average over the temporal and spatial dimensions
+        disc_output = feature_map.mean(dim=[2, 3, 4])  # Shape: [batch, 1]
+        
+        # Convert to probability with sigmoid
+        prob = torch.sigmoid(disc_output)
+        
+        return prob, cache
