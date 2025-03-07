@@ -45,7 +45,7 @@ if __name__=="__main__":
     # sigma_data = 0.434
     sigma_data = 1.
 
-    ref_lr = 2e-4
+    ref_lr = 2e-6
     current_lr = ref_lr
     optimizer_vae = MARS(vae.parameters(), lr=ref_lr, eps = 1e-4)
     optimizer_disc = MARS(discriminator.parameters(), lr=ref_lr, eps = 1e-4)
@@ -54,10 +54,11 @@ if __name__=="__main__":
     losses = []
 
     resume_training_run = None
+    pbar = tqdm(enumerate(dataloader))
 
     #%%
     # Training loop
-    for batch_idx, batch in tqdm(enumerate(dataloader)):
+    for batch_idx, batch in pbar:
         with torch.no_grad():
             frames, _, _ = batch  # Ignore actions and reward for this VAE training
             frames = frames.float() / 127.5 - 1  # Normalize to [-1, 1]
@@ -70,14 +71,14 @@ if __name__=="__main__":
         # VAE losses
         recon_loss = F.mse_loss(recon, frames, reduction='mean')
         kl_loss = -0.5 * torch.mean(torch.sum(1 + logvar - mean.pow(2) - logvar.exp(), dim=[1, 2, 3, 4]))
-        vae_loss = recon_loss + kl_loss
+        vae_loss = recon_loss + kl_loss*1e-6
 
         # Update VAE
         vae_loss.backward()
         optimizer_vae.step()
         optimizer_vae.zero_grad()
 
-        # Compute all discriminator outputs BEFORE any updates
+        # Compute all discriminator outputs
         targets = torch.cat([torch.ones(frames.shape[0],1, device=device), torch.zeros(frames.shape[0],1, device=device)], dim=0)
         frames = torch.cat([frames, recon], dim=0)
         prob, _ = discriminator(frames.detach())
@@ -90,7 +91,7 @@ if __name__=="__main__":
         optimizer_disc.step()
         optimizer_disc.zero_grad()
         
+        pbar.set_postfix_str(f"Batch {batch_idx}: recon loss: {recon_loss.item():.4f}, KL loss: {kl_loss}, Disc Loss: {loss_disc.item():.4f}")
         # Print training progress
         # if batch_idx % 100 == 0:
-        #     print(f"Batch {batch_idx}: VAE Loss: {vae_loss.item():.4f}, Disc Loss: {loss_disc.item():.4f}")
     # %%

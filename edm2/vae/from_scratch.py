@@ -26,7 +26,7 @@ class GroupCausal3DConvVAE(torch.nn.Module):
     def forward(self, x, gain=1, cache=None):
 
         if cache is None:
-            cache = torch.ones(*x.shape[:2], self.time_padding_size, *x.shape[3:], device=x.device, dtype=x.dtype)
+            cache = torch.zeros(*x.shape[:2], self.time_padding_size, *x.shape[3:], device=x.device, dtype=x.dtype)
 
         x = torch.cat((cache, x), dim=-3)
         cache = x[:,:,-self.time_padding_size:].clone().detach()
@@ -154,11 +154,11 @@ class EncoderDecoder(nn.Module):
             x, cache[f'encoder_block_{i}'] = block(x, cache.get(f'encoder_block_{i}', None))
 
         if self.encoding_type == 'decoder':
-            return x
+            return x, cache
 
         mean, logvar = x.split(split_size=x.shape[1]//2, dim = 1)
 
-        return mean, logvar
+        return mean, logvar, cache
 
 
 
