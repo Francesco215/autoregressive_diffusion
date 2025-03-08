@@ -20,21 +20,30 @@ class GroupCausal3DConvVAE(torch.nn.Module):
 
         kt, kw, kh = kernel
         dt, dw, dh = dilation
-        self.image_padding = (0, dh * (kh-1)//2, dw * (kw-1)//2)
+        self.image_padding = (0, dh * kh//2, dw * kw//2)
         self.time_padding_size = kt+(kt-1)*(dt-1)-self.group_size
 
     def forward(self, x, gain=1, cache=None):
+        w = self.weight(gain).to(x.dtype)
 
+        multiplicative = 1.
         if cache is None:
             cache = torch.zeros(*x.shape[:2], self.time_padding_size, *x.shape[3:], device=x.device, dtype=x.dtype)
+
+            kernel_size = torch.tensor(w.shape[2], device="cuda")
+            group_index = torch.arange(x.shape[2], device=x.device)//self.group_size+1
+            n_inputs_inside = torch.clip((group_index*self.group_size-1)//self.dilation[0]+1, max=kernel_size)
+            multiplicative = torch.sqrt(kernel_size/n_inputs_inside)[:,None,None].detach()
+
+
 
         x = torch.cat((cache, x), dim=-3)
         cache = x[:,:,-self.time_padding_size:].clone().detach()
 
-        w = self.weight(gain).to(x.dtype)
         x = F.conv3d(x, w, padding=self.image_padding, stride = (self.group_size, 1, 1), dilation=self.dilation)
 
         x = einops.rearrange(x, 'b (c g) t h w -> b c (t g) h w', g=self.group_size)
+        x = x * multiplicative
 
         if self.training: cache = None
         return x, cache
