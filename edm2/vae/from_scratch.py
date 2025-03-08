@@ -216,7 +216,7 @@ class Discriminator(nn.Module):
         super().__init__()
         # Configure EncoderDecoder as an encoder with a single output channel
         self.encoder = EncoderDecoder(
-            latent_channels=1,  # Single channel for discrimination
+            latent_channels=2,  # Single channel for discrimination
             n_res_blocks=n_res_blocks,
             time_compressions=time_compressions,
             spatial_compressions=spatial_compressions,
@@ -231,9 +231,6 @@ class Discriminator(nn.Module):
         feature_map, _, cache['encoder'] = self.encoder(x, cache.get('encoder', None))
         
         # Average over the temporal and spatial dimensions
-        disc_output = feature_map.mean(dim=[2, 3, 4])  # Shape: [batch, 1]
+        logits = feature_map.mean(dim=[2, 3, 4])  # Shape: [batch, 1]
         
-        # Convert to probability with sigmoid
-        prob = torch.sigmoid(disc_output)
-        
-        return prob, cache
+        return logits, cache

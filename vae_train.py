@@ -47,8 +47,8 @@ if __name__=="__main__":
 
     ref_lr = 2e-6
     current_lr = ref_lr
-    optimizer_vae = MARS(vae.parameters(), lr=ref_lr, eps = 1e-4)
-    optimizer_disc = MARS(discriminator.parameters(), lr=ref_lr, eps = 1e-4)
+    optimizer_vae = MARS(vae.parameters(), lr=1e-4, eps = 1e-4)
+    optimizer_disc = MARS(discriminator.parameters(), lr=2e-6, eps = 1e-4)
     optimizer_vae.zero_grad()
     optimizer_disc.zero_grad()
     losses = []
@@ -64,32 +64,30 @@ if __name__=="__main__":
             frames = frames.float() / 127.5 - 1  # Normalize to [-1, 1]
             frames = einops.rearrange(frames, 'b t h w c-> b c t h w').to(device)
 
-
         # VAE forward pass
         recon, mean, logvar, _ = vae(frames)
 
         # VAE losses
         recon_loss = F.mse_loss(recon, frames, reduction='mean')
         kl_loss = -0.5 * torch.mean(torch.sum(1 + logvar - mean.pow(2) - logvar.exp(), dim=[1, 2, 3, 4]))
-        vae_loss = recon_loss + kl_loss*1e-6
-
-        # Update VAE
-        vae_loss.backward()
-        optimizer_vae.step()
-        optimizer_vae.zero_grad()
 
         # Compute all discriminator outputs
-        targets = torch.cat([torch.ones(frames.shape[0],1, device=device), torch.zeros(frames.shape[0],1, device=device)], dim=0)
+        targets = torch.cat([torch.ones(frames.shape[0], device=device, dtype=torch.long), torch.zeros(frames.shape[0], device=device, dtype=torch.long)], dim=0)
         frames = torch.cat([frames, recon], dim=0)
-        prob, _ = discriminator(frames.detach())
+        logits, _ = discriminator(frames)
+        loss_disc = F.cross_entropy(logits, targets)
 
-        # # Discriminator loss
-        loss_disc = F.binary_cross_entropy(prob, targets)
+        vae_loss = recon_loss + kl_loss*1e-4 - loss_disc*1e-1
 
-        # # Update discriminator
+        # Update VAE
+        optimizer_vae.zero_grad()
+        vae_loss.backward(retain_graph=True) #very important
+        optimizer_vae.step()
+
+        # Update discriminator
+        optimizer_disc.zero_grad()
         loss_disc.backward()
         optimizer_disc.step()
-        optimizer_disc.zero_grad()
         
         pbar.set_postfix_str(f"Batch {batch_idx}: recon loss: {recon_loss.item():.4f}, KL loss: {kl_loss}, Disc Loss: {loss_disc.item():.4f}")
         # Print training progress
