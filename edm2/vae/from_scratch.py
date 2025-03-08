@@ -20,10 +20,11 @@ class GroupCausal3DConvVAE(torch.nn.Module):
 
         kt, kw, kh = kernel
         dt, dw, dh = dilation
-        self.image_padding = (dh * kh//2, dh * kh//2, dw * kw//2, dw * kw//2)
+        self.image_padding = (dh * (kh//2), dh * (kh//2), dw * (kw//2), dw * (kw//2))
         self.time_padding_size = kt+(kt-1)*(dt-1)-self.group_size
 
     def forward(self, x, gain=1, cache=None):
+        x = F.pad(x, pad = self.image_padding, mode="constant", value = 1)
         w = self.weight(gain).to(x.dtype)
 
         multiplicative = 1.
@@ -40,7 +41,6 @@ class GroupCausal3DConvVAE(torch.nn.Module):
         x = torch.cat((cache, x), dim=-3)
         cache = x[:,:,-self.time_padding_size:].clone().detach()
 
-        x = F.pad(x, pad = self.image_padding, mode="constant", value = 1)
         x = F.conv3d(x, w, stride = (self.group_size, 1, 1), dilation=self.dilation)
 
         x = einops.rearrange(x, 'b (c g) t h w -> b c (t g) h w', g=self.group_size)
@@ -65,8 +65,8 @@ class ResBlock(nn.Module):
         self.conv3d0 = GroupCausal3DConvVAE(channels, channels,  kernel, group_size, dilation = (1,1,1))
         self.conv3d1 = GroupCausal3DConvVAE(channels, channels, kernel, group_size, dilation = (3,3,3))
 
-        self.conv2d0 = ConvVAE(channels, channels,  kernel[1:], group_size)
-        self.conv2d1 = ConvVAE(channels, channels, kernel[1:], group_size)
+        self.conv2d0 = ConvVAE(channels, channels,  kernel[1:], dilation = 1)
+        self.conv2d1 = ConvVAE(channels, channels, kernel[1:], dilation = 3)
                                                                    
         self.weight_sum0 = nn.Parameter(torch.tensor(0.))
         self.weight_sum1 = nn.Parameter(torch.tensor(0.))
