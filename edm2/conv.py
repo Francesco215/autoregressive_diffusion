@@ -30,14 +30,16 @@ class MPConv(torch.nn.Module):
         self.weight = NormalizedWeight(in_channels, out_channels, kernel)
 
         self.dilation = dilation
-        self.padding = dilation*(kernel[-1]-1)//2
+        self.padding = [dilation*(kernel[-1])//2]*4
 
     def forward(self, x, gain=1, batch_size=None):
         w = self.weight(gain).to(x.dtype)
         if w.ndim == 2:
             return x @ w.t()
         assert w.ndim == 4
-        return F.conv2d(x, w, padding=(self.padding,), dilation=self.dilation)
+        x = F.pad(x, pad = self.padding, mode="constant", value = 1)
+        x = F.conv2d(x, w, dilation=self.dilation)
+        return x
 
 
 
