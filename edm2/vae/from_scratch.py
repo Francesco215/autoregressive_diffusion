@@ -150,6 +150,7 @@ class EncoderDecoder(nn.Module):
         if type=='encoder':
             group_sizes = group_sizes[::-1]
             channels[-1]=channels[-1]*2
+            self.logvar_multiplier = nn.Parameter(torch.tensor(0.))
         else:
             channels = channels[::-1]
 
@@ -167,6 +168,7 @@ class EncoderDecoder(nn.Module):
             return x, cache
 
         mean, logvar = x.split(split_size=x.shape[1]//2, dim = 1)
+        logvar = logvar*torch.exp(self.logvar_multiplier)
 
         return mean, logvar, cache
 
