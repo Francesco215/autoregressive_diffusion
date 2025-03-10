@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 
 
 from edm2.gym_dataloader import GymDataGenerator, gym_collate_function
-from edm2.vae.from_scratch import VAE, Discriminator
+from edm2.vae import VAE, Discriminator
 from edm2.mars import MARS
 torch.autograd.set_detect_anomaly(True)
 if __name__=="__main__":

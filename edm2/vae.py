@@ -6,8 +6,8 @@ from torch.nn import functional as F
 import einops
 import numpy as np
 
-from ..utils import mp_sum, mp_silu
-from ..conv import MPConv, NormalizedWeight
+from .utils import mp_sum, mp_silu
+from .conv import MPConv, NormalizedWeight
 
 
 class GroupCausal3DConvVAE(torch.nn.Module):
@@ -39,14 +39,13 @@ class GroupCausal3DConvVAE(torch.nn.Module):
 
 
         x = torch.cat((cache, x), dim=-3)
-        cache = x[:,:,-self.time_padding_size:].clone().detach()
+        cache = x[:,:,-self.time_padding_size:].clone().detach() if not self.training else None
 
         x = F.conv3d(x, w, stride = (self.group_size, 1, 1), dilation=self.dilation)
 
         x = einops.rearrange(x, 'b (c g) t h w -> b c (t g) h w', g=self.group_size)
         x = x * multiplicative
 
-        if self.training: cache = None
         return x, cache
 
 
