@@ -39,7 +39,7 @@ class GroupCausal3DConvVAE(torch.nn.Module):
 
 
         x = torch.cat((cache, x), dim=-3)
-        cache = x[:,:,-self.time_padding_size:].clone().detach() if not self.training else None
+        cache =  None if self.training else x[:,:,-self.time_padding_size:].clone().detach()
 
         x = F.conv3d(x, w, stride = (self.group_size, 1, 1), dilation=self.dilation)
 
@@ -93,11 +93,11 @@ class ResBlock(nn.Module):
 class EncoderDecoderBlock(nn.Module):
     def __init__(self, in_channels, out_channels, time_compression, spatial_compression, kernel, group_size, n_res_blocks, type='encoder'):
         super().__init__()
-        self.downsample_block = UpDownBlock(time_compression, spatial_compression, 'down' if type=='encoder' else 'up')
+        self.downsample_block = UpDownBlock(time_compression, spatial_compression, 'up' if type=='decoder' else 'down')
         total_compression = self.downsample_block.total_compression
 
         self.decompression_block = GroupCausal3DConvVAE(in_channels, out_channels*total_compression, kernel, group_size//time_compression) if type=='decoder' else None
-        self.compression_block  =  GroupCausal3DConvVAE(in_channels*total_compression, out_channels, kernel, group_size) if type=='encoder' else None
+        self.compression_block  =  GroupCausal3DConvVAE(in_channels*total_compression, out_channels, kernel, group_size) if type in ['encoder', 'discriminator'] else None
 
         self.res_blocks = nn.ModuleList([ResBlock(out_channels, kernel, group_size) for _ in range(n_res_blocks)])
 
@@ -120,6 +120,8 @@ class EncoderDecoderBlock(nn.Module):
 
 class UpDownBlock:
     def __init__(self, time_compression, spatial_compression, direction):
+        assert direction in ['up', 'down'], 'Invalid direction, expected up or down'
+
         self.direction = direction
         self.time_compression = time_compression
         self.spatial_compression = spatial_compression
@@ -138,6 +140,8 @@ class UpDownBlock:
 class EncoderDecoder(nn.Module):
     def __init__(self, latent_channels, n_res_blocks, time_compressions = [1,2,2], spatial_compressions = [1,2,2], type='encoder'):
         super().__init__()
+        assert type in ['encoder', 'decoder', 'discriminator'], 'Invalid type, expected encoder, decoder or discriminator'
+
         self.time_compressions = time_compressions
         self.spatial_compressions = spatial_compressions
         self.encoding_type = type
@@ -150,8 +154,11 @@ class EncoderDecoder(nn.Module):
             group_sizes = group_sizes[::-1]
             channels[-1]=channels[-1]*2
             self.logvar_multiplier = nn.Parameter(torch.tensor(0.))
-        else:
+        elif type=='decoder':
             channels = channels[::-1]
+        elif type=='discriminator':
+            group_sizes = group_sizes[::-1]
+            assert latent_channels == 2, 'Discriminator should have 2 latent channels, one for each logit'
 
         in_channels, out_channels = channels[:-1], channels[1:]
         
@@ -166,6 +173,9 @@ class EncoderDecoder(nn.Module):
         if self.encoding_type == 'decoder':
             return x, cache
 
+        if self.encoding_type == 'discriminator':
+            return x.mean(dim=[2,3,4]), cache
+
         mean, logvar = x.split(split_size=x.shape[1]//2, dim = 1)
         logvar = logvar*torch.exp(self.logvar_multiplier)
 
@@ -176,22 +186,8 @@ class EncoderDecoder(nn.Module):
 class VAE(nn.Module):
     def __init__(self, latent_channels, n_res_blocks, time_compressions=[1, 2, 2], spatial_compressions=[1, 2, 2]):
         super().__init__()
-        # Encoder: compresses input to latent space, outputs mean and logvar
-        self.encoder = EncoderDecoder(
-            latent_channels=latent_channels,
-            n_res_blocks=n_res_blocks,
-            time_compressions=time_compressions,
-            spatial_compressions=spatial_compressions,
-            type='encoder'
-        )
-        # Decoder: reconstructs input from latent vector
-        self.decoder = EncoderDecoder(
-            latent_channels=latent_channels,
-            n_res_blocks=n_res_blocks,
-            time_compressions=time_compressions,
-            spatial_compressions=spatial_compressions,
-            type='decoder'
-        )
+        self.encoder = EncoderDecoder(latent_channels, n_res_blocks, time_compressions, spatial_compressions, type='encoder')
+        self.decoder = EncoderDecoder(latent_channels, n_res_blocks, time_compressions, spatial_compressions, type='decoder')
 
     def forward(self, x, cache=None):
         if cache is None:
@@ -211,27 +207,3 @@ class VAE(nn.Module):
         return recon, mean, logvar, cache
 
         
-
-class Discriminator(nn.Module):
-    def __init__(self, n_res_blocks, time_compressions=[1, 2, 2], spatial_compressions=[1, 2, 2]):
-        super().__init__()
-        # Configure EncoderDecoder as an encoder with a single output channel
-        self.encoder = EncoderDecoder(
-            latent_channels=2,  # Single channel for discrimination
-            n_res_blocks=n_res_blocks,
-            time_compressions=time_compressions,
-            spatial_compressions=spatial_compressions,
-            type='encoder'
-        )
-
-    def forward(self, x, cache=None):
-        if cache is None:
-            cache = {}
-        
-        # Pass input through the encoder
-        feature_map, _, cache['encoder'] = self.encoder(x, cache.get('encoder', None))
-        
-        # Average over the temporal and spatial dimensions
-        logits = feature_map.mean(dim=[2, 3, 4])  # Shape: [batch, 1]
-        
-        return logits, cache

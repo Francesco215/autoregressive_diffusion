@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 
 
 from edm2.gym_dataloader import GymDataGenerator, gym_collate_function
-from edm2.vae import VAE, Discriminator
+from edm2.vae import VAE, EncoderDecoder
 from edm2.mars import MARS
 torch.autograd.set_detect_anomaly(True)
 if __name__=="__main__":
@@ -32,7 +32,7 @@ if __name__=="__main__":
 
     # Initialize models
     vae = VAE(latent_channels=latent_channels, n_res_blocks=n_res_blocks).to(device)
-    discriminator = Discriminator(n_res_blocks=n_res_blocks, time_compressions=[1, 2, 4], spatial_compressions=[1, 4, 4]).to(device)
+    discriminator = EncoderDecoder(latent_channels = 2, n_res_blocks=n_res_blocks, time_compressions=[1, 2, 4], spatial_compressions=[1, 4, 4], type='discriminator').to(device)
     
     dataset = GymDataGenerator(state_size, original_env, training_steps, autoencoder_time_compression = 6)
     dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=gym_collate_function, num_workers=16)
