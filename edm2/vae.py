@@ -37,7 +37,6 @@ class GroupCausal3DConvVAE(torch.nn.Module):
             multiplicative = (torch.sqrt(kernel_size/n_inputs_inside)[:,None,None]).detach()
 
 
-
         x = torch.cat((cache, x), dim=-3)
         cache =  None if self.training else x[:,:,-self.time_padding_size:].clone().detach()
 
@@ -62,7 +61,7 @@ class ResBlock(nn.Module):
         super().__init__()
 
         self.conv3d0 = GroupCausal3DConvVAE(channels, channels,  kernel, group_size, dilation = (1,1,1))
-        self.conv3d1 = GroupCausal3DConvVAE(channels, channels, kernel, group_size, dilation = (3,3,3))
+        self.conv3d1 = GroupCausal3DConvVAE(channels, channels, kernel, group_size, dilation = (4,3,3))
 
         self.conv2d0 = ConvVAE(channels, channels,  kernel[1:], dilation = 1)
         self.conv2d1 = ConvVAE(channels, channels, kernel[1:], dilation = 3)
@@ -192,7 +191,6 @@ class VAE(nn.Module):
     def forward(self, x, cache=None):
         if cache is None:
             cache = {}
-        
         # Encode input to get mean and log-variance
         mean, logvar, cache['encoder'] = self.encoder(x, cache.get('encoder', None))
         
