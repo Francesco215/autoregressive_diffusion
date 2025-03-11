@@ -12,7 +12,7 @@ class GymDataGenerator(IterableDataset):
         self.state_size = state_size
         self.environment_name = environment_name
         self.evolution_time = 10
-        self.terminate_size = 256
+        self.terminate_size = 2048
         self.training_examples = training_examples
         self.autoencoder_time_compression = autoencoder_time_compression
 

@@ -49,7 +49,7 @@ if __name__=="__main__":
     # Define optimizers
     base_lr = 1e-3
     optimizer_vae = MARS(vae.parameters(), lr=base_lr, eps=1e-4)
-    optimizer_disc = MARS(discriminator.parameters(), lr=base_lr*2e-2, eps=1e-4)
+    optimizer_disc = MARS(discriminator.parameters(), lr=base_lr*2e-1, eps=1e-4)
 
     # Add exponential decay schedule
     gamma = 0.01 ** (1 / total_number_of_steps)  # Decay factor so lr becomes 0.1 * initial_lr after 40,000 steps
@@ -59,6 +59,8 @@ if __name__=="__main__":
 
     resume_training_run = None
     pbar = tqdm(enumerate(dataloader), total=total_number_of_steps)
+
+    recon_losses, kl_group_losses, kl_losses, disc_losses = [], [], [], []
 
     #%%
     # Training loop
@@ -72,10 +74,10 @@ if __name__=="__main__":
         recon, mean, logvar, _ = vae(frames)
 
         # in theory the mean should be only with respect to the batch size
-        group_mean = mean.mean(dim=(0,2))
-        group_var = mean.var(dim=(0,2))
+        group_mean = mean.mean(dim=(0,2,3,4))
+        group_var = mean.var(dim=(0,2,3,4))
 
-        kl_group = - 0.5 * (1 + group_var.log() - group_mean.pow(2) - group_var).sum(dim=0).mean()
+        kl_group = - 0.5 * (1 + group_var.log() - group_mean.pow(2) - group_var).sum(dim=0)
 
         # VAE losses
         recon_loss = F.mse_loss(recon, frames, reduction='mean')
@@ -84,19 +86,22 @@ if __name__=="__main__":
         kl_loss = -0.5 * (1 + logvar - logvar.exp()).sum(dim=1).mean()
 
         # Compute all discriminator outputs
-        frames = torch.cat([frames, recon], dim=0)
-        logits, _ = discriminator(frames)
-        logits = einops.rearrange(logits, 'b c t h w -> (b t h w) c')
-        targets = torch.cat([torch.ones(logits.shape[0]//2, device=device, dtype=torch.long), torch.zeros(logits.shape[0]//2, device=device, dtype=torch.long)], dim=0)
-        loss_disc = F.cross_entropy(logits, targets)/np.log(2)
+        logits, _ = discriminator(recon)
+        targets = torch.ones(logits.shape[0],*logits.shape[2:], device=device, dtype=torch.long)
+        adversarial_loss = F.cross_entropy(logits, targets)/np.log(2)
 
-        vae_loss = recon_loss + kl_group*1e-3 + kl_loss*1e-3 - loss_disc*1e-2
+        vae_loss = recon_loss + kl_group*1e-4 + kl_loss*1e-4 + adversarial_loss*1e-2
 
         # Update VAE
         optimizer_vae.zero_grad()
-        vae_loss.backward(retain_graph=True) #am i wasting resources?
+        vae_loss.backward() 
         optimizer_vae.step()
         scheduler_vae.step()  # Step the VAE scheduler
+
+        frames = torch.cat([frames.detach(), recon.detach()], dim=0)
+        targets = torch.cat((targets, torch.zeros_like(targets)), dim=0)
+        logits, _ = discriminator(frames)
+        loss_disc = F.cross_entropy(logits, targets)/np.log(2)
 
         # Update discriminator
         optimizer_disc.zero_grad()
@@ -105,6 +110,10 @@ if __name__=="__main__":
         scheduler_disc.step()
         
         pbar.set_postfix_str(f"MSE loss: {recon_loss.item():.4f}, KL group loss: {kl_group.item():.4f} KL loss: {kl_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}")
+        recon_losses.append(recon_loss.item())
+        kl_group_losses.append(kl_group.item())
+        kl_losses.append(kl_loss.item())
+        disc_losses.append(loss_disc.item())
         # Visualization every 100 steps
         if batch_idx % 100 == 0 and batch_idx > 0:
             with torch.no_grad():
@@ -147,6 +156,36 @@ if __name__=="__main__":
                 os.makedirs("training_images", exist_ok=True)
                 plt.savefig(f"training_images/visualization_step_{batch_idx}.png")
                 plt.show()  # Display the plot
+
+                # ---------------------- #
+                # Plot loss evolution 
+                # Create a figure with 4 subplots stacked vertically
+                fig, axs = plt.subplots(4, 1, figsize=(10, 12))
+
+                # Plot each loss in its own subplot
+                axs[0].plot(recon_losses, color='blue')
+                axs[0].set_title('Reconstruction Loss')
+                axs[1].plot(kl_group_losses, color='green')
+                axs[1].set_title('KL Group Loss')
+                axs[2].plot(kl_losses, color='red')
+                axs[2].set_title('KL Loss')
+                axs[3].plot(disc_losses, color='purple')
+                axs[3].set_title('Discriminator Loss')
+
+                # Set labels for all subplots
+                for ax in axs:
+                    ax.set_xlabel('Training Steps')
+                    ax.set_ylabel('Loss')
+                    ax.set_yscale('log')
+                    ax.set_xscale('log')
+                    ax.grid(True, linestyle='--', alpha=0.7)  # Add a light grid for readability
+
+                # Adjust layout to prevent overlap
+                plt.tight_layout()
+
+                # Save the plot to the training_images directory
+                plt.savefig(f"training_images/losses_step_{batch_idx}.png")
+                plt.close()  # Close the figure to free memory
         if batch_idx == total_number_of_steps:
             break
     # %%
