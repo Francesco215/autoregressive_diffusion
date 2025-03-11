@@ -47,9 +47,9 @@ if __name__=="__main__":
     sigma_data = 1.
 
     # Define optimizers
-    base_lr = 1e-3
+    base_lr = 2e-3
     optimizer_vae = MARS(vae.parameters(), lr=base_lr, eps=1e-4)
-    optimizer_disc = MARS(discriminator.parameters(), lr=base_lr*2e-1, eps=1e-4)
+    optimizer_disc = MARS(discriminator.parameters(), lr=base_lr*1e-1, eps=1e-4)
 
     # Add exponential decay schedule
     gamma = 0.01 ** (1 / total_number_of_steps)  # Decay factor so lr becomes 0.1 * initial_lr after 40,000 steps
@@ -90,7 +90,7 @@ if __name__=="__main__":
         targets = torch.ones(logits.shape[0],*logits.shape[2:], device=device, dtype=torch.long)
         adversarial_loss = F.cross_entropy(logits, targets)/np.log(2)
 
-        vae_loss = recon_loss + kl_group*1e-4 + kl_loss*1e-4 + adversarial_loss*1e-2
+        vae_loss = recon_loss + kl_group*1e-4 + kl_loss*1e-4 + adversarial_loss*1e-4
 
         # Update VAE
         optimizer_vae.zero_grad()
@@ -114,8 +114,27 @@ if __name__=="__main__":
         kl_group_losses.append(kl_group.item())
         kl_losses.append(kl_loss.item())
         disc_losses.append(loss_disc.item())
+
         # Visualization every 100 steps
-        if batch_idx % 100 == 0 and batch_idx > 0:
+        if batch_idx % 10 == 0 and batch_idx > 0:
+            # Create a figure with a custom layout: 3 sections (2 rows for frames, 2x2 grid for losses)
+            fig = plt.figure(figsize=(15, 12))
+
+            # Top section: 2 rows for original and reconstructed frames (2x5 grid)
+            gs_top = plt.GridSpec(2, 5, figure=fig, top=0.95, bottom=0.55, left=0.1, right=0.9)
+            orig_axes = [fig.add_subplot(gs_top[0, i]) for i in range(5)]  # Row 0: Original frames
+            recon_axes = [fig.add_subplot(gs_top[1, i]) for i in range(5)]  # Row 1: Reconstructed frames
+
+            # Bottom section: 2x2 grid for loss plots
+            gs_bottom = plt.GridSpec(2, 2, figure=fig, top=0.45, bottom=0.05, left=0.1, right=0.9, hspace = 0.4)
+            loss_axes = [
+                fig.add_subplot(gs_bottom[0, 0]),  # Top-left: Recon Loss
+                fig.add_subplot(gs_bottom[0, 1]),  # Top-right: KL Group Loss
+                fig.add_subplot(gs_bottom[1, 0]),  # Bottom-left: KL Loss
+                fig.add_subplot(gs_bottom[1, 1])   # Bottom-right: Disc Loss
+            ]
+
+            # --- Video Frames (Top: Original and Reconstructed) ---
             with torch.no_grad():
                 # Detach and denormalize frames and reconstructions
                 frames_denorm = (frames.cpu() + 1) / 2  # Shape: (batch, channels, time, height, width)
@@ -125,7 +144,7 @@ if __name__=="__main__":
                 frames_denorm = frames_denorm[0]  # Shape: (channels, time, height, width)
                 recon_denorm = recon_denorm[0]    # Shape: (channels, time, height, width)
 
-                # clip the values to [0, 1] to avoid numerical errors
+                # Clip values to [0, 1] to avoid numerical errors
                 frames_denorm = torch.clamp(frames_denorm, 0, 1)
                 recon_denorm = torch.clamp(recon_denorm, 0, 1)
 
@@ -138,54 +157,40 @@ if __name__=="__main__":
                 num_frames_to_display = min(5, t)
                 indices = np.linspace(0, t-1, num_frames_to_display, dtype=int)
 
-                # Create a figure with 2 rows: original and reconstructed
-                fig, axes = plt.subplots(2, num_frames_to_display, figsize=(15, 6))
-
+                # Plot original frames (top row)
                 for i, idx in enumerate(indices):
-                    # Original frame
-                    axes[0, i].imshow(frames_denorm[idx])
-                    axes[0, i].set_title(f"Orig t={idx}")
-                    axes[0, i].axis('off')
+                    orig_axes[i].imshow(frames_denorm[idx])
+                    orig_axes[i].set_title(f"Orig t={idx}")
+                    orig_axes[i].axis('off')
 
-                    # Reconstructed frame
-                    axes[1, i].imshow(recon_denorm[idx])
-                    axes[1, i].set_title(f"Recon t={idx}")
-                    axes[1, i].axis('off')
+                # Plot reconstructed frames (second row)
+                for i, idx in enumerate(indices):
+                    recon_axes[i].imshow(recon_denorm[idx])
+                    recon_axes[i].set_title(f"Recon t={idx}")
+                    recon_axes[i].axis('off')
 
-                plt.tight_layout()
-                os.makedirs("training_images", exist_ok=True)
-                plt.savefig(f"training_images/visualization_step_{batch_idx}.png")
-                plt.show()  # Display the plot
+            # --- Loss Plots (Bottom 2x2 Grid) ---
+            # Titles and data for each loss plot
+            loss_data = [recon_losses, kl_group_losses, kl_losses, disc_losses]
+            loss_titles = ['Reconstruction Loss', 'KL Group Loss', 'KL Loss', 'Discriminator Loss']
+            loss_colors = ['blue', 'green', 'red', 'purple']
 
-                # ---------------------- #
-                # Plot loss evolution 
-                # Create a figure with 4 subplots stacked vertically
-                fig, axs = plt.subplots(4, 1, figsize=(10, 12))
+            for ax, data, title, color in zip(loss_axes, loss_data, loss_titles, loss_colors):
+                ax.plot(data, color=color)
+                ax.set_title(title)
+                ax.set_yscale('log')  # Logarithmic y-axis
+                ax.set_xscale('log')  # Logarithmic y-axis
+                ax.set_xlabel('Steps')
+                ax.set_ylabel('Loss')
+                ax.grid(True, linestyle='--', alpha=0.7)
 
-                # Plot each loss in its own subplot
-                axs[0].plot(recon_losses, color='blue')
-                axs[0].set_title('Reconstruction Loss')
-                axs[1].plot(kl_group_losses, color='green')
-                axs[1].set_title('KL Group Loss')
-                axs[2].plot(kl_losses, color='red')
-                axs[2].set_title('KL Loss')
-                axs[3].plot(disc_losses, color='purple')
-                axs[3].set_title('Discriminator Loss')
+            # Adjust layout to fit everything nicely
+            plt.tight_layout()
 
-                # Set labels for all subplots
-                for ax in axs:
-                    ax.set_xlabel('Training Steps')
-                    ax.set_ylabel('Loss')
-                    ax.set_yscale('log')
-                    ax.set_xscale('log')
-                    ax.grid(True, linestyle='--', alpha=0.7)  # Add a light grid for readability
-
-                # Adjust layout to prevent overlap
-                plt.tight_layout()
-
-                # Save the plot to the training_images directory
-                plt.savefig(f"training_images/losses_step_{batch_idx}.png")
-                plt.close()  # Close the figure to free memory
+            # Save the combined plot
+            os.makedirs("training_images", exist_ok=True)
+            plt.savefig(f"training_images/combined_step_{batch_idx}.png")
+            plt.close()
         if batch_idx == total_number_of_steps:
             break
     # %%
