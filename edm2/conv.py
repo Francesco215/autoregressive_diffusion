@@ -37,7 +37,7 @@ class MPConv(torch.nn.Module):
         if w.ndim == 2:
             return x @ w.t()
         assert w.ndim == 4
-        x = F.pad(x, pad = self.padding, mode="constant", value = 1)
+        x = F.pad(x, pad = self.padding, mode="constant", value = 0)
         x = F.conv2d(x, w, dilation=self.dilation)
         return x
 

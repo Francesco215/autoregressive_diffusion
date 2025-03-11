@@ -25,7 +25,7 @@ class GroupCausal3DConvVAE(torch.nn.Module):
         self.time_padding_size = kt+(kt-1)*(dt-1)-self.group_size
 
     def forward(self, x, gain=1, cache=None):
-        x = F.pad(x, pad = self.image_padding, mode="constant", value = 1)
+        x = F.pad(x, pad = self.image_padding, mode="constant", value = 0)
         w = self.weight(gain).to(x.dtype)
 
         multiplicative = 1.
@@ -77,7 +77,6 @@ class ResBlock(nn.Module):
         self.weight_sum0 = nn.Parameter(torch.tensor(0.))
         self.weight_sum1 = nn.Parameter(torch.tensor(0.))
 
-        # TODO: maybe add attention later
         self.attn_block = FrameAttentionVAE(channels, num_heads=1) if group_size==1 else nn.Identity()
     
     def forward(self, x, cache = None):
@@ -179,11 +178,8 @@ class EncoderDecoder(nn.Module):
         for i, block in enumerate(self.encoder_blocks):
             x, cache[f'encoder_block_{i}'] = block(x, cache.get(f'encoder_block_{i}', None))
 
-        if self.encoding_type == 'decoder':
+        if self.encoding_type in ['decoder','discriminator']:
             return x, cache
-
-        if self.encoding_type == 'discriminator':
-            return x.mean(dim=[2,3,4]), cache
 
         mean, logvar = x.split(split_size=x.shape[1]//2, dim = 1)
         logvar = logvar*torch.exp(self.logvar_multiplier)
