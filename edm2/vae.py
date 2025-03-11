@@ -8,6 +8,7 @@ import numpy as np
 
 from .utils import mp_sum, mp_silu
 from .conv import MPConv, NormalizedWeight
+from .attention import FrameAttention
 
 
 class GroupCausal3DConvVAE(torch.nn.Module):
@@ -56,6 +57,13 @@ class ConvVAE(MPConv):
         return einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
 
 
+class FrameAttentionVAE(FrameAttention):
+    def forward(self,x):
+        batch_size = x.shape[0]
+        x = einops.rearrange(x, 'b c t h w -> (b t) c h w')
+        super().forward(x, batch_size)
+        return einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
+
 class ResBlock(nn.Module):
     def __init__(self, channels: int, kernel=(8,3,3), group_size=1):
         super().__init__()
@@ -70,7 +78,7 @@ class ResBlock(nn.Module):
         self.weight_sum1 = nn.Parameter(torch.tensor(0.))
 
         # TODO: maybe add attention later
-        # self.attn_block = VAEAttention(channels, num_heads=4)
+        self.attn_block = FrameAttentionVAE(channels, num_heads=1) if group_size==1 else nn.Identity()
     
     def forward(self, x, cache = None):
         if cache is None: cache = {}
@@ -86,6 +94,8 @@ class ResBlock(nn.Module):
         y = mp_silu(y)
 
         x = mp_sum(x,y)
+
+        x = self.attn_block(x)
 
         return x, cache
 

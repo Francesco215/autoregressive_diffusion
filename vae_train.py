@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 import torch.optim.lr_scheduler as lr_scheduler
 
 from tqdm import tqdm
+import numpy as np
 import matplotlib.pyplot as plt
 
 
@@ -21,7 +22,7 @@ if __name__=="__main__":
     model_id="stabilityai/stable-diffusion-2-1"
 
     batch_size = 2
-    state_size = 64 
+    state_size = 48 
     total_number_of_steps = 4_000
     training_steps = total_number_of_steps * batch_size
 
@@ -77,7 +78,7 @@ if __name__=="__main__":
         targets = torch.cat([torch.ones(frames.shape[0], device=device, dtype=torch.long), torch.zeros(frames.shape[0], device=device, dtype=torch.long)], dim=0)
         frames = torch.cat([frames, recon], dim=0)
         logits, _ = discriminator(frames)
-        loss_disc = F.cross_entropy(logits, targets)
+        loss_disc = F.cross_entropy(logits, targets)/np.log(2)
 
         vae_loss = recon_loss + kl_loss*1e-5 - loss_disc*1e-2
 
