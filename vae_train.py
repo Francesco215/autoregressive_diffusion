@@ -22,7 +22,7 @@ if __name__=="__main__":
     original_env = "LunarLander-v3"
     model_id="stabilityai/stable-diffusion-2-1"
 
-    batch_size = 2
+    batch_size = 4
     state_size = 48 
     total_number_of_steps = 4_000
     training_steps = total_number_of_steps * batch_size
@@ -47,9 +47,9 @@ if __name__=="__main__":
     sigma_data = 1.
 
     # Define optimizers
-    base_lr = 2e-3
+    base_lr = 3e-4
     optimizer_vae = MARS(vae.parameters(), lr=base_lr, eps=1e-4)
-    optimizer_disc = MARS(discriminator.parameters(), lr=base_lr*1e-1, eps=1e-4)
+    optimizer_disc = MARS(discriminator.parameters(), lr=base_lr*2e-2, eps=1e-4)
 
     # Add exponential decay schedule
     gamma = 0.01 ** (1 / total_number_of_steps)  # Decay factor so lr becomes 0.1 * initial_lr after 40,000 steps
@@ -60,7 +60,7 @@ if __name__=="__main__":
     resume_training_run = None
     pbar = tqdm(enumerate(dataloader), total=total_number_of_steps)
 
-    recon_losses, kl_group_losses, kl_losses, disc_losses = [], [], [], []
+    recon_losses, kl_group_losses, kl_losses, disc_losses, adversarial_losses= [], [], [], [], []
 
     #%%
     # Training loop
@@ -74,23 +74,25 @@ if __name__=="__main__":
         recon, mean, logvar, _ = vae(frames)
 
         # in theory the mean should be only with respect to the batch size
-        group_mean = mean.mean(dim=(0,2,3,4))
-        group_var = mean.var(dim=(0,2,3,4))
+        individual_var = logvar.exp().mean(dim=(0, 2, 3, 4))  # Average of individual variances
+        mean_var = mean.var(dim=(0, 2, 3, 4))  # Variance of means
+        group_var = individual_var + mean_var  # Total mixture variance
+        group_mean = mean.mean(dim=(0, 2, 3, 4))
+        kl_group = -0.5 * (1 + group_var.log() - group_mean.pow(2) - group_var).sum(dim=0)
+        kl_loss  = -0.5 * (1 + logvar - logvar.exp()).sum(dim=1).mean()
+        # kl_loss = -0.5 * (1 + logvar - mean.pow(2) - logvar.exp()).sum(dim=1).mean()
 
-        kl_group = - 0.5 * (1 + group_var.log() - group_mean.pow(2) - group_var).sum(dim=0)
+        # Compute all discriminator outputs
+        recon_input = einops.rearrange(recon, 'b c t (h1 h2) (w1 w2) -> (b h1 w1) c t h2 w2', h1=4, w1=4)
+        logits, _ = discriminator(recon_input)
+        targets = torch.ones(logits.shape[0],*logits.shape[2:], device=device, dtype=torch.long)
+        adversarial_loss = F.cross_entropy(logits, targets)/np.log(2)
+        adversarial_weight = 1 / (adversarial_loss.detach() + 1) * 2e-2
 
         # VAE losses
         recon_loss = F.mse_loss(recon, frames, reduction='mean')
 
-        # kl_loss = -0.5 * (1 + logvar - mean.pow(2) - logvar.exp()).sum(dim=1).mean()
-        kl_loss = -0.5 * (1 + logvar - logvar.exp()).sum(dim=1).mean()
-
-        # Compute all discriminator outputs
-        logits, _ = discriminator(recon)
-        targets = torch.ones(logits.shape[0],*logits.shape[2:], device=device, dtype=torch.long)
-        adversarial_loss = F.cross_entropy(logits, targets)/np.log(2)
-
-        vae_loss = recon_loss + kl_group*1e-4 + kl_loss*1e-4 + adversarial_loss*1e-4
+        vae_loss = recon_loss + kl_group*1e-4 + kl_loss*1e-4 + adversarial_loss*adversarial_weight
 
         # Update VAE
         optimizer_vae.zero_grad()
@@ -99,8 +101,9 @@ if __name__=="__main__":
         scheduler_vae.step()  # Step the VAE scheduler
 
         frames = torch.cat([frames.detach(), recon.detach()], dim=0)
+        frames_input = einops.rearrange(frames, 'b c t (h1 h2) (w1 w2) -> (b h1 w1) c t h2 w2', h1=4, w1=4).detach()
         targets = torch.cat((targets, torch.zeros_like(targets)), dim=0)
-        logits, _ = discriminator(frames)
+        logits, _ = discriminator(frames_input)
         loss_disc = F.cross_entropy(logits, targets)/np.log(2)
 
         # Update discriminator
@@ -109,14 +112,15 @@ if __name__=="__main__":
         optimizer_disc.step()
         scheduler_disc.step()
         
-        pbar.set_postfix_str(f"MSE loss: {recon_loss.item():.4f}, KL group loss: {kl_group.item():.4f} KL loss: {kl_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}")
+        pbar.set_postfix_str(f"MSE loss: {recon_loss.item():.4f}, KL group loss: {kl_group.item():.4f} KL loss: {kl_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}, Adversarial Loss: {adversarial_loss.item():.4f}")
         recon_losses.append(recon_loss.item())
         kl_group_losses.append(kl_group.item())
         kl_losses.append(kl_loss.item())
+        adversarial_losses.append(adversarial_loss.item())
         disc_losses.append(loss_disc.item())
 
         # Visualization every 100 steps
-        if batch_idx % 10 == 0 and batch_idx > 0:
+        if batch_idx % 100 == 0 and batch_idx > 0:
             # Create a figure with a custom layout: 3 sections (2 rows for frames, 2x2 grid for losses)
             fig = plt.figure(figsize=(15, 12))
 
@@ -168,21 +172,25 @@ if __name__=="__main__":
                     recon_axes[i].imshow(recon_denorm[idx])
                     recon_axes[i].set_title(f"Recon t={idx}")
                     recon_axes[i].axis('off')
+                
 
             # --- Loss Plots (Bottom 2x2 Grid) ---
             # Titles and data for each loss plot
-            loss_data = [recon_losses, kl_group_losses, kl_losses, disc_losses]
-            loss_titles = ['Reconstruction Loss', 'KL Group Loss', 'KL Loss', 'Discriminator Loss']
-            loss_colors = ['blue', 'green', 'red', 'purple']
+            loss_data = [recon_losses, kl_group_losses, kl_losses, disc_losses, adversarial_losses]
+            loss_titles = ['Reconstruction Loss', 'KL Group Loss', 'KL Loss', 'Discriminator Losses', 'Discriminator Losses']
+            loss_colors = ['blue', 'green', 'red', 'purple', 'orange']
+            labels = [None, None, None, 'Discriminator Loss', 'Adversarial Loss']
 
-            for ax, data, title, color in zip(loss_axes, loss_data, loss_titles, loss_colors):
-                ax.plot(data, color=color)
-                ax.set_title(title)
-                ax.set_yscale('log')  # Logarithmic y-axis
-                ax.set_xscale('log')  # Logarithmic y-axis
-                ax.set_xlabel('Steps')
-                ax.set_ylabel('Loss')
-                ax.grid(True, linestyle='--', alpha=0.7)
+            for i in range(5):
+                loss_axes[min(i,3)].plot(loss_data[i], color=loss_colors[i], label=labels[i])
+                loss_axes[min(i,3)].set_title(loss_titles[i])
+                loss_axes[min(i,3)].set_yscale('log')  
+                loss_axes[min(i,3)].set_xscale('log')  
+                loss_axes[min(i,3)].set_xlabel('Steps')
+                loss_axes[min(i,3)].set_ylabel('Loss')
+                loss_axes[min(i,3)].grid(True, linestyle='--', alpha=0.7)
+                if i==4:
+                    loss_axes[min(i,3)].legend()
 
             # Adjust layout to fit everything nicely
             plt.tight_layout()

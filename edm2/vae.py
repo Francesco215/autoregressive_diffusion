@@ -69,10 +69,10 @@ class ResBlock(nn.Module):
         super().__init__()
 
         self.conv3d0 = GroupCausal3DConvVAE(channels, channels,  kernel, group_size, dilation = (1,1,1))
-        self.conv3d1 = GroupCausal3DConvVAE(channels, channels, kernel, group_size, dilation = (4,3,3))
+        self.conv3d1 = GroupCausal3DConvVAE(channels, channels, kernel, group_size, dilation = (1,1,1))
 
         self.conv2d0 = ConvVAE(channels, channels,  kernel[1:], dilation = 1)
-        self.conv2d1 = ConvVAE(channels, channels, kernel[1:], dilation = 3)
+        self.conv2d1 = ConvVAE(channels, channels, kernel[1:], dilation = 1)
                                                                    
         self.weight_sum0 = nn.Parameter(torch.tensor(0.))
         self.weight_sum1 = nn.Parameter(torch.tensor(0.))
