@@ -7,18 +7,24 @@ import einops
 import gymnasium as gym
 
 
+
 class GymDataGenerator(IterableDataset):
-    def __init__(self, state_size=6, environment_name="CartPole-v1", training_examples=10_000, autoencoder_time_compression=4):
+    def __init__(self, state_size=6, environment_name="LunarLander-v3", training_examples=10_000, autoencoder_time_compression=4):
         self.state_size = state_size
         self.environment_name = environment_name
         self.evolution_time = 10
-        self.terminate_size = 2048
+        self.terminate_size = 10_000
         self.training_examples = training_examples
         self.autoencoder_time_compression = autoencoder_time_compression
 
+    def is_lander_in_frame(self, state):
+        """Check if the lander is within the visible frame based on its state."""
+        x, y = state[0], state[1]
+        return abs(x) < 0.95 and 0 < y < 1.9
+
     @torch.no_grad()
     def __iter__(self):
-        env = gym.make(self.environment_name,render_mode="rgb_array")
+        env = gym.make(self.environment_name, render_mode="rgb_array")
         terminated = True
         n_data_yielded = 0
 
@@ -29,31 +35,37 @@ class GymDataGenerator(IterableDataset):
                 reward = 0
                 action = 0
                 frame_history = []
+                state_history = []  # Added to track states
                 action_history = []
                 step_count = -self.evolution_time
             else:
-                if step_count % self.autoencoder_time_compression==0:
+                if step_count % self.autoencoder_time_compression == 0:
                     action = env.action_space.sample()  # Random action
                     action_history.append(action)
-                _ , reward, terminated, _, _ = env.step(action)
+                # Capture the state along with reward and termination
+                state, reward, terminated, _, _ = env.step(action)
             
-            if step_count >= 0: # This if can be removed, but having it avoids rendering useless frames
+            if step_count >= 0:
                 frame = env.render()
                 frame = resize_image(frame)
                 frame_history.append(torch.tensor(frame))
+                state_history.append(state)  # Store the state for this frame
             
-            if step_count > 0 and step_count%self.state_size==0:  # Skip the first step as we don't have a previous state
-                frames = torch.stack(frame_history[-self.state_size:])
-                actions = torch.tensor(action_history[-self.state_size//self.autoencoder_time_compression:])
-
-                yield frames, actions, torch.tensor(reward).clone()
-                n_data_yielded += 1
-                frame_history, action_history = [], []
+            if step_count > 0 and step_count % self.state_size == 0:
+                # Check if the lander is in the frame for all states in the sequence
+                if all(self.is_lander_in_frame(s) for s in state_history[-self.state_size:]):
+                    frames = torch.stack(frame_history[-self.state_size:])
+                    actions = torch.tensor(action_history[-self.state_size // self.autoencoder_time_compression:])
+                    yield frames, actions, torch.tensor(reward).clone()
+                    n_data_yielded += 1
+                # Reset histories whether we yield or not to maintain sequence alignment
+                frame_history, state_history, action_history = [], [], []
             
             if step_count > self.terminate_size:
                 terminated = True
                 
             step_count += 1
+
 
 
 def resize_image(image_array):
