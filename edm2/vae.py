@@ -17,7 +17,8 @@ class GroupCausal3DConvVAE(torch.nn.Module):
         self.out_channels = out_channels
         self.group_size = group_size
         self.dilation = dilation
-        self.weight = NormalizedWeight(in_channels, out_channels*group_size, kernel)
+        # self.weight = NormalizedWeight(in_channels, out_channels*group_size, kernel, bias = True)
+        self.conv3d = nn.Conv3d(in_channels, out_channels*group_size, kernel, dilation=dilation, stride=(group_size, 1, 1), bias=True)
 
         kt, kw, kh = kernel
         dt, dw, dh = dilation
@@ -26,25 +27,26 @@ class GroupCausal3DConvVAE(torch.nn.Module):
 
     def forward(self, x, gain=1, cache=None):
         x = F.pad(x, pad = self.image_padding, mode="constant", value = 0)
-        w = self.weight(gain).to(x.dtype)
+        # weight, bias = self.weight(gain)
 
         multiplicative = 1.
         if cache is None:
             cache = torch.zeros(*x.shape[:2], self.time_padding_size, *x.shape[3:], device=x.device, dtype=x.dtype)
 
-            kernel_size = torch.tensor(w.shape[2], device="cuda")
-            group_index = torch.arange(x.shape[2], device=x.device)//self.group_size+1
-            n_inputs_inside = torch.clip((group_index*self.group_size-1)//self.dilation[0]+1, max=kernel_size)
-            multiplicative = (torch.sqrt(kernel_size/n_inputs_inside)[:,None,None]).detach()
+            # kernel_size = torch.tensor(weight.shape[2], device="cuda")
+            # group_index = torch.arange(x.shape[2], device=x.device)//self.group_size+1
+            # n_inputs_inside = torch.clip((group_index*self.group_size-1)//self.dilation[0]+1, max=kernel_size)
+            # multiplicative = (torch.sqrt(kernel_size/n_inputs_inside)[:,None,None]).detach()
 
 
         x = torch.cat((cache, x), dim=-3)
         cache =  None if self.training else x[:,:,-self.time_padding_size:].clone().detach()
 
-        x = F.conv3d(x, w, stride = (self.group_size, 1, 1), dilation=self.dilation)
+        # x = F.conv3d(x, weight, bias, stride = (self.group_size, 1, 1), dilation=self.dilation)
+        x = self.conv3d(x)
 
         x = einops.rearrange(x, 'b (c g) t h w -> b c (t g) h w', g=self.group_size)
-        x = x * multiplicative
+        # x = x * multiplicative
 
         return x, cache
 
@@ -54,6 +56,18 @@ class ConvVAE(MPConv):
         batch_size = x.shape[0]
         x = einops.rearrange(x, 'b c t h w -> (b t) c h w')
         x = super().forward(x,gain)
+        return einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
+
+
+class myconv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel, dilation=1):
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel, dilation=dilation, padding=kernel[1]//2)
+    
+    def forward(self, x):
+        batch_size = x.shape[0]
+        x = einops.rearrange(x, 'b c t h w -> (b t) c h w')
+        x = self.conv(x)
         return einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
 
 
@@ -71,30 +85,28 @@ class ResBlock(nn.Module):
         self.conv3d0 = GroupCausal3DConvVAE(channels, channels,  kernel, group_size, dilation = (1,1,1))
         self.conv3d1 = GroupCausal3DConvVAE(channels, channels, kernel, group_size, dilation = (1,1,1))
 
-        self.conv2d0 = ConvVAE(channels, channels,  kernel[1:], dilation = 1)
-        self.conv2d1 = ConvVAE(channels, channels, kernel[1:], dilation = 1)
+        self.conv2d0 = myconv(channels, channels,  kernel[1:], dilation = 1)
+        self.conv2d1 = myconv(channels, channels,  kernel[1:], dilation = 1)
                                                                    
-        self.weight_sum0 = nn.Parameter(torch.tensor(0.))
-        self.weight_sum1 = nn.Parameter(torch.tensor(0.))
-
-        self.attn_block = FrameAttentionVAE(channels, num_heads=1) if group_size==1 else nn.Identity()
+        # self.attn_block = FrameAttentionVAE(channels, num_heads=1) if group_size==1 else nn.Identity()
     
     def forward(self, x, cache = None):
         if cache is None: cache = {}
 
+        t = x.clone()
         y, cache['conv3d_res0'] = self.conv3d0(x, cache=cache.get('conv3d_res0', None))
-        y = mp_sum(y, self.conv2d0(x), F.sigmoid(self.weight_sum0))
+        y = y + self.conv2d0(x)
         y = mp_silu(y)
 
         t = y.clone()
         
         y, cache['conv3d_res1'] = self.conv3d1(t, cache=cache.get('conv3d_res1', None))
-        y = mp_sum(y, self.conv2d1(t), F.sigmoid(self.weight_sum1))
+        y = y + self.conv2d1(t)
         y = mp_silu(y)
 
-        x = mp_sum(x,y)
+        x = x + y
 
-        x = self.attn_block(x)
+        # x = self.attn_block(x)
 
         return x, cache
 
@@ -210,4 +222,58 @@ class VAE(nn.Module):
         
         return recon, mean, logvar, cache
 
-        
+
+class PatchGAN3D(nn.Module):
+    def __init__(self, in_channels=3, mid_channels=64, n_layers=3, kernel=(3, 3, 3), stride=(2, 2, 2), padding=(1, 1, 1), output_channels=2):
+        """
+        A 3D PatchGAN discriminator for video data, modified to return two logits per patch.
+
+        Args:
+            in_channels (int): Number of input channels (e.g., 3 for RGB).
+            mid_channels (int): Number of channels in intermediate layers.
+            n_layers (int): Number of convolutional layers.
+            kernel (tuple): Kernel size for 3D convolutions (t, h, w).
+            stride (tuple): Stride for 3D convolutions (t, h, w).
+            padding (tuple): Padding for 3D convolutions (t, h, w).
+            output_channels (int): Number of output channels (set to 2 for two logits).
+        """
+        super().__init__()
+        layers = []
+        channels = in_channels
+
+        # Build convolutional layers
+        for i in range(n_layers):
+            out_channels = mid_channels if i < n_layers - 1 else output_channels
+            layers.append(
+                nn.Conv3d(
+                    in_channels=channels,
+                    out_channels=out_channels,
+                    kernel_size=kernel,
+                    stride=stride if i < n_layers - 1 else (1, 1, 1),  # No stride in the last layer
+                    padding=padding
+                )
+            )
+            if i < n_layers - 1:
+                layers.append(nn.LeakyReLU(0.2, inplace=True))  # Activation for intermediate layers
+            channels = out_channels
+
+        self.model = nn.Sequential(*layers)
+
+    def forward(self, x, rearrange=False, t2=4, h2=8, w2=8):
+        """
+        Forward pass of the discriminator.
+
+        Args:
+            x (Tensor): Input video tensor of shape (b, c, t, h, w).
+            rearrange (bool): If True, rearrange input into patches before processing.
+            t2, h2, w2 (int): Patch sizes for rearrangement (used if rearrange=True).
+
+        Returns:
+            Tensor: Output grid of shape (b, 2, t', h', w') if rearrange=False,
+                    or ((b * t1 * h1 * w1), 2, t2', h2', w2') if rearrange=True,
+                    where each pair of logits corresponds to a patch.
+        """
+        if rearrange:
+            # Rearrange input into patches
+            x = einops.rearrange(x, 'b c (t1 t2) (h1 h2) (w1 w2) -> (b t1 h1 w1) c t2 h2 w2', t2=t2, h2=h2, w2=w2)
+        return self.model(x) 

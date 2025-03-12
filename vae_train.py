@@ -4,6 +4,7 @@ import torch
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 import torch.optim.lr_scheduler as lr_scheduler
+from torch.optim import AdamW
 
 import os
 from tqdm import tqdm
@@ -13,7 +14,7 @@ import matplotlib.pyplot as plt
 
 
 from edm2.gym_dataloader import GymDataGenerator, gym_collate_function
-from edm2.vae import VAE, EncoderDecoder
+from edm2.vae import VAE, EncoderDecoder, PatchGAN3D
 from edm2.mars import MARS
 torch.autograd.set_detect_anomaly(True)
 if __name__=="__main__":
@@ -26,7 +27,6 @@ if __name__=="__main__":
     state_size = 48 
     total_number_of_steps = 4_000
     training_steps = total_number_of_steps * batch_size
-
     
     # Hyperparameters
     latent_channels = 16
@@ -34,7 +34,7 @@ if __name__=="__main__":
 
     # Initialize models
     vae = VAE(latent_channels=latent_channels, n_res_blocks=n_res_blocks).to(device)
-    discriminator = EncoderDecoder(latent_channels = 2, n_res_blocks=n_res_blocks, time_compressions=[1, 2, 4], spatial_compressions=[1, 4, 4], type='discriminator').to(device)
+    discriminator = PatchGAN3D(mid_channels=128, n_layers=4).to(device)
     
     dataset = GymDataGenerator(state_size, original_env, training_steps, autoencoder_time_compression = 4)
     dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=gym_collate_function, num_workers=16)
@@ -47,9 +47,9 @@ if __name__=="__main__":
     sigma_data = 1.
 
     # Define optimizers
-    base_lr = 3e-4
-    optimizer_vae = MARS(vae.parameters(), lr=base_lr, eps=1e-4)
-    optimizer_disc = MARS(discriminator.parameters(), lr=base_lr*2e-2, eps=1e-4)
+    base_lr = 4e-4
+    optimizer_vae = AdamW(vae.parameters(), lr=base_lr, eps=1e-4)
+    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*1e-1, eps=1e-4)
 
     # Add exponential decay schedule
     gamma = 0.01 ** (1 / total_number_of_steps)  # Decay factor so lr becomes 0.1 * initial_lr after 40,000 steps
@@ -83,14 +83,15 @@ if __name__=="__main__":
         # kl_loss = -0.5 * (1 + logvar - mean.pow(2) - logvar.exp()).sum(dim=1).mean()
 
         # Compute all discriminator outputs
+        # recon_input = einops.rearrange(recon, 'b c (t1 t2) (h1 h2) (w1 w2) -> (b t1 h1 w1) c t2 h2 w2', h1=4, w1=4, t2=4)
         recon_input = einops.rearrange(recon, 'b c t (h1 h2) (w1 w2) -> (b h1 w1) c t h2 w2', h1=4, w1=4)
-        logits, _ = discriminator(recon_input)
+        logits = discriminator(recon_input)
         targets = torch.ones(logits.shape[0],*logits.shape[2:], device=device, dtype=torch.long)
         adversarial_loss = F.cross_entropy(logits, targets)/np.log(2)
-        adversarial_weight = 1 / (adversarial_loss.detach() + 1) * 2e-2
+        adversarial_weight = 1 / (adversarial_loss.detach()*.1 + 1) * 6e-2
 
         # VAE losses
-        recon_loss = F.mse_loss(recon, frames, reduction='mean')
+        recon_loss = F.l1_loss(recon, frames, reduction='mean')
 
         vae_loss = recon_loss + kl_group*1e-4 + kl_loss*1e-4 + adversarial_loss*adversarial_weight
 
@@ -101,9 +102,10 @@ if __name__=="__main__":
         scheduler_vae.step()  # Step the VAE scheduler
 
         frames = torch.cat([frames.detach(), recon.detach()], dim=0)
+        # frames_input = einops.rearrange(frames, 'b c (t1 t2) (h1 h2) (w1 w2) -> (b t1 h1 w1) c t2 h2 w2', h1=4, w1=4, t2=4).detach()
         frames_input = einops.rearrange(frames, 'b c t (h1 h2) (w1 w2) -> (b h1 w1) c t h2 w2', h1=4, w1=4).detach()
         targets = torch.cat((targets, torch.zeros_like(targets)), dim=0)
-        logits, _ = discriminator(frames_input)
+        logits = discriminator(frames_input)
         loss_disc = F.cross_entropy(logits, targets)/np.log(2)
 
         # Update discriminator
@@ -112,7 +114,7 @@ if __name__=="__main__":
         optimizer_disc.step()
         scheduler_disc.step()
         
-        pbar.set_postfix_str(f"MSE loss: {recon_loss.item():.4f}, KL group loss: {kl_group.item():.4f} KL loss: {kl_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}, Adversarial Loss: {adversarial_loss.item():.4f}")
+        pbar.set_postfix_str(f"recon loss: {recon_loss.item():.4f}, KL group loss: {kl_group.item():.4f} KL loss: {kl_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}, Adversarial Loss: {adversarial_loss.item():.4f}")
         recon_losses.append(recon_loss.item())
         kl_group_losses.append(kl_group.item())
         kl_losses.append(kl_loss.item())
@@ -187,8 +189,11 @@ if __name__=="__main__":
                 loss_axes[min(i,3)].set_yscale('log')  
                 loss_axes[min(i,3)].set_xscale('log')  
                 loss_axes[min(i,3)].set_xlabel('Steps')
+                loss_axes[min(i,3)].set_xlim(left=10)
                 loss_axes[min(i,3)].set_ylabel('Loss')
                 loss_axes[min(i,3)].grid(True, linestyle='--', alpha=0.7)
+
+                
                 if i==4:
                     loss_axes[min(i,3)].legend()
 
@@ -196,8 +201,8 @@ if __name__=="__main__":
             plt.tight_layout()
 
             # Save the combined plot
-            os.makedirs("training_images", exist_ok=True)
-            plt.savefig(f"training_images/combined_step_{batch_idx}.png")
+            os.makedirs("images_training", exist_ok=True)
+            plt.savefig(f"images_training/combined_step_{batch_idx}.png")
             plt.close()
         if batch_idx == total_number_of_steps:
             break
