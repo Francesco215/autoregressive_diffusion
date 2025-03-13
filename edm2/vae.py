@@ -283,11 +283,6 @@ class VideoDiscriminator(nn.Module):
             # Update in_channels for the next layer
             in_channels = self.discriminator_conv_filters[i]
         
-        # Add layers to reduce feature map to logits
-        layers_list.append(nn.AdaptiveAvgPool3d((1, 1, 1)))  # Reduce to (batch, channels, 1, 1, 1)
-        layers_list.append(nn.Flatten())  # Flatten to (batch, channels)
-        layers_list.append(nn.Linear(self.discriminator_conv_filters[-1], 2))  # Map to (batch, 1)
-        
         # Combine all layers into a sequential model
         self.model = nn.Sequential(*layers_list)
     

@@ -24,8 +24,8 @@ if __name__=="__main__":
     original_env = "LunarLander-v3"
     model_id="stabilityai/stable-diffusion-2-1"
 
-    batch_size = 4
-    state_size = 32 
+    batch_size = 8
+    state_size = 48 
     total_number_of_steps = 4_000
     training_steps = total_number_of_steps * batch_size
     
@@ -37,9 +37,9 @@ if __name__=="__main__":
     vae = VAE(latent_channels=latent_channels, n_res_blocks=n_res_blocks).to(device)
     # Example instantiation
     input_dim = (3, 32, 256, 256)  # channels, time, height, width
-    filters = [16,16, 16]
-    kernel_sizes = [4, 4, 4]
-    strides = [2, 2, 2]
+    filters = [64,64,32,2]
+    kernel_sizes = [4, 4, 4, 4]
+    strides = [2, 2, 2, 2]
 
     discriminator = VideoDiscriminator(
         input_dim=input_dim,
@@ -47,7 +47,7 @@ if __name__=="__main__":
         discriminator_conv_kernel_size=kernel_sizes,
         discriminator_conv_strides=strides,
         use_batch_norm=True,
-        use_dropout=True
+        use_dropout=True,
     ).to(device)
     
     dataset = GymDataGenerator(state_size, original_env, training_steps, autoencoder_time_compression = 4)
@@ -63,7 +63,7 @@ if __name__=="__main__":
     # Define optimizers
     base_lr = 4e-4
     optimizer_vae = AdamW(vae.parameters(), lr=base_lr, eps=1e-4)
-    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*2, eps=1e-4)
+    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*5, eps=1e-4)
     optimizer_disc.zero_grad()
 
     # Add exponential decay schedule
@@ -101,15 +101,15 @@ if __name__=="__main__":
         # recon_input = einops.rearrange(recon, 'b c (t1 t2) (h1 h2) (w1 w2) -> (b t1 h1 w1) c t2 h2 w2', h1=4, w1=4, t2=4)
         # recon_input = einops.rearrange(recon, 'b c t (h1 h2) (w1 w2) -> (b h1 w1) c t h2 w2', h1=4, w1=4)
         logits = discriminator(recon)
-        targets = torch.ones(logits.shape[0], device=device, dtype=torch.long)
+        targets = torch.ones(logits.shape[0], *logits.shape[2:], device=device, dtype=torch.long)
         adversarial_loss = F.cross_entropy(logits, targets)/np.log(2)
-        # adversarial_weight = 2e-2
-        adversarial_weight = 1 / (adversarial_loss.detach()*.1 + 1) * 2e-2
+        adversarial_weight = 2e-3
+        # adversarial_weight = 1 / (adversarial_loss.detach()*.1 + 1) * 2e-2
 
         # VAE losses
-        recon_loss = F.l1_loss(recon, frames, reduction='mean')
+        recon_loss = F.mse_loss(recon, frames, reduction='mean')
 
-        vae_loss = recon_loss + kl_group*1e-4 + kl_loss*1e-4 + adversarial_loss*adversarial_weight
+        vae_loss = recon_loss + kl_group*1e-4 + kl_loss*1e-4 #+ adversarial_loss*adversarial_weight
 
         # Update VAE
         optimizer_vae.zero_grad()
@@ -119,20 +119,18 @@ if __name__=="__main__":
         scheduler_vae.step()  # Step the VAE scheduler
 
 
-        frames = torch.cat([frames.detach(), recon.detach()], dim=0)
-        # frames_input = einops.rearrange(frames, 'b c (t1 t2) (h1 h2) (w1 w2) -> (b t1 h1 w1) c t2 h2 w2', h1=4, w1=4, t2=4).detach()
-        # frames_input = einops.rearrange(frames, 'b c t (h1 h2) (w1 w2) -> (b h1 w1) c t h2 w2', h1=4, w1=4).detach()
-        targets = torch.cat((targets, torch.zeros_like(targets)), dim=0)
-        logits = discriminator(frames)
-        loss_disc = F.cross_entropy(logits, targets)/np.log(2)
+        logits_real = discriminator(frames.detach())
+        logits_fake = discriminator(recon.detach())
+        loss_disc_real = F.cross_entropy(logits_real, torch.ones_like (targets))/np.log(2)
+        loss_disc_fake = F.cross_entropy(logits_fake, torch.zeros_like(targets))/np.log(2)
+        loss_disc = (loss_disc_real + loss_disc_fake)/2
 
         # Update discriminator
+        optimizer_disc.zero_grad()
         loss_disc.backward()
-        if batch_idx%4 ==0:
-            nn.utils.clip_grad_norm_(discriminator.parameters(), 1)
-            optimizer_disc.step()
-            scheduler_disc.step()
-            optimizer_disc.zero_grad()
+        nn.utils.clip_grad_norm_(discriminator.parameters(), 1)
+        optimizer_disc.step()
+        scheduler_disc.step()
         
         pbar.set_postfix_str(f"recon loss: {recon_loss.item():.4f}, KL group loss: {kl_group.item():.4f} KL loss: {kl_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}, Adversarial Loss: {adversarial_loss.item():.4f}")
         recon_losses.append(recon_loss.item())
