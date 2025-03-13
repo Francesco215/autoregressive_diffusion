@@ -167,7 +167,7 @@ class EncoderDecoder(nn.Module):
         self.encoding_type = type
 
         group_sizes = np.cumprod(time_compressions)
-        channels = [3, 32, 16, latent_channels] #assuming the input is always rgb
+        channels = [3, 4, 4, latent_channels] #assuming the input is always rgb
         kernel = (8,3,3)
         
         if type=='encoder':
@@ -223,57 +223,75 @@ class VAE(nn.Module):
         return recon, mean, logvar, cache
 
 
-class PatchGAN3D(nn.Module):
-    def __init__(self, in_channels=3, mid_channels=64, n_layers=3, kernel=(3, 3, 3), stride=(2, 2, 2), padding=(1, 1, 1), output_channels=2):
-        """
-        A 3D PatchGAN discriminator for video data, modified to return two logits per patch.
 
-        Args:
-            in_channels (int): Number of input channels (e.g., 3 for RGB).
-            mid_channels (int): Number of channels in intermediate layers.
-            n_layers (int): Number of convolutional layers.
-            kernel (tuple): Kernel size for 3D convolutions (t, h, w).
-            stride (tuple): Stride for 3D convolutions (t, h, w).
-            padding (tuple): Padding for 3D convolutions (t, h, w).
-            output_channels (int): Number of output channels (set to 2 for two logits).
-        """
-        super().__init__()
-        layers = []
-        channels = in_channels
-
+class VideoDiscriminator(nn.Module):
+    def __init__(self, input_dim, discriminator_conv_filters, discriminator_conv_kernel_size, discriminator_conv_strides, use_batch_norm=True, use_dropout=True):
+        super(VideoDiscriminator, self).__init__()
+        
+        # Store input parameters
+        self.input_dim = input_dim  # Tuple: (channels, time, height, width)
+        self.discriminator_conv_filters = discriminator_conv_filters  # List of output channels
+        self.discriminator_conv_kernel_size = discriminator_conv_kernel_size  # List of kernel sizes
+        self.discriminator_conv_strides = discriminator_conv_strides  # List of strides
+        self.use_batch_norm = use_batch_norm
+        self.use_dropout = use_dropout
+        self.n_layers_discriminator = len(discriminator_conv_filters)
+        
+        # Initialize the layers list
+        layers_list = []
+        in_channels = self.input_dim[0]  # Input channels from input_dim
+        
         # Build convolutional layers
-        for i in range(n_layers):
-            out_channels = mid_channels if i < n_layers - 1 else output_channels
-            layers.append(
-                nn.Conv3d(
-                    in_channels=channels,
-                    out_channels=out_channels,
-                    kernel_size=kernel,
-                    stride=stride if i < n_layers - 1 else (1, 1, 1),  # No stride in the last layer
-                    padding=padding
-                )
+        for i in range(self.n_layers_discriminator):
+            # Handle kernel_size and stride as int or tuple
+            kernel_size = self.discriminator_conv_kernel_size[i]
+            stride = self.discriminator_conv_strides[i]
+            
+            # Convert kernel_size to 3D tuple if integer
+            if isinstance(kernel_size, int):
+                kernel_size = (kernel_size, kernel_size, kernel_size)
+                padding = ((kernel_size[0] - 1) // 2, (kernel_size[1] - 1) // 2, (kernel_size[2] - 1) // 2)
+            else:
+                padding = tuple((k - 1) // 2 for k in kernel_size)
+            
+            # Convert stride to 3D tuple if integer
+            if isinstance(stride, int):
+                stride = (stride, stride, stride)
+            
+            # Add 3D convolutional layer
+            conv_layer = nn.Conv3d(
+                in_channels=in_channels,
+                out_channels=self.discriminator_conv_filters[i],
+                kernel_size=kernel_size,
+                stride=stride,
+                padding=padding
             )
-            if i < n_layers - 1:
-                layers.append(nn.LeakyReLU(0.2, inplace=True))  # Activation for intermediate layers
-            channels = out_channels
-
-        self.model = nn.Sequential(*layers)
-
-    def forward(self, x, rearrange=False, t2=4, h2=8, w2=8):
-        """
-        Forward pass of the discriminator.
-
-        Args:
-            x (Tensor): Input video tensor of shape (b, c, t, h, w).
-            rearrange (bool): If True, rearrange input into patches before processing.
-            t2, h2, w2 (int): Patch sizes for rearrangement (used if rearrange=True).
-
-        Returns:
-            Tensor: Output grid of shape (b, 2, t', h', w') if rearrange=False,
-                    or ((b * t1 * h1 * w1), 2, t2', h2', w2') if rearrange=True,
-                    where each pair of logits corresponds to a patch.
-        """
-        if rearrange:
-            # Rearrange input into patches
-            x = einops.rearrange(x, 'b c (t1 t2) (h1 h2) (w1 w2) -> (b t1 h1 w1) c t2 h2 w2', t2=t2, h2=h2, w2=w2)
-        return self.model(x) 
+            layers_list.append(conv_layer)
+            
+            # Add batch normalization if enabled
+            if self.use_batch_norm:
+                layers_list.append(nn.BatchNorm3d(self.discriminator_conv_filters[i]))
+            
+            # Add LeakyReLU for all but the last conv layer
+            if i < self.n_layers_discriminator - 1:
+                layers_list.append(nn.LeakyReLU(0.3))  # Negative slope of 0.3
+            
+            # Add dropout if enabled
+            if self.use_dropout:
+                layers_list.append(nn.Dropout(p=0.25))  # Dropout rate of 25%
+            
+            # Update in_channels for the next layer
+            in_channels = self.discriminator_conv_filters[i]
+        
+        # Add layers to reduce feature map to logits
+        layers_list.append(nn.AdaptiveAvgPool3d((1, 1, 1)))  # Reduce to (batch, channels, 1, 1, 1)
+        layers_list.append(nn.Flatten())  # Flatten to (batch, channels)
+        layers_list.append(nn.Linear(self.discriminator_conv_filters[-1], 2))  # Map to (batch, 1)
+        
+        # Combine all layers into a sequential model
+        self.model = nn.Sequential(*layers_list)
+    
+    def forward(self, x):
+        # Input: (batch_size, channels, time, height, width)
+        # Output: (batch_size, 1) - logits
+        return self.model(x)

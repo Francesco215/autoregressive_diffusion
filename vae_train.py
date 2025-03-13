@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 
 
 from edm2.gym_dataloader import GymDataGenerator, gym_collate_function
-from edm2.vae import VAE, EncoderDecoder, PatchGAN3D
+from edm2.vae import VAE, EncoderDecoder, VideoDiscriminator
 from edm2.mars import MARS
 torch.autograd.set_detect_anomaly(True)
 if __name__=="__main__":
@@ -24,7 +24,7 @@ if __name__=="__main__":
     original_env = "LunarLander-v3"
     model_id="stabilityai/stable-diffusion-2-1"
 
-    batch_size = 2
+    batch_size = 4
     state_size = 32 
     total_number_of_steps = 4_000
     training_steps = total_number_of_steps * batch_size
@@ -35,7 +35,20 @@ if __name__=="__main__":
 
     # Initialize models
     vae = VAE(latent_channels=latent_channels, n_res_blocks=n_res_blocks).to(device)
-    discriminator = PatchGAN3D(mid_channels=128, n_layers=4).to(device)
+    # Example instantiation
+    input_dim = (3, 32, 256, 256)  # channels, time, height, width
+    filters = [16,16, 16]
+    kernel_sizes = [4, 4, 4]
+    strides = [2, 2, 2]
+
+    discriminator = VideoDiscriminator(
+        input_dim=input_dim,
+        discriminator_conv_filters=filters,
+        discriminator_conv_kernel_size=kernel_sizes,
+        discriminator_conv_strides=strides,
+        use_batch_norm=True,
+        use_dropout=True
+    ).to(device)
     
     dataset = GymDataGenerator(state_size, original_env, training_steps, autoencoder_time_compression = 4)
     dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=gym_collate_function, num_workers=16)
@@ -50,7 +63,8 @@ if __name__=="__main__":
     # Define optimizers
     base_lr = 4e-4
     optimizer_vae = AdamW(vae.parameters(), lr=base_lr, eps=1e-4)
-    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*5, eps=1e-4)
+    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*2, eps=1e-4)
+    optimizer_disc.zero_grad()
 
     # Add exponential decay schedule
     gamma = 0.01 ** (1 / total_number_of_steps)  # Decay factor so lr becomes 0.1 * initial_lr after 40,000 steps
@@ -85,10 +99,11 @@ if __name__=="__main__":
 
         # Compute all discriminator outputs
         # recon_input = einops.rearrange(recon, 'b c (t1 t2) (h1 h2) (w1 w2) -> (b t1 h1 w1) c t2 h2 w2', h1=4, w1=4, t2=4)
-        recon_input = einops.rearrange(recon, 'b c t (h1 h2) (w1 w2) -> (b h1 w1) c t h2 w2', h1=4, w1=4)
-        logits = discriminator(recon_input)
-        targets = torch.ones(logits.shape[0],*logits.shape[2:], device=device, dtype=torch.long)
+        # recon_input = einops.rearrange(recon, 'b c t (h1 h2) (w1 w2) -> (b h1 w1) c t h2 w2', h1=4, w1=4)
+        logits = discriminator(recon)
+        targets = torch.ones(logits.shape[0], device=device, dtype=torch.long)
         adversarial_loss = F.cross_entropy(logits, targets)/np.log(2)
+        # adversarial_weight = 2e-2
         adversarial_weight = 1 / (adversarial_loss.detach()*.1 + 1) * 2e-2
 
         # VAE losses
@@ -106,17 +121,18 @@ if __name__=="__main__":
 
         frames = torch.cat([frames.detach(), recon.detach()], dim=0)
         # frames_input = einops.rearrange(frames, 'b c (t1 t2) (h1 h2) (w1 w2) -> (b t1 h1 w1) c t2 h2 w2', h1=4, w1=4, t2=4).detach()
-        frames_input = einops.rearrange(frames, 'b c t (h1 h2) (w1 w2) -> (b h1 w1) c t h2 w2', h1=4, w1=4).detach()
+        # frames_input = einops.rearrange(frames, 'b c t (h1 h2) (w1 w2) -> (b h1 w1) c t h2 w2', h1=4, w1=4).detach()
         targets = torch.cat((targets, torch.zeros_like(targets)), dim=0)
-        logits = discriminator(frames_input)
+        logits = discriminator(frames)
         loss_disc = F.cross_entropy(logits, targets)/np.log(2)
 
         # Update discriminator
-        optimizer_disc.zero_grad()
         loss_disc.backward()
-        nn.utils.clip_grad_norm_(discriminator.parameters(), 1)
-        optimizer_disc.step()
-        scheduler_disc.step()
+        if batch_idx%4 ==0:
+            nn.utils.clip_grad_norm_(discriminator.parameters(), 1)
+            optimizer_disc.step()
+            scheduler_disc.step()
+            optimizer_disc.zero_grad()
         
         pbar.set_postfix_str(f"recon loss: {recon_loss.item():.4f}, KL group loss: {kl_group.item():.4f} KL loss: {kl_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}, Adversarial Loss: {adversarial_loss.item():.4f}")
         recon_losses.append(recon_loss.item())
