@@ -167,7 +167,7 @@ class EncoderDecoder(nn.Module):
         self.encoding_type = type
 
         group_sizes = np.cumprod(time_compressions)
-        channels = [3, 4, 4, latent_channels] #assuming the input is always rgb
+        channels = [3, 32, 16, latent_channels] #assuming the input is always rgb
         kernel = (8,3,3)
         
         if type=='encoder':

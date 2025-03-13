@@ -1,6 +1,7 @@
 #%%
 import einops
 import torch
+from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 import torch.optim.lr_scheduler as lr_scheduler
@@ -23,8 +24,8 @@ if __name__=="__main__":
     original_env = "LunarLander-v3"
     model_id="stabilityai/stable-diffusion-2-1"
 
-    batch_size = 4
-    state_size = 48 
+    batch_size = 2
+    state_size = 32 
     total_number_of_steps = 4_000
     training_steps = total_number_of_steps * batch_size
     
@@ -49,7 +50,7 @@ if __name__=="__main__":
     # Define optimizers
     base_lr = 4e-4
     optimizer_vae = AdamW(vae.parameters(), lr=base_lr, eps=1e-4)
-    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*1e-1, eps=1e-4)
+    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*5, eps=1e-4)
 
     # Add exponential decay schedule
     gamma = 0.01 ** (1 / total_number_of_steps)  # Decay factor so lr becomes 0.1 * initial_lr after 40,000 steps
@@ -88,7 +89,7 @@ if __name__=="__main__":
         logits = discriminator(recon_input)
         targets = torch.ones(logits.shape[0],*logits.shape[2:], device=device, dtype=torch.long)
         adversarial_loss = F.cross_entropy(logits, targets)/np.log(2)
-        adversarial_weight = 1 / (adversarial_loss.detach()*.1 + 1) * 6e-2
+        adversarial_weight = 1 / (adversarial_loss.detach()*.1 + 1) * 2e-2
 
         # VAE losses
         recon_loss = F.l1_loss(recon, frames, reduction='mean')
@@ -98,8 +99,10 @@ if __name__=="__main__":
         # Update VAE
         optimizer_vae.zero_grad()
         vae_loss.backward() 
+        nn.utils.clip_grad_norm_(vae.parameters(), 1)
         optimizer_vae.step()
         scheduler_vae.step()  # Step the VAE scheduler
+
 
         frames = torch.cat([frames.detach(), recon.detach()], dim=0)
         # frames_input = einops.rearrange(frames, 'b c (t1 t2) (h1 h2) (w1 w2) -> (b t1 h1 w1) c t2 h2 w2', h1=4, w1=4, t2=4).detach()
@@ -111,6 +114,7 @@ if __name__=="__main__":
         # Update discriminator
         optimizer_disc.zero_grad()
         loss_disc.backward()
+        nn.utils.clip_grad_norm_(discriminator.parameters(), 1)
         optimizer_disc.step()
         scheduler_disc.step()
         
