@@ -1,5 +1,6 @@
 import torch
 from torch import Tensor
+from torch.nn.utils import clip_grad_norm_
 import numpy as np
 import einops
 from . import misc
@@ -83,3 +84,20 @@ def bmult(x:Tensor, t:Tensor):
     if t.dim() == 1:
         return einops.einsum(x,t,' b ..., b -> b ...')
     return einops.einsum(x,t,' b c ..., b c-> b c ...')
+
+    
+    
+# Example implementation
+def apply_clipped_grads(model, optimizer, main_loss, adv_loss, max_norm_main, max_norm_adv):
+    # Compute gradients
+    main_grads = torch.autograd.grad(main_loss, model.parameters(), retain_graph=True)
+    adv_grads = torch.autograd.grad(adv_loss, model.parameters())
+    
+    # Clip gradients (norm clipping)
+    clip_grad_norm_(main_grads, max_norm_main)
+    clip_grad_norm_(adv_grads, max_norm_adv)
+    
+    # Assign to .grad
+    optimizer.zero_grad()
+    for param, main_g, adv_g in zip(model.parameters(), main_grads, adv_grads):
+        param.grad = main_g + adv_g

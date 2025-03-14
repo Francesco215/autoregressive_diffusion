@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 
 
 from edm2.gym_dataloader import GymDataGenerator, gym_collate_function
+from edm2.utils import apply_clipped_grads
 from edm2.vae import VAE, Discriminator3D, EncoderDecoder
 from edm2.mars import MARS
 torch.autograd.set_detect_anomaly(True)
@@ -91,20 +92,19 @@ if __name__=="__main__":
         logits = discriminator(recon)
         targets = torch.ones(logits.shape[0], *logits.shape[2:], device=device, dtype=torch.long)
         adversarial_loss = F.cross_entropy(logits, targets)/np.log(2)
-        adversarial_weight = 2e-2
+        adversarial_weight = 4e-2
         # adversarial_weight = 1 / (adversarial_loss.detach()*.1 + 1) * 2e-2
 
         # VAE losses
         recon_loss = F.mse_loss(recon, frames, reduction='mean')
 
-        vae_loss = recon_loss + kl_group*1e-4 + kl_loss*1e-4 + adversarial_loss*adversarial_weight
+        # Define the loss components
+        main_loss = recon_loss + kl_group*1e-4 + kl_loss*1e-4
+        adv_loss = adversarial_loss * adversarial_weight
 
-        # Update VAE
-        optimizer_vae.zero_grad()
-        vae_loss.backward() 
-        nn.utils.clip_grad_norm_(vae.parameters(), 1)
+        apply_clipped_grads(vae, optimizer_vae, main_loss, adv_loss, 1, 1)
         optimizer_vae.step()
-        scheduler_vae.step()  # Step the VAE scheduler
+        scheduler_vae.step()
 
 
         logits_real = discriminator(frames.detach())

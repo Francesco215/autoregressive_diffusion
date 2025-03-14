@@ -20,7 +20,7 @@ class GymDataGenerator(IterableDataset):
     def is_lander_in_frame(self, state):
         """Check if the lander is within the visible frame based on its state."""
         x, y = state[0], state[1]
-        return abs(y) < 1.5 and abs(x) < .95
+        return abs(y) < 1 and abs(x) < .95
 
     @torch.no_grad()
     def __iter__(self):
