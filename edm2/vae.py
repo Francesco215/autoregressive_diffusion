@@ -3,6 +3,7 @@ from torch import nn, Tensor
 from torch.nn import functional as F
 
 
+import math
 import einops
 import numpy as np
 
@@ -26,17 +27,17 @@ class GroupCausal3DConvVAE(torch.nn.Module):
         self.time_padding_size = kt+(kt-1)*(dt-1)-self.group_size
 
     def forward(self, x, gain=1, cache=None):
-        x = F.pad(x, pad = self.image_padding, mode="constant", value = 0)
+        x = F.pad(x, pad = self.image_padding, mode="constant", value = 1)
         # weight, bias = self.weight(gain)
 
-        multiplicative = 1.
+        # multiplicative = 1.
         if cache is None:
             cache = torch.zeros(*x.shape[:2], self.time_padding_size, *x.shape[3:], device=x.device, dtype=x.dtype)
 
-            # kernel_size = torch.tensor(weight.shape[2], device="cuda")
-            # group_index = torch.arange(x.shape[2], device=x.device)//self.group_size+1
-            # n_inputs_inside = torch.clip((group_index*self.group_size-1)//self.dilation[0]+1, max=kernel_size)
-            # multiplicative = (torch.sqrt(kernel_size/n_inputs_inside)[:,None,None]).detach()
+            kernel_size = torch.tensor(self.conv3d.weight.shape[2], device="cuda")
+            group_index = torch.arange(x.shape[2], device=x.device)//self.group_size+1
+            n_inputs_inside = torch.clip((group_index*self.group_size-1)//self.dilation[0]+1, max=kernel_size)
+            multiplicative = (torch.sqrt(kernel_size/n_inputs_inside)[:,None,None]).detach()
 
 
         x = torch.cat((cache, x), dim=-3)
@@ -46,7 +47,7 @@ class GroupCausal3DConvVAE(torch.nn.Module):
         x = self.conv3d(x)
 
         x = einops.rearrange(x, 'b (c g) t h w -> b c (t g) h w', g=self.group_size)
-        # x = x * multiplicative
+        x = x * multiplicative
 
         return x, cache
 
@@ -223,70 +224,151 @@ class VAE(nn.Module):
         return recon, mean, logvar, cache
 
 
+# https://github.com/IamCreateAI/Ruyi-Models/blob/6c7b5972dc6e6b7128d6238bdbf6cc7fd56af2a4/ruyi/vae/ldm/modules/vaemodules/discriminator.py
+class Downsampler(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        spatial_downsample_factor: int = 1,
+        temporal_downsample_factor: int = 1,
+    ):
+        super().__init__()
 
-class VideoDiscriminator(nn.Module):
-    def __init__(self, input_dim, discriminator_conv_filters, discriminator_conv_kernel_size, discriminator_conv_strides, use_batch_norm=True, use_dropout=True):
-        super(VideoDiscriminator, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.spatial_downsample_factor = spatial_downsample_factor
+        self.temporal_downsample_factor = temporal_downsample_factor
+
+class BlurPooling3D(Downsampler):
+    def __init__(self, in_channels: int, out_channels):
+        if out_channels is None:
+            out_channels = in_channels
+
+        assert in_channels == out_channels
+
+        super().__init__(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            spatial_downsample_factor=2,
+            temporal_downsample_factor=2,
+        )
+
+        filt = torch.tensor([1, 2, 1], dtype=torch.float32)
+        filt = torch.einsum("i,j,k -> ijk", filt, filt, filt)
+        filt = filt / filt.sum()
+        filt = filt[None, None].repeat(out_channels, 1, 1, 1, 1)
+
+        self.register_buffer("filt", filt)
+        self.filt: torch.Tensor
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (B, C, T, H, W)
+        return F.conv3d(x, self.filt, stride=2, padding=1, groups=self.in_channels)
+
         
-        # Store input parameters
-        self.input_dim = input_dim  # Tuple: (channels, time, height, width)
-        self.discriminator_conv_filters = discriminator_conv_filters  # List of output channels
-        self.discriminator_conv_kernel_size = discriminator_conv_kernel_size  # List of kernel sizes
-        self.discriminator_conv_strides = discriminator_conv_strides  # List of strides
-        self.use_batch_norm = use_batch_norm
-        self.use_dropout = use_dropout
-        self.n_layers_discriminator = len(discriminator_conv_filters)
         
-        # Initialize the layers list
-        layers_list = []
-        in_channels = self.input_dim[0]  # Input channels from input_dim
-        
-        # Build convolutional layers
-        for i in range(self.n_layers_discriminator):
-            # Handle kernel_size and stride as int or tuple
-            kernel_size = self.discriminator_conv_kernel_size[i]
-            stride = self.discriminator_conv_strides[i]
-            
-            # Convert kernel_size to 3D tuple if integer
-            if isinstance(kernel_size, int):
-                kernel_size = (kernel_size, kernel_size, kernel_size)
-                padding = ((kernel_size[0] - 1) // 2, (kernel_size[1] - 1) // 2, (kernel_size[2] - 1) // 2)
-            else:
-                padding = tuple((k - 1) // 2 for k in kernel_size)
-            
-            # Convert stride to 3D tuple if integer
-            if isinstance(stride, int):
-                stride = (stride, stride, stride)
-            
-            # Add 3D convolutional layer
-            conv_layer = nn.Conv3d(
-                in_channels=in_channels,
-                out_channels=self.discriminator_conv_filters[i],
-                kernel_size=kernel_size,
-                stride=stride,
-                padding=padding
+
+class DiscriminatorBlock3D(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        dropout: float = 0.0,
+        output_scale_factor: float = 1.0,
+        add_downsample: bool = True,
+    ):
+        super().__init__()
+
+        self.output_scale_factor = output_scale_factor
+
+        self.norm1 = nn.GroupNorm(32, in_channels)
+
+        self.nonlinearity = nn.LeakyReLU(0.2)
+
+        self.conv1 = nn.Conv3d(in_channels, out_channels, kernel_size=3, padding=1)
+
+        if add_downsample:
+            self.downsampler = BlurPooling3D(out_channels, out_channels)
+        else:
+            self.downsampler = nn.Identity()
+
+        self.norm2 = nn.GroupNorm(32, out_channels)
+
+        self.dropout = nn.Dropout(dropout)
+
+        self.conv2 = nn.Conv3d(out_channels, out_channels, kernel_size=3, padding=1)
+
+        if add_downsample:
+            self.shortcut = nn.Sequential(
+                BlurPooling3D(in_channels, in_channels),
+                nn.Conv3d(in_channels, out_channels, kernel_size=1),
             )
-            layers_list.append(conv_layer)
-            
-            # Add batch normalization if enabled
-            if self.use_batch_norm:
-                layers_list.append(nn.BatchNorm3d(self.discriminator_conv_filters[i]))
-            
-            # Add LeakyReLU for all but the last conv layer
-            if i < self.n_layers_discriminator - 1:
-                layers_list.append(nn.LeakyReLU(0.3))  # Negative slope of 0.3
-            
-            # Add dropout if enabled
-            if self.use_dropout:
-                layers_list.append(nn.Dropout(p=0.25))  # Dropout rate of 25%
-            
-            # Update in_channels for the next layer
-            in_channels = self.discriminator_conv_filters[i]
-        
-        # Combine all layers into a sequential model
-        self.model = nn.Sequential(*layers_list)
-    
-    def forward(self, x):
-        # Input: (batch_size, channels, time, height, width)
-        # Output: (batch_size, 1) - logits
-        return self.model(x)
+        else:
+            self.shortcut = nn.Sequential(
+                nn.Conv3d(in_channels, out_channels, kernel_size=1),
+            )
+
+        self.spatial_downsample_factor = 2
+        self.temporal_downsample_factor = 2
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        shortcut = self.shortcut(x)
+
+        x = self.norm1(x)
+        x = self.nonlinearity(x)
+
+        x = self.conv1(x)
+
+        x = self.norm2(x)
+        x = self.nonlinearity(x)
+
+        x = self.dropout(x)
+        x = self.downsampler(x)
+        x = self.conv2(x)
+
+        return (x + shortcut) / self.output_scale_factor
+
+
+class Discriminator3D(nn.Module):
+    def __init__(
+        self,
+        in_channels: int = 3,
+        block_out_channels = (64,),
+    ):
+        super().__init__()
+
+        self.conv_in = nn.Conv3d(in_channels, block_out_channels[0], kernel_size=3, padding=1, stride=2)
+
+        self.blocks = nn.ModuleList([])
+
+        output_channels = block_out_channels[0]
+        for i, out_channels in enumerate(block_out_channels):
+            input_channels = output_channels
+            output_channels = out_channels
+            is_final_block = i == len(block_out_channels) - 1
+
+            self.blocks.append(
+                DiscriminatorBlock3D(
+                    in_channels=input_channels,
+                    out_channels=output_channels,
+                    output_scale_factor=math.sqrt(2),
+                    add_downsample=not is_final_block,
+                )
+            )
+
+        self.conv_norm_out = nn.GroupNorm(32, block_out_channels[-1])
+        self.conv_act = nn.LeakyReLU(0.2)
+
+        self.conv_out = nn.Conv3d(block_out_channels[-1], 2, kernel_size=3, padding=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (B, C, T, H, W)
+        x = self.conv_in(x)
+
+        for block in self.blocks:
+            x = block(x)
+
+        x = self.conv_out(x)
+
+        return x
