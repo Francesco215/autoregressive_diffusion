@@ -37,7 +37,7 @@ if __name__=="__main__":
     # Initialize models
     vae = VAE(latent_channels=latent_channels, n_res_blocks=n_res_blocks).to(device)
     # Example instantiation
-    discriminator = Discriminator3D(in_channels = 3, block_out_channels=(64,32)).to(device)
+    discriminator = Discriminator3D(in_channels = 3, block_out_channels=(32,)).to(device)
     
     dataset = GymDataGenerator(state_size, original_env, training_steps, autoencoder_time_compression = 4)
     dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=gym_collate_function, num_workers=16)
@@ -50,13 +50,13 @@ if __name__=="__main__":
     sigma_data = 1.
 
     # Define optimizers
-    base_lr = 4e-4
+    base_lr = 8e-4
     optimizer_vae = AdamW(vae.parameters(), lr=base_lr, eps=1e-4)
-    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*1e-1, eps=1e-4)
+    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*1e-2, eps=1e-4)
     optimizer_disc.zero_grad()
 
     # Add exponential decay schedule
-    gamma = 0.01 ** (1 / total_number_of_steps)  # Decay factor so lr becomes 0.1 * initial_lr after 40,000 steps
+    gamma = 0.1 ** (1 / total_number_of_steps)  # Decay factor so lr becomes 0.1 * initial_lr after 40,000 steps
     scheduler_vae = lr_scheduler.ExponentialLR(optimizer_vae, gamma=gamma)
     scheduler_disc = lr_scheduler.ExponentialLR(optimizer_disc, gamma=gamma)
     losses = []
@@ -86,23 +86,19 @@ if __name__=="__main__":
         kl_loss  = -0.5 * (1 + logvar - logvar.exp()).sum(dim=1).mean()
         # kl_loss = -0.5 * (1 + logvar - mean.pow(2) - logvar.exp()).sum(dim=1).mean()
 
-        # Compute all discriminator outputs
-        # recon_input = einops.rearrange(recon, 'b c (t1 t2) (h1 h2) (w1 w2) -> (b t1 h1 w1) c t2 h2 w2', h1=4, w1=4, t2=4)
-        # recon_input = einops.rearrange(recon, 'b c t (h1 h2) (w1 w2) -> (b h1 w1) c t h2 w2', h1=4, w1=4)
         logits = discriminator(recon)
         targets = torch.ones(logits.shape[0], *logits.shape[2:], device=device, dtype=torch.long)
-        adversarial_loss = F.cross_entropy(logits, targets)/np.log(2)
-        adversarial_weight = 4e-2
-        # adversarial_weight = 1 / (adversarial_loss.detach()*.1 + 1) * 2e-2
+        adversarial_loss = F.cross_entropy(logits, targets, reduction='none')/np.log(2)
+        adversarial_weight = 1e-4
 
         # VAE losses
         recon_loss = F.mse_loss(recon, frames, reduction='mean')
 
         # Define the loss components
         main_loss = recon_loss + kl_group*1e-4 + kl_loss*1e-4
-        adv_loss = adversarial_loss * adversarial_weight
+        adv_loss = adversarial_weight * (F.relu(adversarial_loss-1)**2).mean()
 
-        apply_clipped_grads(vae, optimizer_vae, main_loss, adv_loss, 1, 1)
+        apply_clipped_grads(vae, optimizer_vae, main_loss, adv_loss, 1, None)
         optimizer_vae.step()
         scheduler_vae.step()
 
@@ -120,13 +116,19 @@ if __name__=="__main__":
         optimizer_disc.step()
         scheduler_disc.step()
         
-        pbar.set_postfix_str(f"recon loss: {recon_loss.item():.4f}, KL group loss: {kl_group.item():.4f} KL loss: {kl_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}, Adversarial Loss: {adversarial_loss.item():.4f}")
+        pbar.set_postfix_str(f"recon loss: {recon_loss.item():.4f}, KL group loss: {kl_group.item():.4f} KL loss: {kl_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}, Adversarial Loss: {adversarial_loss.mean().item():.4f}")
         recon_losses.append(recon_loss.item())
         kl_group_losses.append(kl_group.item())
         kl_losses.append(kl_loss.item())
-        adversarial_losses.append(adversarial_loss.item())
+        adversarial_losses.append(adversarial_loss.mean().item())
         disc_losses.append(loss_disc.item())
 
+
+        if batch_idx==500:
+            # Change the lr of the discriminator optimizer
+            for param_group in optimizer_disc.param_groups:
+                param_group['lr'] = base_lr * 4e-2
+            
         # Visualization every 100 steps
         if batch_idx % 100 == 0 and batch_idx > 0:
             # Create a figure with a custom layout: 3 sections (2 rows for frames, 2x2 grid for losses)

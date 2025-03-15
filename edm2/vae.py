@@ -14,6 +14,7 @@ from .attention import FrameAttention
 
 
 @lru_cache(maxsize=8)
+@torch.no_grad()
 def compute_multiplicative_time_wise(x_shape, kernel_size, dilation, group_size, device):
     # kernel_size = torch.tensor(kernel_size, device=device)
     group_index = torch.arange(x_shape[2], device=device)//group_size+1
@@ -24,10 +25,15 @@ def compute_multiplicative_time_wise(x_shape, kernel_size, dilation, group_size,
 
 
 @lru_cache(maxsize=8)
+@torch.no_grad()
 def compute_multiplicative_space_wise(x_shape, kernel_shape, padding, dilation, device):
+    if dilation is None: dilation = tuple([1]*len(kernel_shape))
+
     if len(kernel_shape)==3:
         kernel_shape=kernel_shape[1:]
         dilation = dilation[1:]
+    if padding is None:
+        padding = (kernel_shape[0]//2, kernel_shape[0]//2, kernel_shape[1]//2, kernel_shape[1]//2)
 
     if dilation != (1,1):
         raise NotImplementedError("Dilation not supported yet")
@@ -60,6 +66,10 @@ class GroupCausal3DConvVAE(torch.nn.Module):
         self.dilation = dilation
         # self.weight = NormalizedWeight(in_channels, out_channels*group_size, kernel, bias = True)
         self.conv3d = nn.Conv3d(in_channels, out_channels*group_size, kernel, dilation=dilation, stride=(group_size, 1, 1), bias=True)
+        with torch.no_grad():
+            w = self.conv3d.weight
+            w[:,:,:-group_size] = 0
+            self.conv3d.weight.copy_(w)
 
         kt, kw, kh = kernel
         dt, dw, dh = dilation
@@ -88,24 +98,19 @@ class GroupCausal3DConvVAE(torch.nn.Module):
         return x, cache
 
 
-class ConvVAE(MPConv):
-    def forward(self,x, gain=1):
-        batch_size = x.shape[0]
-        x = einops.rearrange(x, 'b c t h w -> (b t) c h w')
-        x = super().forward(x,gain)
-        return einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
 
-
-class myconv(nn.Module):
+class Conv2DVAE(nn.Module):
     def __init__(self, in_channels, out_channels, kernel, dilation=1):
         super().__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel, dilation=dilation, padding=kernel[1]//2)
     
     def forward(self, x):
         batch_size = x.shape[0]
+        multiplicative = compute_multiplicative_space_wise(x.shape, self.conv.weight.shape[2:], None, None, device = x.device)
         x = einops.rearrange(x, 'b c t h w -> (b t) c h w')
         x = self.conv(x)
-        return einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
+        x = einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
+        return x * multiplicative
 
 
 class FrameAttentionVAE(FrameAttention):
@@ -119,11 +124,12 @@ class ResBlock(nn.Module):
     def __init__(self, channels: int, kernel=(8,3,3), group_size=1):
         super().__init__()
 
+
         self.conv3d0 = GroupCausal3DConvVAE(channels, channels,  kernel, group_size, dilation = (1,1,1))
         self.conv3d1 = GroupCausal3DConvVAE(channels, channels, kernel, group_size, dilation = (1,1,1))
 
-        self.conv2d0 = myconv(channels, channels,  kernel[1:], dilation = 1)
-        self.conv2d1 = myconv(channels, channels,  kernel[1:], dilation = 1)
+        self.conv2d0 = Conv2DVAE(channels, channels,  kernel[1:], dilation = 1)
+        self.conv2d1 = Conv2DVAE(channels, channels,  kernel[1:], dilation = 1)
                                                                    
         # self.attn_block = FrameAttentionVAE(channels, num_heads=1) if group_size==1 else nn.Identity()
     
@@ -205,7 +211,6 @@ class EncoderDecoder(nn.Module):
 
         group_sizes = np.cumprod(time_compressions)
         channels = [3, 4, 4, latent_channels] #assuming the input is always rgb
-        kernel = (8,3,3)
         
         if type=='encoder':
             group_sizes = group_sizes[::-1]
@@ -218,8 +223,9 @@ class EncoderDecoder(nn.Module):
             assert latent_channels == 2, 'Discriminator should have 2 latent channels, one for each logit'
 
         in_channels, out_channels = channels[:-1], channels[1:]
+        kernels = [(int(group_size)*2,3,3) for group_size in group_sizes]
         
-        self.encoder_blocks = nn.ModuleList([EncoderDecoderBlock(in_channels[i], out_channels[i], time_compressions[i], spatial_compressions[i], kernel, group_sizes[i], n_res_blocks, type) for i in range(len(group_sizes))])
+        self.encoder_blocks = nn.ModuleList([EncoderDecoderBlock(in_channels[i], out_channels[i], time_compressions[i], spatial_compressions[i], kernels[i], group_sizes[i], n_res_blocks, type) for i in range(len(group_sizes))])
 
     def forward(self, x:Tensor, cache = None):
         if cache is None: cache = {}
