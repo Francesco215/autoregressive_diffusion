@@ -6,11 +6,51 @@ from torch.nn import functional as F
 import math
 import einops
 import numpy as np
+from functools import lru_cache
 
 from .utils import mp_sum, mp_silu
 from .conv import MPConv, NormalizedWeight
 from .attention import FrameAttention
 
+
+@lru_cache(maxsize=8)
+def compute_multiplicative_time_wise(x_shape, kernel_size, dilation, group_size, device):
+    # kernel_size = torch.tensor(kernel_size, device=device)
+    group_index = torch.arange(x_shape[2], device=device)//group_size+1
+    n_inputs_inside = torch.clip((group_index*group_size-1)//dilation[0]+1, max=kernel_size)
+    multiplicative = (torch.sqrt(kernel_size/n_inputs_inside)[:,None,None]).detach()
+
+    return multiplicative
+
+
+@lru_cache(maxsize=8)
+def compute_multiplicative_space_wise(x_shape, kernel_shape, padding, dilation, device):
+    if len(kernel_shape)==3:
+        kernel_shape=kernel_shape[1:]
+        dilation = dilation[1:]
+
+    if dilation != (1,1):
+        raise NotImplementedError("Dilation not supported yet")
+    
+
+    kernel_h, kernel_w = kernel_shape
+    pad_h, _, pad_w, _ = padding
+
+    height_indices = torch.arange(x_shape[-2], device=device)
+    n_inputs_inside_h = torch.clamp(height_indices + 1 + pad_h, max=kernel_h) 
+    multiplicative_height = torch.sqrt(kernel_h / n_inputs_inside_h).view(1, 1, -1, 1)
+    multiplicative_height = multiplicative_height * multiplicative_height.flip(-2)
+
+    width_indices = torch.arange(x_shape[-1], device=device)
+    n_inputs_inside_w = torch.clamp(width_indices + 1 + pad_w, max=kernel_w)
+    multiplicative_width = torch.sqrt(kernel_w / n_inputs_inside_w).view(1, 1, 1, -1)
+    multiplicative_width = multiplicative_width * multiplicative_width.flip(-1)
+
+    multiplicative = multiplicative_height * multiplicative_width
+    if len(x_shape) == 5:
+        multiplicative = multiplicative.unsqueeze(0)
+
+    return multiplicative
 
 class GroupCausal3DConvVAE(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel, group_size, dilation = (1,1,1)):
@@ -27,18 +67,14 @@ class GroupCausal3DConvVAE(torch.nn.Module):
         self.time_padding_size = kt+(kt-1)*(dt-1)-self.group_size
 
     def forward(self, x, gain=1, cache=None):
-        x = F.pad(x, pad = self.image_padding, mode="constant", value = 1)
+        x = F.pad(x, pad = self.image_padding, mode="constant", value = 0)
         # weight, bias = self.weight(gain)
 
         # multiplicative = 1.
+        multiplicative = compute_multiplicative_space_wise(x.shape, self.conv3d.weight.shape[2:], self.image_padding, self.dilation, device=x.device)
         if cache is None:
             cache = torch.zeros(*x.shape[:2], self.time_padding_size, *x.shape[3:], device=x.device, dtype=x.dtype)
-
-            kernel_size = torch.tensor(self.conv3d.weight.shape[2], device="cuda")
-            group_index = torch.arange(x.shape[2], device=x.device)//self.group_size+1
-            n_inputs_inside = torch.clip((group_index*self.group_size-1)//self.dilation[0]+1, max=kernel_size)
-            multiplicative = (torch.sqrt(kernel_size/n_inputs_inside)[:,None,None]).detach()
-
+            multiplicative = compute_multiplicative_time_wise(x.shape, self.conv3d.weight.shape[2], self.dilation, self.group_size, device=x.device)
 
         x = torch.cat((cache, x), dim=-3)
         cache =  None if self.training else x[:,:,-self.time_padding_size:].clone().detach()
