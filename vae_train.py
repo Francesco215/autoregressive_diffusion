@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 
 from edm2.gym_dataloader import GymDataGenerator, gym_collate_function
 from edm2.utils import apply_clipped_grads
-from edm2.vae import VAE, Discriminator3D, EncoderDecoder
+from edm2.vae import VAE, Discriminator3D, EncoderDecoder, MixedDiscriminator
 from edm2.mars import MARS
 torch.autograd.set_detect_anomaly(True)
 if __name__=="__main__":
@@ -25,7 +25,7 @@ if __name__=="__main__":
     original_env = "LunarLander-v3"
     model_id="stabilityai/stable-diffusion-2-1"
 
-    batch_size = 8
+    batch_size = 4
     state_size = 32 
     total_number_of_steps = 4_000
     training_steps = total_number_of_steps * batch_size
@@ -37,7 +37,7 @@ if __name__=="__main__":
     # Initialize models
     vae = VAE(latent_channels=latent_channels, n_res_blocks=n_res_blocks).to(device)
     # Example instantiation
-    discriminator = Discriminator3D(in_channels = 3, block_out_channels=(32,)).to(device)
+    discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(32,)).to(device)
     
     dataset = GymDataGenerator(state_size, original_env, training_steps, autoencoder_time_compression = 4)
     dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=gym_collate_function, num_workers=16)
@@ -50,9 +50,9 @@ if __name__=="__main__":
     sigma_data = 1.
 
     # Define optimizers
-    base_lr = 8e-4
-    optimizer_vae = AdamW(vae.parameters(), lr=base_lr, eps=1e-4)
-    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*1e-2, eps=1e-4)
+    base_lr = 1e-3
+    optimizer_vae = AdamW(vae.parameters(), lr=base_lr, eps=1e-8)
+    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*8e-2, eps=1e-8)
     optimizer_disc.zero_grad()
 
     # Add exponential decay schedule
@@ -88,15 +88,16 @@ if __name__=="__main__":
 
         logits = discriminator(recon)
         targets = torch.ones(logits.shape[0], *logits.shape[2:], device=device, dtype=torch.long)
+
         adversarial_loss = F.cross_entropy(logits, targets, reduction='none')/np.log(2)
-        adversarial_weight = 1e-4
+        adv_multiplier = 2e-4
+        adv_loss = adv_multiplier * (F.relu(adversarial_loss-1)**2).mean()
 
         # VAE losses
-        recon_loss = F.mse_loss(recon, frames, reduction='mean')
+        recon_loss = F.l1_loss(recon, frames, reduction='mean')
 
         # Define the loss components
         main_loss = recon_loss + kl_group*1e-4 + kl_loss*1e-4
-        adv_loss = adversarial_weight * (F.relu(adversarial_loss-1)**2).mean()
 
         apply_clipped_grads(vae, optimizer_vae, main_loss, adv_loss, 1, None)
         optimizer_vae.step()
@@ -123,12 +124,10 @@ if __name__=="__main__":
         adversarial_losses.append(adversarial_loss.mean().item())
         disc_losses.append(loss_disc.item())
 
+        # if batch_idx == 500:
+        #     adv_multiplier = 5e-2
 
-        if batch_idx==500:
-            # Change the lr of the discriminator optimizer
-            for param_group in optimizer_disc.param_groups:
-                param_group['lr'] = base_lr * 4e-2
-            
+
         # Visualization every 100 steps
         if batch_idx % 100 == 0 and batch_idx > 0:
             # Create a figure with a custom layout: 3 sections (2 rows for frames, 2x2 grid for losses)
