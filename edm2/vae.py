@@ -19,7 +19,7 @@ def compute_multiplicative_time_wise(x_shape, kernel_size, dilation, group_size,
     # kernel_size = torch.tensor(kernel_size, device=device)
     group_index = torch.arange(x_shape[2], device=device)//group_size+1
     n_inputs_inside = torch.clip((group_index*group_size-1)//dilation[0]+1, max=kernel_size)
-    multiplicative = (torch.sqrt(kernel_size/n_inputs_inside)[:,None,None]).detach()
+    multiplicative = (kernel_size/n_inputs_inside)[:,None,None].detach()
 
     return multiplicative
 
@@ -123,35 +123,32 @@ class FrameAttentionVAE(FrameAttention):
 class ResBlock(nn.Module):
     def __init__(self, channels: int, kernel=(8,3,3), group_size=1):
         super().__init__()
-
+        self.norm_0 = nn.GroupNorm(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
+        self.norm_1 = nn.GroupNorm(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
 
         self.conv3d0 = GroupCausal3DConvVAE(channels, channels,  kernel, group_size, dilation = (1,1,1))
         self.conv3d1 = GroupCausal3DConvVAE(channels, channels, kernel, group_size, dilation = (1,1,1))
 
-        self.conv2d0 = Conv2DVAE(channels, channels,  kernel[1:], dilation = 1)
-        self.conv2d1 = Conv2DVAE(channels, channels,  kernel[1:], dilation = 1)
-                                                                   
-        # self.attn_block = FrameAttentionVAE(channels, num_heads=1) if group_size==1 else nn.Identity()
-    
     def forward(self, x, cache = None):
         if cache is None: cache = {}
 
-        t = x.clone()
-        y, cache['conv3d_res0'] = self.conv3d0(x, cache=cache.get('conv3d_res0', None))
-        y = y + self.conv2d0(x)
+        y = einops.rearrange(x, "b c t h w -> (b t) c h w")
+        y = self.norm_0(y)
+        y = einops.rearrange(y, "(b t) c h w -> b c t h w", b=x.shape[0])
         y = mp_silu(y)
+        y, cache['conv3d_res0'] = self.conv3d0(y, cache=cache.get('conv3d_res0', None))
 
-        t = y.clone()
-        
-        y, cache['conv3d_res1'] = self.conv3d1(t, cache=cache.get('conv3d_res1', None))
-        y = y + self.conv2d1(t)
+        y = einops.rearrange(x, "b c t h w -> (b t) c h w")
+        y = self.norm_1(y)
+        y = einops.rearrange(y, "(b t) c h w -> b c t h w", b=x.shape[0])
+        y = mp_silu(y)
+        y, cache['conv3d_res1'] = self.conv3d1(y, cache=cache.get('conv3d_res1', None))
         y = mp_silu(y)
 
         x = x + y
 
-        # x = self.attn_block(x)
-
         return x, cache
+
 
 class EncoderDecoderBlock(nn.Module):
     def __init__(self, in_channels, out_channels, time_compression, spatial_compression, kernel, group_size, n_res_blocks, type='encoder'):
