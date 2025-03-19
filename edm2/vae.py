@@ -8,8 +8,7 @@ import einops
 import numpy as np
 from functools import lru_cache
 
-from .utils import mp_sum, mp_silu
-from .conv import MPConv, NormalizedWeight
+from .utils import mp_silu
 from .attention import FrameAttention
 
 

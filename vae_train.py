@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 from edm2.gym_dataloader import GymDataGenerator, gym_collate_function
 from edm2.utils import apply_clipped_grads
 from edm2.vae import VAE, Discriminator3D, EncoderDecoder, MixedDiscriminator
+from edm2.cosmos_vae import CausalContinuousVideoTokenizer
 from edm2.mars import MARS
 torch.autograd.set_detect_anomaly(True)
 if __name__=="__main__":
@@ -35,7 +36,25 @@ if __name__=="__main__":
     n_res_blocks = 2
 
     # Initialize models
-    vae = VAE(latent_channels=latent_channels, n_res_blocks=n_res_blocks).to(device)
+    vae =  CausalContinuousVideoTokenizer(
+        attn_resolutions=[32],
+        channels=4,
+        channels_mult=[2, 4, 4],
+        dropout=0.0,
+        in_channels=3,
+        num_res_blocks=1,
+        out_channels=3,
+        resolution=1024,
+        patch_size=1,
+        patch_method="haar",
+        latent_channels=16,
+        z_channels=16,
+        z_factor=2,
+        num_groups=1,
+        legacy_mode=False,
+        spatial_compression=8,
+        temporal_compression=8,
+    ).to(device)
     # Example instantiation
     discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(32,)).to(device)
     
@@ -50,7 +69,7 @@ if __name__=="__main__":
     sigma_data = 1.
 
     # Define optimizers
-    base_lr = 1e-3
+    base_lr = 1e-2
     optimizer_vae = AdamW(vae.parameters(), lr=base_lr, eps=1e-8)
     optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*8e-2, eps=1e-8)
     optimizer_disc.zero_grad()
@@ -71,11 +90,11 @@ if __name__=="__main__":
     for batch_idx, batch in pbar:
         with torch.no_grad():
             frames, _, _ = batch  # Ignore actions and reward for this VggAE training
-            frames = frames.float() / 127.5 - 1  # Normalize to [-1, 1]
+            frames = frames.float()[:,:25] / 127.5 - 1  # Normalize to [-1, 1]
             frames = einops.rearrange(frames, 'b t h w c-> b c t h w').to(device)
 
         # VAE forward pass
-        recon, mean, logvar, _ = vae(frames)
+        recon, mean, logvar = vae(frames)
 
         # in theory the mean should be only with respect to the batch size
         individual_var = logvar.exp().mean(dim=(0, 2, 3, 4))  # Average of individual variances
@@ -90,7 +109,7 @@ if __name__=="__main__":
         targets = torch.ones(logits.shape[0], *logits.shape[2:], device=device, dtype=torch.long)
 
         adversarial_loss = F.cross_entropy(logits, targets, reduction='none')/np.log(2)
-        adv_multiplier = 2e-4
+        adv_multiplier = 1e-2
         adv_loss = adv_multiplier * (F.relu(adversarial_loss-1)**2).mean()
 
         # VAE losses
