@@ -120,11 +120,19 @@ class FrameAttentionVAE(FrameAttention):
         super().forward(x, batch_size)
         return einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
 
+class GroupNorm3D(nn.GroupNorm):
+    def forward(self, input):
+        batch_size = input.shape[0]
+        input = einops.rearrange(input, "b c t h w -> (b t) c h w")
+        output = super().forward(input)
+        output = einops.rearrange(output, "(b t) c h w -> b c t h w", b=batch_size)
+        return output
+
 class ResBlock(nn.Module):
     def __init__(self, channels: int, kernel=(8,3,3), group_size=1):
         super().__init__()
-        self.norm_0 = nn.GroupNorm(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
-        self.norm_1 = nn.GroupNorm(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
+        self.norm_0 = GroupNorm3D(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
+        self.norm_1 = GroupNorm3D(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
 
         self.conv3d0 = GroupCausal3DConvVAE(channels, channels,  kernel, group_size, dilation = (1,1,1))
         self.conv3d1 = GroupCausal3DConvVAE(channels, channels, kernel, group_size, dilation = (1,1,1))
@@ -132,18 +140,13 @@ class ResBlock(nn.Module):
     def forward(self, x, cache = None):
         if cache is None: cache = {}
 
-        y = einops.rearrange(x, "b c t h w -> (b t) c h w")
-        y = self.norm_0(y)
-        y = einops.rearrange(y, "(b t) c h w -> b c t h w", b=x.shape[0])
+        y = self.norm_0(x)
         y = mp_silu(y)
         y, cache['conv3d_res0'] = self.conv3d0(y, cache=cache.get('conv3d_res0', None))
 
-        y = einops.rearrange(x, "b c t h w -> (b t) c h w")
         y = self.norm_1(y)
-        y = einops.rearrange(y, "(b t) c h w -> b c t h w", b=x.shape[0])
         y = mp_silu(y)
         y, cache['conv3d_res1'] = self.conv3d1(y, cache=cache.get('conv3d_res1', None))
-        y = mp_silu(y)
 
         x = x + y
 

@@ -90,11 +90,11 @@ if __name__=="__main__":
         targets = torch.ones(logits.shape[0], *logits.shape[2:], device=device, dtype=torch.long)
 
         adversarial_loss = F.cross_entropy(logits, targets, reduction='none')/np.log(2)
-        adv_multiplier = 2e-4
+        adv_multiplier = 1e-4
         adv_loss = adv_multiplier * (F.relu(adversarial_loss-1)**2).mean()
 
         # VAE losses
-        recon_loss = F.l1_loss(recon, frames, reduction='mean')
+        recon_loss = F.mse_loss(recon, frames, reduction='mean')
 
         # Define the loss components
         main_loss = recon_loss + kl_group*1e-4 + kl_loss*1e-4
