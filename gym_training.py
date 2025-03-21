@@ -6,9 +6,9 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-from diffusers import AutoencoderKL, AutoencoderKLCogVideoX, AutoencoderKLMochi
 
 
+from edm2.vae import VAE    
 from edm2.gym_dataloader import GymDataGenerator, gym_collate_function, frames_to_latents
 from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
@@ -26,8 +26,11 @@ if __name__=="__main__":
     # autoencoder = AutoencoderKL.from_pretrained(model_id, subfolder="vae").to(device).eval().requires_grad_(False)
 
     # autoencoder = AutoencoderKLCogVideoX.from_pretrained("THUDM/CogVideoX-2b", subfolder="vae", torch_dtype=torch.float32).to("cuda")
-    autoencoder = AutoencoderKLMochi.from_pretrained("genmo/mochi-1-preview", subfolder="vae", torch_dtype=torch.float32).to("cuda")
-    latent_channels = autoencoder.config.latent_channels
+    latent_channels = 16
+    autoencoder = VAE(latent_channels, n_res_blocks=2)
+    state_dict = torch.load('vae_100k.pth', map_location=device, weights_only=True)
+    autoencoder.load_state_dict(state_dict)
+    autoencoder.to(device).eval().requires_grad_(False)
 
     unet = UNet(img_resolution=32, # Match your latent resolution
                 img_channels=latent_channels, # Match your latent channels
@@ -40,13 +43,13 @@ if __name__=="__main__":
                 attn_resolutions=[8,4]
                 )
 
-    micro_batch_size = 1
-    batch_size = 4
+    micro_batch_size = 8
+    batch_size = 8
     accumulation_steps = batch_size//micro_batch_size
-    state_size = 96 
+    state_size = 32 
     total_number_of_steps = 40_000
     training_steps = total_number_of_steps * batch_size
-    dataset = GymDataGenerator(state_size, original_env, training_steps, autoencoder_time_compression = 6)
+    dataset = GymDataGenerator(state_size, original_env, training_steps, autoencoder_time_compression = 4)
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=16)
 
     unet_params = sum(p.numel() for p in unet.parameters())
@@ -84,7 +87,7 @@ if __name__=="__main__":
         with torch.no_grad():
             frames, actions, reward = batch
             frames = frames.to(device)
-            actions = None if i%4==0 else actions.to(device)
+            actions = None if i%4==1 else actions.to(device)
             latents = frames_to_latents(autoencoder, frames)
 
         # Calculate loss    

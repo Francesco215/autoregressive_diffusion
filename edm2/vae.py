@@ -250,21 +250,23 @@ class VAE(nn.Module):
         self.decoder = EncoderDecoder(latent_channels, n_res_blocks, time_compressions, spatial_compressions, type='decoder')
 
     def forward(self, x, cache=None):
-        if cache is None:
-            cache = {}
-        # Encode input to get mean and log-variance
-        mean, logvar, cache['encoder'] = self.encoder(x, cache.get('encoder', None))
-        
-        # Reparameterization trick: sample z from N(mean, std)
-        std = torch.exp(0.5 * logvar)  # Compute standard deviation
-        eps = torch.randn_like(std)    # Sample noise from standard normal
-        z = mean + eps * std           # Latent vector
+        z, mean, logvar, cache['encoder'] = self.encode(x, cache.get('encoder', None))
         
         # Decode latent vector to reconstruct input
         recon, cache['decoder'] = self.decoder(z, cache.get('decoder', None))
         
         return recon, mean, logvar, cache
+    
+    def encode(self, x, cache=None):
+        # Encode input to get mean and log-variance
+        mean, logvar, cache = self.encoder(x, cache)
+        
+        # Reparameterization trick: sample z from N(mean, std)
+        std = torch.exp(0.5 * logvar)  # Compute standard deviation
+        eps = torch.randn_like(std)    # Sample noise from standard normal
+        z = mean + eps * std           # Latent vector
 
+        return z, mean, logvar, cache
 
 # https://github.com/IamCreateAI/Ruyi-Models/blob/6c7b5972dc6e6b7128d6238bdbf6cc7fd56af2a4/ruyi/vae/ldm/modules/vaemodules/discriminator.py
 

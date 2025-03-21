@@ -53,11 +53,11 @@ class GymDataGenerator(IterableDataset):
             
             if step_count > 0 and step_count % self.state_size == 0:
                 # Check if the lander is in the frame for all states in the sequence
-                if all(self.is_lander_in_frame(s) for s in state_history[-self.state_size:]):
-                    frames = torch.stack(frame_history[-self.state_size:])
-                    actions = torch.tensor(action_history[-self.state_size // self.autoencoder_time_compression:])
-                    yield frames, actions, torch.tensor(reward).clone()
-                    n_data_yielded += 1
+                # if all(self.is_lander_in_frame(s) for s in state_history[-self.state_size:]):
+                frames = torch.stack(frame_history[-self.state_size:])
+                actions = torch.tensor(action_history[-self.state_size // self.autoencoder_time_compression:])
+                yield frames, actions, torch.tensor(reward).clone()
+                n_data_yielded += 1
                 # Reset histories whether we yield or not to maintain sequence alignment
                 frame_history, state_history, action_history = [], [], []
             
@@ -99,7 +99,8 @@ def frames_to_latents(autoencoder, frames)->Tensor:
     #split the conversion to not overload the GPU RAM
     split_size = 64
     for i in range (0, frames.shape[0], split_size):
-        l = autoencoder.encode(frames[i:i+split_size]).latent_dist.sample()
+        # l = autoencoder.encode(frames[i:i+split_size]).latent_dist.sample()
+        l, _, _, _ = autoencoder.encode(frames[i:i+split_size])
         if i == 0:
             latents = l
         else:
@@ -107,9 +108,9 @@ def frames_to_latents(autoencoder, frames)->Tensor:
 
     # Apply scaling factor
     # latents = latents * autoencoder.config.scaling_factor
-    mean,std = torch.tensor(autoencoder.config.latents_mean)[:,None, None, None].to(latents), torch.tensor(autoencoder.config.latents_std)[:, None, None, None].to(latents)
+    # mean,std = torch.tensor(autoencoder.config.latents_mean)[:,None, None, None].to(latents), torch.tensor(autoencoder.config.latents_std)[:, None, None, None].to(latents)
     # mean = mean + saved_mean.view(mean.shape).to(latents) 
-    latents = (latents - mean)/std
+    # latents = (latents - mean)/std
 
     latents = einops.rearrange(latents, 'b c t h w -> b t c h w', b=batch_size)
     return latents
