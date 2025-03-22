@@ -25,8 +25,8 @@ if __name__=="__main__":
     original_env = "LunarLander-v3"
     model_id="stabilityai/stable-diffusion-2-1"
 
-    batch_size = 4
-    state_size = 32 
+    batch_size = 2
+    state_size = 64 
     total_number_of_steps = 4_000
     training_steps = total_number_of_steps * batch_size
     

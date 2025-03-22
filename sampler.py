@@ -9,35 +9,13 @@ import einops
 import torch
 from torch.utils.data import DataLoader
 
-
+from edm2.gym_dataloader import GymDataGenerator, frames_to_latents, gym_collate_function, latents_to_frames
 from edm2.networks_edm2 import UNet, Precond
-from edm2.loss import EDM2Loss, learning_rate_schedule
-from edm2.loss_weight import MultiNoiseLoss
-from edm2.mars import MARS
-from edm2.gym_dataloader import GymDataGenerator, frames_to_latents, gym_collate_function
-from edm2.phema import PowerFunctionEMA
+from edm2.vae import VAE
 
-
-from diffusers import AutoencoderKL, AutoencoderKLCogVideoX, AutoencoderKLMochi
 
 # import logging
 # torch._logging.set_logs(dynamo=logging.INFO)
-autoencoder = AutoencoderKLMochi.from_pretrained("genmo/mochi-1-preview", subfolder="vae", torch_dtype=torch.float32).to("cuda").requires_grad_(False)
-vae_mean, vae_std = torch.tensor(autoencoder.config.latents_mean)[:, None, None], torch.tensor(autoencoder.config.latents_std)[:, None, None]
-def collate_function(batch):
-    # batch is a list of dicts with keys 'mean', 'logvar', 'actions'
-    # we want to return a tuple of tensors (means, logvars, actions)
-    means = torch.tensor(np.array([b['mean'] for b in batch]))
-    logvars = torch.tensor(np.array([b['logvar'] for b in batch]), dtype = torch.float32)
-    actions = torch.tensor(np.array([b['action'] for b in batch]), dtype = torch.float32)
-
-    # now i sample a frame 
-    frames = means + torch.exp(0.5 * logvars) * torch.randn_like(means)
-    frames = einops.rearrange(frames, 'b c t h w -> b t c h w')
-    frames = (frames - vae_mean)/vae_std
-    # frames = frames[:, :16]
-    return frames*0.7, actions
-
 torch._dynamo.config.recompile_limit = 100
 # Example usage:
 n_clips = 100_000
@@ -46,25 +24,23 @@ batch_size = 2
 accumulation_steps = batch_size//micro_batch_size
 total_number_of_batches = n_clips // batch_size
 total_number_of_steps = total_number_of_batches * accumulation_steps
-
 num_workers = 8 
-device = "cuda" if torch.cuda.is_available() else "cpu"
-state_size = 48 
 original_env = "LunarLander-v3"
-latent_channels = 0
+state_size = 64
 
-model_id="stabilityai/stable-diffusion-2-1"
-dataset = StreamingDataset(remote='s3://counter-strike-data/dataset_small/', local='/tmp/c396c3dc407cfbb47ad5233946e3a235/',batch_size=micro_batch_size)
-dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=collate_function, num_workers=16)
-batch = next(iter(dataloader))
-#%%
-
-latent_channels = autoencoder.config.latent_channels
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+latent_channels=16
+autoencoder = VAE(latent_channels, n_res_blocks=2)
+state_dict = torch.load('vae.pth', map_location=device, weights_only=True)
+autoencoder.load_state_dict(state_dict)
+autoencoder.to(device).eval().requires_grad_(False)
+dataset = GymDataGenerator(state_size, original_env, total_number_of_steps, autoencoder_time_compression = 4)
+dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=16)
 
 unet = UNet(img_resolution=32, # Match your latent resolution
             img_channels=latent_channels, # Match your latent channels
             label_dim = 4,
-            model_channels=128,
+            model_channels=64,
             channel_mult=[1,2,2,4],
             channel_mult_noise=None,
             channel_mult_emb=None,
@@ -74,7 +50,7 @@ unet = UNet(img_resolution=32, # Match your latent resolution
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
 sigma_data = 1.
 precond = Precond(unet, use_fp16=True, sigma_data=sigma_data)
-precond_state_dict = torch.load("lunar_lander_273.0M.pt",map_location=device,weights_only=False)['model_state_dict']
+precond_state_dict = torch.load("lunar_lander_68.0M.pt",map_location=device,weights_only=False)['model_state_dict']
 precond.load_state_dict(precond_state_dict, strict=False)
 precond.to(device)
 
@@ -177,10 +153,13 @@ def edm_sampler_with_mse(
 # batch ={"latents": torch.randn(2, 8, 16, 64, 64)}
 
 # Prepare data
-start = 0
-num_samples = 4
-frames, actions = batch
-latents = frames[:,:8].to(device)
+batch = next(iter(dataloader))
+with torch.no_grad():
+    frames, actions, reward = batch
+    frames = frames.to(device)
+    actions = actions.to(device)
+    latents = frames_to_latents(autoencoder, frames)/1.2
+latents = latents[:,:8].to(device)
 actions = None #if i%4==0 else actions.to(device)
 # latents = batch["latents"][start:start+num_samples].to(device)
 # text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
@@ -227,9 +206,10 @@ torch.save(latents, "x.pt")
 
 # %%
 import torch
-from edm2.gym_dataloader import latents_to_frames
+from edm2.gym_dataloader import GymDataGenerator, frames_to_latents, gym_collate_function, latents_to_frames
 import einops
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 x = torch.load("x.pt").to(device)
 frames = latents_to_frames(autoencoder, x[:1])
 
@@ -238,7 +218,7 @@ frames = latents_to_frames(autoencoder, x[:1])
 from matplotlib import pyplot as plt
 # frames = frames
 f = frames[:,:90]
-x = einops.rearrange(f, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=6)
+x = einops.rearrange(f, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=8)
 #set high resolution
 plt.imshow(x[0])
 plt.axis('off')

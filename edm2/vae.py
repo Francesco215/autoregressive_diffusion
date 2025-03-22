@@ -8,8 +8,7 @@ import einops
 import numpy as np
 from functools import lru_cache
 
-from .utils import mp_sum, mp_silu
-from .conv import MPConv, NormalizedWeight
+from .utils import mp_silu
 from .attention import FrameAttention
 
 
@@ -19,7 +18,7 @@ def compute_multiplicative_time_wise(x_shape, kernel_size, dilation, group_size,
     # kernel_size = torch.tensor(kernel_size, device=device)
     group_index = torch.arange(x_shape[2], device=device)//group_size+1
     n_inputs_inside = torch.clip((group_index*group_size-1)//dilation[0]+1, max=kernel_size)
-    multiplicative = (kernel_size/n_inputs_inside)[:,None,None].detach()
+    multiplicative = torch.sqrt(kernel_size/n_inputs_inside)[:,None,None].detach()
 
     return multiplicative
 
@@ -80,11 +79,13 @@ class GroupCausal3DConvVAE(torch.nn.Module):
         x = F.pad(x, pad = self.image_padding, mode="constant", value = 0)
         # weight, bias = self.weight(gain)
 
-        # multiplicative = 1.
-        multiplicative = compute_multiplicative_space_wise(x.shape, self.conv3d.weight.shape[2:], self.image_padding, self.dilation, device=x.device)
+        multiplicative = 1.
+        # multiplicative = compute_multiplicative_space_wise(x.shape, self.conv3d.weight.shape[2:], self.image_padding, self.dilation, device=x.device)
         if cache is None:
-            cache = torch.zeros(*x.shape[:2], self.time_padding_size, *x.shape[3:], device=x.device, dtype=x.dtype)
-            multiplicative = compute_multiplicative_time_wise(x.shape, self.conv3d.weight.shape[2], self.dilation, self.group_size, device=x.device)
+            cache = x[:,:,:self.time_padding_size].clone().detach()
+            
+            # cache = torch.zeros(*x.shape[:2], self.time_padding_size, *x.shape[3:], device=x.device, dtype=x.dtype)
+            # multiplicative = compute_multiplicative_time_wise(x.shape, self.conv3d.weight.shape[2], self.dilation, self.group_size, device=x.device)
 
         x = torch.cat((cache, x), dim=-3)
         cache =  None if self.training else x[:,:,-self.time_padding_size:].clone().detach()
@@ -250,11 +251,13 @@ class VAE(nn.Module):
         self.decoder = EncoderDecoder(latent_channels, n_res_blocks, time_compressions, spatial_compressions, type='decoder')
 
     def forward(self, x, cache=None):
+        if cache is None: cache = {}
+
         z, mean, logvar, cache['encoder'] = self.encode(x, cache.get('encoder', None))
         
         # Decode latent vector to reconstruct input
-        recon, cache['decoder'] = self.decoder(z, cache.get('decoder', None))
-        
+        recon, cache['decoder'] = self.decode(z, cache.get('decoder', None))
+
         return recon, mean, logvar, cache
     
     def encode(self, x, cache=None):
@@ -267,6 +270,10 @@ class VAE(nn.Module):
         z = mean + eps * std           # Latent vector
 
         return z, mean, logvar, cache
+    
+    def decode(self, z, cache=None):
+        recon, cache = self.decoder(z, cache)
+        return recon, cache
 
 # https://github.com/IamCreateAI/Ruyi-Models/blob/6c7b5972dc6e6b7128d6238bdbf6cc7fd56af2a4/ruyi/vae/ldm/modules/vaemodules/discriminator.py
 

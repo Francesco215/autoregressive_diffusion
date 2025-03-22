@@ -4,15 +4,19 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from edm2.gym_dataloader import GymDataGenerator, frames_to_latents, gym_collate_function
-from diffusers import AutoencoderKL, AutoencoderKLCogVideoX, AutoencoderKLMochi
+from edm2.vae import VAE
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # autoencoder = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="vae").to(device).eval().requires_grad_(False)
-autoencoder = AutoencoderKLMochi.from_pretrained("genmo/mochi-1-preview", subfolder="vae", torch_dtype=torch.float32).to("cuda")
+latent_channels = 16
+autoencoder = VAE(latent_channels, n_res_blocks=2)
+state_dict = torch.load('vae.pth', map_location=device, weights_only=True)
+autoencoder.load_state_dict(state_dict)
+autoencoder.to(device).eval().requires_grad_(False)
 
-state_size = 96
+state_size = 64
 env = "LunarLander-v3"
-dataset = GymDataGenerator(state_size, env, training_examples=500, autoencoder_time_compression = 6)
+dataset = GymDataGenerator(state_size, env, training_examples=500, autoencoder_time_compression = 4)
 dataloader = DataLoader(dataset, batch_size=1, collate_fn=gym_collate_function, num_workers=16)
 #%%
 for i, batch in tqdm(enumerate(dataloader)):
@@ -20,7 +24,7 @@ for i, batch in tqdm(enumerate(dataloader)):
     frames = frames.to(device)
     latents = frames_to_latents(autoencoder, frames)
     # latents = (latents-mean.to(latents))/std.to(latents)
-    latents = latents.mean(dim=(0,1))
+    latents = latents
     if i==0:
         mean_latent= latents
     else:

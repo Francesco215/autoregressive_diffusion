@@ -2,6 +2,7 @@
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
+from torch.optim import AdamW
 
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -23,12 +24,9 @@ if __name__=="__main__":
     original_env = "LunarLander-v3"
     model_id="stabilityai/stable-diffusion-2-1"
 
-    # autoencoder = AutoencoderKL.from_pretrained(model_id, subfolder="vae").to(device).eval().requires_grad_(False)
-
-    # autoencoder = AutoencoderKLCogVideoX.from_pretrained("THUDM/CogVideoX-2b", subfolder="vae", torch_dtype=torch.float32).to("cuda")
     latent_channels = 16
     autoencoder = VAE(latent_channels, n_res_blocks=2)
-    state_dict = torch.load('vae_100k.pth', map_location=device, weights_only=True)
+    state_dict = torch.load('vae.pth', map_location=device, weights_only=True)
     autoencoder.load_state_dict(state_dict)
     autoencoder.to(device).eval().requires_grad_(False)
 
@@ -43,13 +41,13 @@ if __name__=="__main__":
                 attn_resolutions=[8,4]
                 )
 
-    micro_batch_size = 8
-    batch_size = 8
+    micro_batch_size = 4
+    batch_size = 4
     accumulation_steps = batch_size//micro_batch_size
-    state_size = 32 
+    state_size = 64 
     total_number_of_steps = 40_000
     training_steps = total_number_of_steps * batch_size
-    dataset = GymDataGenerator(state_size, original_env, training_steps, autoencoder_time_compression = 4)
+    dataset = GymDataGenerator(state_size, original_env, training_steps*10, autoencoder_time_compression = 4)
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=16)
 
     unet_params = sum(p.numel() for p in unet.parameters())
@@ -59,7 +57,7 @@ if __name__=="__main__":
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
     loss_fn = EDM2Loss(P_mean=0.3,P_std=2., sigma_data=sigma_data, context_noise_reduction=0.5)
 
-    ref_lr = 1e-2
+    ref_lr = 8e-4
     current_lr = ref_lr
     optimizer = MARS(precond.parameters(), lr=ref_lr, eps = 1e-4)
     optimizer.zero_grad()
@@ -67,7 +65,7 @@ if __name__=="__main__":
     losses = []
 
     resume_training_run = None
-    # resume_training_run = 'lunar_lander_68.0M.pt'
+    resume_training_run = 'lunar_lander_68.0M.pt'
     steps_taken = 0
     if resume_training_run is not None:
         print(f"Resuming training from {resume_training_run}")
@@ -88,7 +86,7 @@ if __name__=="__main__":
             frames, actions, reward = batch
             frames = frames.to(device)
             actions = None if i%4==1 else actions.to(device)
-            latents = frames_to_latents(autoencoder, frames)
+            latents = frames_to_latents(autoencoder, frames)/1.2
 
         # Calculate loss    
         loss, un_weighted_loss = loss_fn(precond, latents, actions)

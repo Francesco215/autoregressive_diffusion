@@ -13,7 +13,7 @@ class GymDataGenerator(IterableDataset):
         self.state_size = state_size
         self.environment_name = environment_name
         self.evolution_time = 10
-        self.terminate_size = 10_000
+        self.terminate_size = 2048
         self.training_examples = training_examples
         self.autoencoder_time_compression = autoencoder_time_compression
 
@@ -132,16 +132,12 @@ def latents_to_frames(autoencoder,latents):
     batch_size = latents.shape[0]
     latents = einops.rearrange(latents, 'b t c h w -> b c t h w')
 
-    # Apply inverse scaling factor
-    mean,std = torch.tensor(autoencoder.latents_mean).to(latents)[:,None, None, None], torch.tensor(autoencoder.latents_std).to(latents)[:, None, None, None]
-    # mean = mean + saved_mean.view(mean.shape).to(latents) 
-    latents = (latents * std) + mean
-    # latents = latents / autoencoder.config.scaling_factor
+    latents = latents * 1.2
 
     #split the conversion to not overload the GPU RAM
     split_size = 16
     for i in range (0, latents.shape[0], split_size):
-        l = autoencoder.decode(latents[i:i+split_size]).sample
+        l, _ = autoencoder.decode(latents[i:i+split_size])
         if i == 0:
             frames = l
         else:
