@@ -16,6 +16,7 @@ class GymDataGenerator(IterableDataset):
         self.terminate_size = 2048
         self.training_examples = training_examples
         self.autoencoder_time_compression = autoencoder_time_compression
+        self.frame_collection_interval = 2
 
     def is_lander_in_frame(self, state):
         """Check if the lander is within the visible frame based on its state."""
@@ -39,19 +40,19 @@ class GymDataGenerator(IterableDataset):
                 action_history = []
                 step_count = -self.evolution_time
             else:
-                if step_count % self.autoencoder_time_compression == 0:
+                if step_count % (self.autoencoder_time_compression * self.frame_collection_interval) == 0:
                     action = env.action_space.sample()  # Random action
                     action_history.append(action)
                 # Capture the state along with reward and termination
                 state, reward, terminated, _, _ = env.step(action)
             
-            if step_count >= 0:
+            if step_count >= 0 and step_count % self.frame_collection_interval == 0:
                 frame = env.render()
                 frame = resize_image(frame)
                 frame_history.append(torch.tensor(frame))
                 state_history.append(state)  # Store the state for this frame
             
-            if step_count > 0 and step_count % self.state_size == 0:
+            if step_count > 0 and step_count % (self.state_size * self.frame_collection_interval)== 0:
                 # Check if the lander is in the frame for all states in the sequence
                 # if all(self.is_lander_in_frame(s) for s in state_history[-self.state_size:]):
                 frames = torch.stack(frame_history[-self.state_size:])

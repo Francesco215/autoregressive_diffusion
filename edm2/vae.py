@@ -211,11 +211,11 @@ class EncoderDecoder(nn.Module):
         self.encoding_type = type
 
         group_sizes = np.cumprod(time_compressions)
-        channels = [3, 4, 4, latent_channels] #assuming the input is always rgb
+        channels = [3, 8, 8, latent_channels] #assuming the input is always rgb
         
         if type=='encoder':
             group_sizes = group_sizes[::-1]
-            channels[-1]=channels[-1]*2
+            # channels[-1]=channels[-1]*2
             self.logvar_multiplier = nn.Parameter(torch.tensor(0.))
         elif type=='decoder':
             channels = channels[::-1]
@@ -237,6 +237,7 @@ class EncoderDecoder(nn.Module):
         if self.encoding_type in ['decoder','discriminator']:
             return x, cache
 
+        return x, torch.ones_like(x)*np.log(0.5), cache
         mean, logvar = x.split(split_size=x.shape[1]//2, dim = 1)
         logvar = logvar*torch.exp(self.logvar_multiplier)
 

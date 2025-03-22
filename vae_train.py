@@ -25,13 +25,13 @@ if __name__=="__main__":
     original_env = "LunarLander-v3"
     model_id="stabilityai/stable-diffusion-2-1"
 
-    batch_size = 2
-    state_size = 64 
-    total_number_of_steps = 4_000
+    batch_size = 4
+    state_size = 32 
+    total_number_of_steps = 1_000
     training_steps = total_number_of_steps * batch_size
     
     # Hyperparameters
-    latent_channels = 16
+    latent_channels = 8
     n_res_blocks = 2
 
     # Initialize models

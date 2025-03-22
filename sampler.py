@@ -29,7 +29,7 @@ original_env = "LunarLander-v3"
 state_size = 64
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-latent_channels=16
+latent_channels=8
 autoencoder = VAE(latent_channels, n_res_blocks=2)
 state_dict = torch.load('vae.pth', map_location=device, weights_only=True)
 autoencoder.load_state_dict(state_dict)
@@ -159,7 +159,7 @@ with torch.no_grad():
     frames = frames.to(device)
     actions = actions.to(device)
     latents = frames_to_latents(autoencoder, frames)/1.2
-latents = latents[:,:8].to(device)
+latents = latents[:,:4].to(device)
 actions = None #if i%4==0 else actions.to(device)
 # latents = batch["latents"][start:start+num_samples].to(device)
 # text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
@@ -196,7 +196,7 @@ plt.legend()
 plt.show()
 print(mse_steps[-1])
 # %%
-for i in tqdm(range(8)):
+for i in tqdm(range(4)):
     x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, gnet=g_net, sigma_max = 80, num_steps=32, rho=7, guidance=1)
     latents = torch.cat((latents,x),dim=1)
 

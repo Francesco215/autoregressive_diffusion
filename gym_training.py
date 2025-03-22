@@ -24,7 +24,7 @@ if __name__=="__main__":
     original_env = "LunarLander-v3"
     model_id="stabilityai/stable-diffusion-2-1"
 
-    latent_channels = 16
+    latent_channels = 8
     autoencoder = VAE(latent_channels, n_res_blocks=2)
     state_dict = torch.load('vae.pth', map_location=device, weights_only=True)
     autoencoder.load_state_dict(state_dict)
@@ -65,7 +65,7 @@ if __name__=="__main__":
     losses = []
 
     resume_training_run = None
-    resume_training_run = 'lunar_lander_68.0M.pt'
+    # resume_training_run = 'lunar_lander_68.0M.pt'
     steps_taken = 0
     if resume_training_run is not None:
         print(f"Resuming training from {resume_training_run}")
