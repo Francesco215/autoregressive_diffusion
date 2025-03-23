@@ -8,12 +8,8 @@ from edm2.vae import VAE
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # autoencoder = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="vae").to(device).eval().requires_grad_(False)
-latent_channels = 16
-autoencoder = VAE(latent_channels, n_res_blocks=2)
-state_dict = torch.load('vae.pth', map_location=device, weights_only=True)
-autoencoder.load_state_dict(state_dict)
-autoencoder.to(device).eval().requires_grad_(False)
 
+autoencoder = VAE.load_from_pretrained("saved_models/vae_4000.pt").to("cuda")
 state_size = 64
 env = "LunarLander-v3"
 dataset = GymDataGenerator(state_size, env, training_examples=500, autoencoder_time_compression = 4)
@@ -35,7 +31,7 @@ mean_latent /= 100
 #%%
 
 
-torch.save(mean_latent, f'mean_{env}_latent.pt')
+# torch.save(mean_latent, f'mean_{env}_latent.pt')
 
 # %%
 

@@ -19,21 +19,18 @@ from edm2.vae import VAE
 torch._dynamo.config.recompile_limit = 100
 # Example usage:
 n_clips = 100_000
-micro_batch_size = 1 
-batch_size = 2
+micro_batch_size = 4 
+batch_size = 4
 accumulation_steps = batch_size//micro_batch_size
 total_number_of_batches = n_clips // batch_size
 total_number_of_steps = total_number_of_batches * accumulation_steps
 num_workers = 8 
 original_env = "LunarLander-v3"
-state_size = 64
+state_size = 16
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 latent_channels=8
-autoencoder = VAE(latent_channels, n_res_blocks=2)
-state_dict = torch.load('vae.pth', map_location=device, weights_only=True)
-autoencoder.load_state_dict(state_dict)
-autoencoder.to(device).eval().requires_grad_(False)
+autoencoder = VAE.load_from_pretrained("saved_models/vae_4000.pt").to("cuda")
 dataset = GymDataGenerator(state_size, original_env, total_number_of_steps, autoencoder_time_compression = 4)
 dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=16)
 
@@ -154,17 +151,18 @@ def edm_sampler_with_mse(
 
 # Prepare data
 batch = next(iter(dataloader))
+
 with torch.no_grad():
     frames, actions, reward = batch
     frames = frames.to(device)
     actions = actions.to(device)
-    latents = frames_to_latents(autoencoder, frames)/1.2
+    latents = frames_to_latents(autoencoder, frames)/1.3
 latents = latents[:,:4].to(device)
 actions = None #if i%4==0 else actions.to(device)
 # latents = batch["latents"][start:start+num_samples].to(device)
 # text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
-context = latents[:1, :-1]  # First frames (context)
-target = latents[:1, -1:]    # Last frame (ground truth)
+context = latents[:, :-1]  # First frames (context)
+target = latents[:, -1:]    # Last frame (ground truth)
 precond.eval()
 sigma = torch.ones(context.shape[:2], device=device) * 0.05
 x, cache = precond(context, sigma)
@@ -211,7 +209,7 @@ import einops
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 x = torch.load("x.pt").to(device)
-frames = latents_to_frames(autoencoder, x[:1])
+frames = latents_to_frames(autoencoder, x)
 
 # %%
 
@@ -220,7 +218,7 @@ from matplotlib import pyplot as plt
 f = frames[:,:90]
 x = einops.rearrange(f, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=8)
 #set high resolution
-plt.imshow(x[0])
+plt.imshow(x[3])
 plt.axis('off')
 plt.savefig("lunar_lander.png",bbox_inches='tight',pad_inches=0, dpi=1000)
 

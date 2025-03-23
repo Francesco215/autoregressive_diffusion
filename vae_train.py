@@ -27,7 +27,7 @@ if __name__=="__main__":
 
     batch_size = 4
     state_size = 32 
-    total_number_of_steps = 1_000
+    total_number_of_steps = 4_000
     training_steps = total_number_of_steps * batch_size
     
     # Hyperparameters
@@ -50,7 +50,7 @@ if __name__=="__main__":
     sigma_data = 1.
 
     # Define optimizers
-    base_lr = 1e-3
+    base_lr = 3e-4
     optimizer_vae = AdamW(vae.parameters(), lr=base_lr, eps=1e-8)
     optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*8e-2, eps=1e-8)
     optimizer_disc.zero_grad()
@@ -90,7 +90,7 @@ if __name__=="__main__":
         targets = torch.ones(logits.shape[0], *logits.shape[2:], device=device, dtype=torch.long)
 
         adversarial_loss = F.cross_entropy(logits, targets, reduction='none')/np.log(2)
-        adv_multiplier = 1e-4
+        adv_multiplier = 2e-5
         adv_loss = adv_multiplier * (F.relu(adversarial_loss-1)**2).mean()
 
         # VAE losses
@@ -126,7 +126,6 @@ if __name__=="__main__":
 
         # if batch_idx == 500:
         #     adv_multiplier = 5e-2
-
 
         # Visualization every 100 steps
         if batch_idx % 100 == 0 and batch_idx > 0:
@@ -211,10 +210,10 @@ if __name__=="__main__":
             os.makedirs("images_training", exist_ok=True)
             plt.savefig(f"images_training/combined_step_{batch_idx}.png")
             plt.close()
+        if batch_idx % (total_number_of_steps//10) == 0 and batch_idx != 0:
+            os.makedirs("saved_models", exist_ok=True)
+            vae.save_to_state_dict(f'saved_models/vae_{batch_idx}.pt')
         if batch_idx == total_number_of_steps:
             break
-    # %%
-    torch.save(vae.state_dict(), "vae.pth")
-    torch.save(discriminator.state_dict(), "discriminator.pth")
 
 # %%

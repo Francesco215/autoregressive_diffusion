@@ -1,3 +1,4 @@
+import inspect
 import torch
 from torch import nn, Tensor
 from torch.nn import functional as F
@@ -238,18 +239,23 @@ class EncoderDecoder(nn.Module):
             return x, cache
 
         return x, torch.ones_like(x)*np.log(0.5), cache
-        mean, logvar = x.split(split_size=x.shape[1]//2, dim = 1)
-        logvar = logvar*torch.exp(self.logvar_multiplier)
+        # mean, logvar = x.split(split_size=x.shape[1]//2, dim = 1)
+        # logvar = logvar*torch.exp(self.logvar_multiplier)
 
-        return mean, logvar, cache
+        # return mean, logvar, cache
 
 
 
 class VAE(nn.Module):
     def __init__(self, latent_channels, n_res_blocks, time_compressions=[1, 2, 2], spatial_compressions=[1, 2, 2]):
         super().__init__()
+        
         self.encoder = EncoderDecoder(latent_channels, n_res_blocks, time_compressions, spatial_compressions, type='encoder')
         self.decoder = EncoderDecoder(latent_channels, n_res_blocks, time_compressions, spatial_compressions, type='decoder')
+
+        frame = inspect.currentframe()
+        args, _, _, values = inspect.getargvalues(frame)
+        self.kwargs = {arg: values[arg] for arg in args if arg != "self"}
 
     def forward(self, x, cache=None):
         if cache is None: cache = {}
@@ -262,19 +268,44 @@ class VAE(nn.Module):
         return recon, mean, logvar, cache
     
     def encode(self, x, cache=None):
-        # Encode input to get mean and log-variance
         mean, logvar, cache = self.encoder(x, cache)
         
-        # Reparameterization trick: sample z from N(mean, std)
-        std = torch.exp(0.5 * logvar)  # Compute standard deviation
-        eps = torch.randn_like(std)    # Sample noise from standard normal
-        z = mean + eps * std           # Latent vector
+        std = torch.exp(0.5 * logvar)  
+        eps = torch.randn_like(std)    
+        z = mean + eps * std           
 
         return z, mean, logvar, cache
     
     def decode(self, z, cache=None):
         recon, cache = self.decoder(z, cache)
         return recon, cache
+    
+    def save_to_state_dict(self, path):
+        torch.save({"state_dict": self.state_dict(), "kwargs": self.kwargs}, path)
+        
+    @classmethod
+    def load_from_pretrained(cls, checkpoint):
+
+        if isinstance(checkpoint,str):
+            checkpoint = torch.load(checkpoint)
+
+        model = cls(**checkpoint['kwargs'])
+
+        model.load_state_dict(checkpoint['state_dict'])
+        return model
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # https://github.com/IamCreateAI/Ruyi-Models/blob/6c7b5972dc6e6b7128d6238bdbf6cc7fd56af2a4/ruyi/vae/ldm/modules/vaemodules/discriminator.py
 

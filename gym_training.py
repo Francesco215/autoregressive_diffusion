@@ -25,10 +25,8 @@ if __name__=="__main__":
     model_id="stabilityai/stable-diffusion-2-1"
 
     latent_channels = 8
-    autoencoder = VAE(latent_channels, n_res_blocks=2)
-    state_dict = torch.load('vae.pth', map_location=device, weights_only=True)
-    autoencoder.load_state_dict(state_dict)
-    autoencoder.to(device).eval().requires_grad_(False)
+    autoencoder = VAE.load_from_pretrained("saved_models/vae_4000.pt").to("cuda")
+
 
     unet = UNet(img_resolution=32, # Match your latent resolution
                 img_channels=latent_channels, # Match your latent channels
@@ -41,10 +39,10 @@ if __name__=="__main__":
                 attn_resolutions=[8,4]
                 )
 
-    micro_batch_size = 4
-    batch_size = 4
+    micro_batch_size = 8
+    batch_size = 8
     accumulation_steps = batch_size//micro_batch_size
-    state_size = 64 
+    state_size = 32 
     total_number_of_steps = 40_000
     training_steps = total_number_of_steps * batch_size
     dataset = GymDataGenerator(state_size, original_env, training_steps*10, autoencoder_time_compression = 4)
@@ -57,7 +55,7 @@ if __name__=="__main__":
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
     loss_fn = EDM2Loss(P_mean=0.3,P_std=2., sigma_data=sigma_data, context_noise_reduction=0.5)
 
-    ref_lr = 8e-4
+    ref_lr = 3e-4
     current_lr = ref_lr
     optimizer = MARS(precond.parameters(), lr=ref_lr, eps = 1e-4)
     optimizer.zero_grad()
@@ -86,7 +84,7 @@ if __name__=="__main__":
             frames, actions, reward = batch
             frames = frames.to(device)
             actions = None if i%4==1 else actions.to(device)
-            latents = frames_to_latents(autoencoder, frames)/1.2
+            latents = frames_to_latents(autoencoder, frames)/1.3
 
         # Calculate loss    
         loss, un_weighted_loss = loss_fn(precond, latents, actions)
