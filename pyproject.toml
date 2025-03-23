@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 dependencies = [
-    "torch>=2.5",
+    "torch" ,
     "setuptools",
     "einops",
     "ipykernel",
@@ -17,7 +17,7 @@ dependencies = [
     "gymnasium[box2d,classic-control]",
     "diffusers>=0.32.1",
     "transformers",
-    "datasets>=3.2.0",
+    "datasets",
     "diffusers",
     "opencv-python",
     "h5py",
@@ -28,3 +28,13 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 include = ["edm2", "edm2.*"]
+
+[tool.uv.sources]
+torch = { index = "pytorch" }
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/nightly/cu126"
+
+[tool.uv]
+prerelease = "allow"

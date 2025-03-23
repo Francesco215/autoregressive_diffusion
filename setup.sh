@@ -16,4 +16,4 @@ uv venv
 . .venv/bin/activate
 uv pip install -e .
 
-uv pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu126
+# uv pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu126
