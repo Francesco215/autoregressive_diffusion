@@ -101,26 +101,26 @@ class GroupCausal3DConvVAE(torch.nn.Module):
 
 
 
-class Conv2DVAE(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel, dilation=1):
-        super().__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel, dilation=dilation, padding=kernel[1]//2)
+# class Conv2DVAE(nn.Module):
+#     def __init__(self, in_channels, out_channels, kernel, dilation=1):
+#         super().__init__()
+#         self.conv = nn.Conv2d(in_channels, out_channels, kernel, dilation=dilation, padding=kernel[1]//2)
     
-    def forward(self, x):
-        batch_size = x.shape[0]
-        multiplicative = compute_multiplicative_space_wise(x.shape, self.conv.weight.shape[2:], None, None, device = x.device)
-        x = einops.rearrange(x, 'b c t h w -> (b t) c h w')
-        x = self.conv(x)
-        x = einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
-        return x * multiplicative
+#     def forward(self, x):
+#         batch_size = x.shape[0]
+#         multiplicative = compute_multiplicative_space_wise(x.shape, self.conv.weight.shape[2:], None, None, device = x.device)
+#         x = einops.rearrange(x, 'b c t h w -> (b t) c h w')
+#         x = self.conv(x)
+#         x = einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
+#         return x * multiplicative
 
 
-class FrameAttentionVAE(FrameAttention):
-    def forward(self,x):
-        batch_size = x.shape[0]
-        x = einops.rearrange(x, 'b c t h w -> (b t) c h w')
-        super().forward(x, batch_size)
-        return einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
+# class FrameAttentionVAE(FrameAttention):
+#     def forward(self,x):
+#         batch_size = x.shape[0]
+#         x = einops.rearrange(x, 'b c t h w -> (b t) c h w')
+#         super().forward(x, batch_size)
+#         return einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
 
 class GroupNorm3D(nn.GroupNorm):
     def forward(self, input):
@@ -158,8 +158,8 @@ class ResBlock(nn.Module):
 class EncoderDecoderBlock(nn.Module):
     def __init__(self, in_channels, out_channels, time_compression, spatial_compression, kernel, group_size, n_res_blocks, type='encoder'):
         super().__init__()
-        self.downsample_block = UpDownBlock(time_compression, spatial_compression, 'up' if type=='decoder' else 'down')
-        total_compression = self.downsample_block.total_compression
+        self.updown_block = UpDownBlock(time_compression, spatial_compression, 'up' if type=='decoder' else 'down')
+        total_compression = self.updown_block.total_compression
 
         self.decompression_block = GroupCausal3DConvVAE(in_channels, out_channels*total_compression, kernel, group_size//time_compression) if type=='decoder' else None
         self.compression_block  =  GroupCausal3DConvVAE(in_channels*total_compression, out_channels, kernel, group_size) if type in ['encoder', 'discriminator'] else None
@@ -172,7 +172,7 @@ class EncoderDecoderBlock(nn.Module):
         if self.decompression_block is not None:
             x, cache['decompression_block'] = self.decompression_block(x, cache = cache.get('decompression_block', None))
 
-        x = self.downsample_block(x)
+        x = self.updown_block(x)
 
         if self.compression_block is not None:
             x, cache['compression_block'] = self.compression_block(x, cache = cache.get('compression_block', None))

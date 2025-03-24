@@ -6,8 +6,9 @@ unzip awscliv2.zip
 sudo ./aws/install
 rm -rf awscliv2.zip aws/
 
-git config --global user.email "f.sacco@protonmail.com"
-git config --global user.name "Francesco215"
+# i want to get rid of this two lines
+# git config --global user.email "f.sacco@protonmail.com"
+# git config --global user.name "Francesco215"
 
 pip install swig uv nvitop 
 alias auv='uv venv; . .venv/bin/activate'

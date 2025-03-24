@@ -31,10 +31,10 @@ state_size = 16
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 latent_channels=8
 autoencoder = VAE.load_from_pretrained("saved_models/vae_4000.pt").to("cuda")
-dataset = GymDataGenerator(state_size, original_env, total_number_of_steps, autoencoder_time_compression = 4)
+dataset = GymDataGenerator(state_size, original_env, total_number_of_steps, autoencoder_time_compression = 4, return_anyways=False)
 dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=16)
 
-unet = UNet(img_resolution=32, # Match your latent resolution
+unet = UNet(img_resolution=64, # Match your latent resolution
             img_channels=latent_channels, # Match your latent channels
             label_dim = 4,
             model_channels=64,
@@ -47,7 +47,7 @@ unet = UNet(img_resolution=32, # Match your latent resolution
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
 sigma_data = 1.
 precond = Precond(unet, use_fp16=True, sigma_data=sigma_data)
-precond_state_dict = torch.load("lunar_lander_68.0M.pt",map_location=device,weights_only=False)['model_state_dict']
+precond_state_dict = torch.load("saved_models/lunar_lander_67.0M.pt",map_location=device,weights_only=False)['model_state_dict']
 precond.load_state_dict(precond_state_dict, strict=False)
 precond.to(device)
 
@@ -157,7 +157,7 @@ with torch.no_grad():
     frames = frames.to(device)
     actions = actions.to(device)
     latents = frames_to_latents(autoencoder, frames)/1.3
-latents = latents[:,:4].to(device)
+latents = latents[:,:2].to(device)
 actions = None #if i%4==0 else actions.to(device)
 # latents = batch["latents"][start:start+num_samples].to(device)
 # text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
@@ -218,15 +218,17 @@ from matplotlib import pyplot as plt
 f = frames[:,:90]
 x = einops.rearrange(f, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=8)
 #set high resolution
-plt.imshow(x[3])
+plt.imshow(x[1])
 plt.axis('off')
 plt.savefig("lunar_lander.png",bbox_inches='tight',pad_inches=0, dpi=1000)
 
 
-# %%
-losses = torch.load("lunar_lander_38.0M_trained.pt",map_location=device,weights_only=False)['losses']
-print(losses[-1])
-plt.yscale('log')
-plt.xscale('log')
-plt.plot(losses)
+# # %%
+# losses = torch.load("lunar_lander_38.0M_trained.pt",map_location=device,weights_only=False)['losses']
+# print(losses[-1])
+# plt.yscale('log')
+# plt.xscale('log')
+# plt.plot(losses)
+# # %%
+
 # %%

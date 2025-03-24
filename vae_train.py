@@ -23,7 +23,6 @@ if __name__=="__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     original_env = "LunarLander-v3"
-    model_id="stabilityai/stable-diffusion-2-1"
 
     batch_size = 4
     state_size = 32 
@@ -92,6 +91,7 @@ if __name__=="__main__":
         adversarial_loss = F.cross_entropy(logits, targets, reduction='none')/np.log(2)
         adv_multiplier = 2e-5
         adv_loss = adv_multiplier * (F.relu(adversarial_loss-1)**2).mean()
+
 
         # VAE losses
         recon_loss = F.mse_loss(recon, frames, reduction='mean')

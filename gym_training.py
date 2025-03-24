@@ -25,10 +25,10 @@ if __name__=="__main__":
     model_id="stabilityai/stable-diffusion-2-1"
 
     latent_channels = 8
-    autoencoder = VAE.load_from_pretrained("saved_models/vae_4000.pt").to("cuda")
+    autoencoder = VAE.load_from_pretrained("saved_models/vae_4000.pt").to("cuda").requires_grad_(False)
 
 
-    unet = UNet(img_resolution=32, # Match your latent resolution
+    unet = UNet(img_resolution=64, # Match your latent resolution
                 img_channels=latent_channels, # Match your latent channels
                 label_dim = 4,
                 model_channels=64,
@@ -55,15 +55,15 @@ if __name__=="__main__":
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
     loss_fn = EDM2Loss(P_mean=0.3,P_std=2., sigma_data=sigma_data, context_noise_reduction=0.5)
 
-    ref_lr = 3e-4
+    ref_lr = 1e-2
     current_lr = ref_lr
-    optimizer = MARS(precond.parameters(), lr=ref_lr, eps = 1e-4)
+    optimizer = AdamW(precond.parameters(), lr=ref_lr, eps = 1e-8)
     optimizer.zero_grad()
     ema_tracker = PowerFunctionEMA(precond, stds=[0.050, 0.100])
     losses = []
 
     resume_training_run = None
-    # resume_training_run = 'lunar_lander_68.0M.pt'
+    # resume_training_run = 'saved_models/lunar_lander_67.0M.pt'
     steps_taken = 0
     if resume_training_run is not None:
         print(f"Resuming training from {resume_training_run}")
@@ -123,7 +123,7 @@ if __name__=="__main__":
             plt.close()
             ulw=True
 
-        if i % (total_number_of_steps//100) == 0 and i!=0:  # save every 10% of epochs
+        if i % (total_number_of_steps//10) == 0 and i!=0:  # save every 10% of epochs
             torch.save({
                 'batch': i,
                 'model_state_dict': precond.state_dict(),
@@ -131,7 +131,7 @@ if __name__=="__main__":
                 'ema_state_dict': ema_tracker.state_dict(),
                 'losses': losses,
                 'ref_lr': ref_lr
-            }, f"lunar_lander_{unet_params//1e6}M.pt")
+            }, f"saved_models/lunar_lander_{unet_params//1e6}M.pt")
 
         if i == total_number_of_steps:
             break
