@@ -2,13 +2,14 @@
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
+from torch.optim import AdamW
 
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-from diffusers import AutoencoderKL, AutoencoderKLCogVideoX, AutoencoderKLMochi
 
 
+from edm2.vae import VAE    
 from edm2.gym_dataloader import GymDataGenerator, gym_collate_function, frames_to_latents
 from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
@@ -23,13 +24,11 @@ if __name__=="__main__":
     original_env = "LunarLander-v3"
     model_id="stabilityai/stable-diffusion-2-1"
 
-    # autoencoder = AutoencoderKL.from_pretrained(model_id, subfolder="vae").to(device).eval().requires_grad_(False)
+    latent_channels = 8
+    autoencoder = VAE.load_from_pretrained("saved_models/vae_4000.pt").to("cuda").requires_grad_(False)
 
-    # autoencoder = AutoencoderKLCogVideoX.from_pretrained("THUDM/CogVideoX-2b", subfolder="vae", torch_dtype=torch.float32).to("cuda")
-    autoencoder = AutoencoderKLMochi.from_pretrained("genmo/mochi-1-preview", subfolder="vae", torch_dtype=torch.float32).to("cuda")
-    latent_channels = autoencoder.config.latent_channels
 
-    unet = UNet(img_resolution=32, # Match your latent resolution
+    unet = UNet(img_resolution=64, # Match your latent resolution
                 img_channels=latent_channels, # Match your latent channels
                 label_dim = 4,
                 model_channels=64,
@@ -40,13 +39,13 @@ if __name__=="__main__":
                 attn_resolutions=[8,4]
                 )
 
-    micro_batch_size = 1
-    batch_size = 4
+    micro_batch_size = 8
+    batch_size = 8
     accumulation_steps = batch_size//micro_batch_size
-    state_size = 96 
+    state_size = 32 
     total_number_of_steps = 40_000
     training_steps = total_number_of_steps * batch_size
-    dataset = GymDataGenerator(state_size, original_env, training_steps, autoencoder_time_compression = 6)
+    dataset = GymDataGenerator(state_size, original_env, training_steps*10, autoencoder_time_compression = 4)
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=16)
 
     unet_params = sum(p.numel() for p in unet.parameters())
@@ -58,13 +57,13 @@ if __name__=="__main__":
 
     ref_lr = 1e-2
     current_lr = ref_lr
-    optimizer = MARS(precond.parameters(), lr=ref_lr, eps = 1e-4)
+    optimizer = AdamW(precond.parameters(), lr=ref_lr, eps = 1e-8)
     optimizer.zero_grad()
     ema_tracker = PowerFunctionEMA(precond, stds=[0.050, 0.100])
     losses = []
 
     resume_training_run = None
-    # resume_training_run = 'lunar_lander_68.0M.pt'
+    # resume_training_run = 'saved_models/lunar_lander_67.0M.pt'
     steps_taken = 0
     if resume_training_run is not None:
         print(f"Resuming training from {resume_training_run}")
@@ -84,8 +83,8 @@ if __name__=="__main__":
         with torch.no_grad():
             frames, actions, reward = batch
             frames = frames.to(device)
-            actions = None if i%4==0 else actions.to(device)
-            latents = frames_to_latents(autoencoder, frames)
+            actions = None if i%4==1 else actions.to(device)
+            latents = frames_to_latents(autoencoder, frames)/1.3
 
         # Calculate loss    
         loss, un_weighted_loss = loss_fn(precond, latents, actions)
@@ -124,7 +123,7 @@ if __name__=="__main__":
             plt.close()
             ulw=True
 
-        if i % (total_number_of_steps//100) == 0 and i!=0:  # save every 10% of epochs
+        if i % (total_number_of_steps//10) == 0 and i!=0:  # save every 10% of epochs
             torch.save({
                 'batch': i,
                 'model_state_dict': precond.state_dict(),
@@ -132,7 +131,7 @@ if __name__=="__main__":
                 'ema_state_dict': ema_tracker.state_dict(),
                 'losses': losses,
                 'ref_lr': ref_lr
-            }, f"lunar_lander_{unet_params//1e6}M.pt")
+            }, f"saved_models/lunar_lander_{unet_params//1e6}M.pt")
 
         if i == total_number_of_steps:
             break

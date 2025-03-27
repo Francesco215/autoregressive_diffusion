@@ -1,52 +1,40 @@
 #%%
 import copy
+from streaming import StreamingDataset
 from tqdm import tqdm
 import numpy as np
 from matplotlib import pyplot as plt
+import einops
 
 import torch
 from torch.utils.data import DataLoader
 
-
+from edm2.gym_dataloader import GymDataGenerator, frames_to_latents, gym_collate_function, latents_to_frames
 from edm2.networks_edm2 import UNet, Precond
-from edm2.loss import EDM2Loss, learning_rate_schedule
-from edm2.loss_weight import MultiNoiseLoss
-from edm2.mars import MARS
-from edm2.gym_dataloader import GymDataGenerator, frames_to_latents, gym_collate_function
-from edm2.phema import PowerFunctionEMA
+from edm2.vae import VAE
 
-
-from diffusers import AutoencoderKL, AutoencoderKLCogVideoX, AutoencoderKLMochi
 
 # import logging
 # torch._logging.set_logs(dynamo=logging.INFO)
-
 torch._dynamo.config.recompile_limit = 100
 # Example usage:
 n_clips = 100_000
-micro_batch_size = 1 
-batch_size = 2
+micro_batch_size = 4 
+batch_size = 4
 accumulation_steps = batch_size//micro_batch_size
 total_number_of_batches = n_clips // batch_size
 total_number_of_steps = total_number_of_batches * accumulation_steps
-
 num_workers = 8 
-device = "cuda" if torch.cuda.is_available() else "cpu"
-state_size = 48 
 original_env = "LunarLander-v3"
-latent_channels = 0
+state_size = 16
 
-model_id="stabilityai/stable-diffusion-2-1"
-# autoencoder = AutoencoderKL.from_pretrained(model_id, subfolder="vae").to(device).requires_grad_(False)
-autoencoder = AutoencoderKLMochi.from_pretrained("genmo/mochi-1-preview", subfolder="vae", torch_dtype=torch.float32).to("cuda")
-dataset = GymDataGenerator(state_size, original_env, autoencoder_time_compression = 6)
-dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=gym_collate_function, num_workers=2)
-batch = next(iter(dataloader))
-#%%
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+latent_channels=8
+autoencoder = VAE.load_from_pretrained("saved_models/vae_4000.pt").to("cuda")
+dataset = GymDataGenerator(state_size, original_env, total_number_of_steps, autoencoder_time_compression = 4, return_anyways=False)
+dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=16)
 
-latent_channels = autoencoder.config.latent_channels
-
-unet = UNet(img_resolution=32, # Match your latent resolution
+unet = UNet(img_resolution=64, # Match your latent resolution
             img_channels=latent_channels, # Match your latent channels
             label_dim = 4,
             model_channels=64,
@@ -59,7 +47,7 @@ unet = UNet(img_resolution=32, # Match your latent resolution
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
 sigma_data = 1.
 precond = Precond(unet, use_fp16=True, sigma_data=sigma_data)
-precond_state_dict = torch.load("lunar_lander_68.0M.pt",map_location=device,weights_only=False)['model_state_dict']
+precond_state_dict = torch.load("saved_models/lunar_lander_67.0M.pt",map_location=device,weights_only=False)['model_state_dict']
 precond.load_state_dict(precond_state_dict, strict=False)
 precond.to(device)
 
@@ -162,19 +150,22 @@ def edm_sampler_with_mse(
 # batch ={"latents": torch.randn(2, 8, 16, 64, 64)}
 
 # Prepare data
-start = 0
-num_samples = 4
-frames, action, reward = batch
-action = action.to(device)
-frames = frames.to(device)
-latents = frames_to_latents(autoencoder, frames)
+batch = next(iter(dataloader))
+
+with torch.no_grad():
+    frames, actions, reward = batch
+    frames = frames.to(device)
+    actions = actions.to(device)
+    latents = frames_to_latents(autoencoder, frames)/1.3
+latents = latents[:,:2].to(device)
+actions = None #if i%4==0 else actions.to(device)
 # latents = batch["latents"][start:start+num_samples].to(device)
 # text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
 context = latents[:, :-1]  # First frames (context)
 target = latents[:, -1:]    # Last frame (ground truth)
 precond.eval()
 sigma = torch.ones(context.shape[:2], device=device) * 0.05
-x, cache = precond(context, sigma, action[:,:-1])
+x, cache = precond(context, sigma)
 
 #%%
 # Run sampler with sigma_max=0.5 for initial noise level
@@ -184,7 +175,7 @@ _, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(
     target=target,
     sigma_max=3,  # Initial noise level matches our test
     num_steps=32,
-    conditioning=action[:,-1:],
+    conditioning=None,
     # gnet=g_net,
     rho = 7,
     guidance = 1,
@@ -203,7 +194,7 @@ plt.legend()
 plt.show()
 print(mse_steps[-1])
 # %%
-for i in tqdm(range(8)):
+for i in tqdm(range(4)):
     x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, gnet=g_net, sigma_max = 80, num_steps=32, rho=7, guidance=1)
     latents = torch.cat((latents,x),dim=1)
 
@@ -213,27 +204,31 @@ torch.save(latents, "x.pt")
 
 # %%
 import torch
-from edm2.gym_dataloader import latents_to_frames
+from edm2.gym_dataloader import GymDataGenerator, frames_to_latents, gym_collate_function, latents_to_frames
 import einops
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 x = torch.load("x.pt").to(device)
-frames = latents_to_frames(autoencoder, x[:1])
+frames = latents_to_frames(autoencoder, x)
 
 # %%
 
 from matplotlib import pyplot as plt
-frames = frames[:,:64]
-x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t1=8)
+# frames = frames
+f = frames[:,:90]
+x = einops.rearrange(f, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=8)
 #set high resolution
-plt.imshow(x[0])
+plt.imshow(x[1])
 plt.axis('off')
 plt.savefig("lunar_lander.png",bbox_inches='tight',pad_inches=0, dpi=1000)
 
 
-# %%
-losses = torch.load("lunar_lander_38.0M_trained.pt",map_location=device,weights_only=False)['losses']
-print(losses[-1])
-plt.yscale('log')
-plt.xscale('log')
-plt.plot(losses)
+# # %%
+# losses = torch.load("lunar_lander_38.0M_trained.pt",map_location=device,weights_only=False)['losses']
+# print(losses[-1])
+# plt.yscale('log')
+# plt.xscale('log')
+# plt.plot(losses)
+# # %%
+
 # %%

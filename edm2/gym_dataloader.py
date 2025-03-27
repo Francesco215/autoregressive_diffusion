@@ -7,18 +7,26 @@ import einops
 import gymnasium as gym
 
 
+
 class GymDataGenerator(IterableDataset):
-    def __init__(self, state_size=6, environment_name="CartPole-v1", training_examples=10_000, autoencoder_time_compression=4):
+    def __init__(self, state_size=6, environment_name="LunarLander-v3", training_examples=10_000, autoencoder_time_compression=4, return_anyways=True):
         self.state_size = state_size
         self.environment_name = environment_name
         self.evolution_time = 10
-        self.terminate_size = 256
+        self.terminate_size = 512
         self.training_examples = training_examples
         self.autoencoder_time_compression = autoencoder_time_compression
+        self.frame_collection_interval = 2
+        self.return_anyways=return_anyways
+
+    def is_lander_in_frame(self, state):
+        """Check if the lander is within the visible frame based on its state."""
+        x, y = state[0], state[1]
+        return abs(y) < 1 and abs(x) < .95
 
     @torch.no_grad()
     def __iter__(self):
-        env = gym.make(self.environment_name,render_mode="rgb_array")
+        env = gym.make(self.environment_name, render_mode="rgb_array")
         terminated = True
         n_data_yielded = 0
 
@@ -29,31 +37,37 @@ class GymDataGenerator(IterableDataset):
                 reward = 0
                 action = 0
                 frame_history = []
+                state_history = []  # Added to track states
                 action_history = []
                 step_count = -self.evolution_time
             else:
-                if step_count % self.autoencoder_time_compression==0:
+                if step_count % (self.autoencoder_time_compression * self.frame_collection_interval) == 0:
                     action = env.action_space.sample()  # Random action
                     action_history.append(action)
-                _ , reward, terminated, _, _ = env.step(action)
+                # Capture the state along with reward and termination
+                state, reward, terminated, _, _ = env.step(action)
             
-            if step_count >= 0: # This if can be removed, but having it avoids rendering useless frames
+            if step_count >= 0 and step_count % self.frame_collection_interval == 0:
                 frame = env.render()
                 frame = resize_image(frame)
                 frame_history.append(torch.tensor(frame))
+                state_history.append(state)  # Store the state for this frame
             
-            if step_count > 0 and step_count%self.state_size==0:  # Skip the first step as we don't have a previous state
-                frames = torch.stack(frame_history[-self.state_size:])
-                actions = torch.tensor(action_history[-self.state_size//self.autoencoder_time_compression:])
-
-                yield frames, actions, torch.tensor(reward).clone()
-                n_data_yielded += 1
-                frame_history, action_history = [], []
+            if step_count > 0 and step_count % (self.state_size * self.frame_collection_interval)== 0:
+                # Check if the lander is in the frame for all states in the sequence
+                if self.return_anyways or all(self.is_lander_in_frame(s) for s in state_history[-self.state_size:]):
+                    frames = torch.stack(frame_history[-self.state_size:])
+                    actions = torch.tensor(action_history[-self.state_size // self.autoencoder_time_compression:])
+                    yield frames, actions, torch.tensor(reward).clone()
+                    n_data_yielded += 1
+                # Reset histories whether we yield or not to maintain sequence alignment
+                frame_history, state_history, action_history = [], [], []
             
             if step_count > self.terminate_size:
                 terminated = True
                 
             step_count += 1
+
 
 
 def resize_image(image_array):
@@ -71,7 +85,7 @@ def gym_collate_function(batch):
     padded_actions = torch.stack(action_histories)
     return padded_frames, padded_actions, torch.Tensor(rewards)
 
-saved_mean = torch.load('mean_LunarLander-v3_latent.pt').mean(dim=(1,2))
+# saved_mean = torch.load('mean_LunarLander-v3_latent.pt').mean(dim=(1,2))
 # std_latent = 12446.0
 @torch.no_grad()
 def frames_to_latents(autoencoder, frames)->Tensor:
@@ -87,7 +101,8 @@ def frames_to_latents(autoencoder, frames)->Tensor:
     #split the conversion to not overload the GPU RAM
     split_size = 64
     for i in range (0, frames.shape[0], split_size):
-        l = autoencoder.encode(frames[i:i+split_size]).latent_dist.sample()
+        # l = autoencoder.encode(frames[i:i+split_size]).latent_dist.sample()
+        _, l, _, _ = autoencoder.encode(frames[i:i+split_size])
         if i == 0:
             latents = l
         else:
@@ -95,9 +110,9 @@ def frames_to_latents(autoencoder, frames)->Tensor:
 
     # Apply scaling factor
     # latents = latents * autoencoder.config.scaling_factor
-    mean,std = torch.tensor(autoencoder.config.latents_mean)[:,None, None, None].to(latents), torch.tensor(autoencoder.config.latents_std)[:, None, None, None].to(latents)
-    mean = mean + saved_mean.view(mean.shape).to(latents) 
-    latents = (latents - mean)/std
+    # mean,std = torch.tensor(autoencoder.config.latents_mean)[:,None, None, None].to(latents), torch.tensor(autoencoder.config.latents_std)[:, None, None, None].to(latents)
+    # mean = mean + saved_mean.view(mean.shape).to(latents) 
+    # latents = (latents - mean)/std
 
     latents = einops.rearrange(latents, 'b c t h w -> b t c h w', b=batch_size)
     return latents
@@ -119,16 +134,12 @@ def latents_to_frames(autoencoder,latents):
     batch_size = latents.shape[0]
     latents = einops.rearrange(latents, 'b t c h w -> b c t h w')
 
-    # Apply inverse scaling factor
-    mean,std = torch.tensor(autoencoder.latents_mean).to(latents)[:,None, None, None], torch.tensor(autoencoder.latents_std).to(latents)[:, None, None, None]
-    mean = mean + saved_mean.view(mean.shape).to(latents) 
-    latents = (latents * std) + mean
-    # latents = latents / autoencoder.config.scaling_factor
+    latents = latents * 1.2
 
     #split the conversion to not overload the GPU RAM
     split_size = 16
     for i in range (0, latents.shape[0], split_size):
-        l = autoencoder.decode(latents[i:i+split_size]).sample
+        l, _ = autoencoder.decode(latents[i:i+split_size])
         if i == 0:
             frames = l
         else:
