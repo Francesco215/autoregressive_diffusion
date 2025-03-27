@@ -69,7 +69,7 @@ if __name__=="__main__":
     sigma_data = 1.
 
     # Define optimizers
-    base_lr = 1e-2
+    base_lr = 3e-4
     optimizer_vae = AdamW(vae.parameters(), lr=base_lr, eps=1e-8)
     optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr, eps=1e-8)
     optimizer_disc.zero_grad()
@@ -109,13 +109,13 @@ if __name__=="__main__":
         targets = torch.ones(logits.shape[0], *logits.shape[2:], device=device, dtype=torch.long)
 
         adversarial_loss = F.cross_entropy(logits, targets, reduction='none')/np.log(2)
-        adv_multiplier = 1e-2
-        adv_loss = adv_multiplier * (F.relu(adversarial_loss-1)**2).mean()
+        adv_multiplier = 4e-3*min(1, batch_idx/400)
+        adv_loss = adv_multiplier * (F.relu(adversarial_loss-1.1)).mean()
 
         # VAE losses
         _, _, t, h, w = recon.shape
-        r = F.interpolate(recon, size = (t,h//8,w//8),mode='area')
-        f = F.interpolate(frames,size = (t,h//8,w//8),mode='area')
+        r = F.interpolate(recon, size = (t,h//4,w//4),mode='area')
+        f = F.interpolate(frames,size = (t,h//4,w//4),mode='area')
 
         low_freq_recon_loss = F.mse_loss(r, f, reduction='mean')
         recon_loss = F.mse_loss(recon,frames, reduction ='mean')
