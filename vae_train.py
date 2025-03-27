@@ -71,7 +71,7 @@ if __name__=="__main__":
     # Define optimizers
     base_lr = 1e-2
     optimizer_vae = AdamW(vae.parameters(), lr=base_lr, eps=1e-8)
-    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*8e-2, eps=1e-8)
+    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr, eps=1e-8)
     optimizer_disc.zero_grad()
 
     # Add exponential decay schedule
@@ -113,10 +113,15 @@ if __name__=="__main__":
         adv_loss = adv_multiplier * (F.relu(adversarial_loss-1)**2).mean()
 
         # VAE losses
-        recon_loss = F.l1_loss(recon, frames, reduction='mean')
+        _, _, t, h, w = recon.shape
+        r = F.interpolate(recon, size = (t,h//8,w//8),mode='area')
+        f = F.interpolate(frames,size = (t,h//8,w//8),mode='area')
+
+        low_freq_recon_loss = F.mse_loss(r, f, reduction='mean')
+        recon_loss = F.mse_loss(recon,frames, reduction ='mean')
 
         # Define the loss components
-        main_loss = recon_loss + kl_group*1e-4 + kl_loss*1e-4
+        main_loss = low_freq_recon_loss + kl_group*1e-4 + kl_loss*1e-4 + recon_loss*3e-2
 
         apply_clipped_grads(vae, optimizer_vae, main_loss, adv_loss, 1, None)
         optimizer_vae.step()
@@ -136,8 +141,8 @@ if __name__=="__main__":
         optimizer_disc.step()
         scheduler_disc.step()
         
-        pbar.set_postfix_str(f"recon loss: {recon_loss.item():.4f}, KL group loss: {kl_group.item():.4f} KL loss: {kl_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}, Adversarial Loss: {adversarial_loss.mean().item():.4f}")
-        recon_losses.append(recon_loss.item())
+        pbar.set_postfix_str(f"recon loss: {recon_loss.mean().item():.4f}, KL group loss: {kl_group.item():.4f} KL loss: {kl_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}, Adversarial Loss: {adversarial_loss.mean().item():.4f}")
+        recon_losses.append(recon_loss.mean().item())
         kl_group_losses.append(kl_group.item())
         kl_losses.append(kl_loss.item())
         adversarial_losses.append(adversarial_loss.mean().item())

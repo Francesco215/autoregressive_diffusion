@@ -120,13 +120,16 @@ class FrameAttentionVAE(FrameAttention):
         return einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
 
 class ResBlock(nn.Module):
-    def __init__(self, channels: int, kernel=(8,3,3), group_size=1):
+    def __init__(self, channels: int, kernel=(8,3,3), group_size=1, dropout=0.0):
         super().__init__()
         self.norm_0 = nn.GroupNorm(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
         self.norm_1 = nn.GroupNorm(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
 
         self.conv3d0 = GroupCausal3DConvVAE(channels, channels,  kernel, group_size, dilation = (1,1,1))
         self.conv3d1 = GroupCausal3DConvVAE(channels, channels, kernel, group_size, dilation = (1,1,1))
+
+        self.dropout_0 = nn.Dropout(p=dropout)
+        self.dropout_1 = nn.Dropout(p=dropout)
 
     def forward(self, x, cache = None):
         if cache is None: cache = {}
@@ -135,12 +138,14 @@ class ResBlock(nn.Module):
         y = self.norm_0(y)
         y = einops.rearrange(y, "(b t) c h w -> b c t h w", b=x.shape[0])
         y = mp_silu(y)
+        y = self.dropout_0(y)
         y, cache['conv3d_res0'] = self.conv3d0(y, cache=cache.get('conv3d_res0', None))
 
         y = einops.rearrange(x, "b c t h w -> (b t) c h w")
         y = self.norm_1(y)
         y = einops.rearrange(y, "(b t) c h w -> b c t h w", b=x.shape[0])
         y = mp_silu(y)
+        y = self.dropout_0(y)
         y, cache['conv3d_res1'] = self.conv3d1(y, cache=cache.get('conv3d_res1', None))
         y = mp_silu(y)
 
@@ -206,7 +211,7 @@ class EncoderDecoder(nn.Module):
         self.encoding_type = type
 
         group_sizes = np.cumprod(time_compressions)
-        channels = [3, 4, 4, latent_channels] #assuming the input is always rgb
+        channels = [3, 8, 8, latent_channels]
         
         if type=='encoder':
             group_sizes = group_sizes[::-1]
@@ -232,8 +237,9 @@ class EncoderDecoder(nn.Module):
         if self.encoding_type in ['decoder','discriminator']:
             return x, cache
 
-        mean, logvar = x.split(split_size=x.shape[1]//2, dim = 1)
-        logvar = logvar*torch.exp(self.logvar_multiplier)
+        return x, torch.ones_like(x)*np.log(0.4), cache
+        # mean, logvar = x.split(split_size=x.shape[1]//2, dim = 1)
+        # logvar = logvar*torch.exp(self.logvar_multiplier)
 
         return mean, logvar, cache
 
@@ -347,6 +353,7 @@ class Discriminator2D(nn.Module):
                     out_channels=output_channels,
                     output_scale_factor=math.sqrt(2),
                     add_downsample=not is_final_block,
+                    dropout=0.2,
                 )
             )
 
@@ -519,6 +526,7 @@ class Discriminator3D(nn.Module):
                     out_channels=output_channels,
                     output_scale_factor=math.sqrt(2),
                     add_downsample=not is_final_block,
+                    dropout=0.2,
                 )
             )
 
