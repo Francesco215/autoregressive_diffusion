@@ -26,7 +26,8 @@ if __name__=="__main__":
 
     original_env = "LunarLander-v3"
 
-    batch_size = 2
+    batch_size = 8
+    micro_batch_size = 2
     state_size = 32 
     total_number_of_steps = 4_000
     training_steps = total_number_of_steps * batch_size
@@ -41,8 +42,8 @@ if __name__=="__main__":
     # Example instantiation
     discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(32,)).to(device)
     
-    dataset = CsDataset(clip_size=state_size, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae',batch_size=batch_size, shuffle=False)
-    dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=CsCollate(state_size), num_workers=8, shuffle=False)
+    dataset = CsDataset(clip_size=state_size, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False)
+    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(state_size), num_workers=8, shuffle=False)
 
     vae_params = sum(p.numel() for p in vae.parameters())
     discriminator_params = sum(p.numel() for p in discriminator.parameters())
@@ -52,9 +53,10 @@ if __name__=="__main__":
     sigma_data = 1.
 
     # Define optimizers
-    base_lr = 3e-4
+    base_lr = 1e-4
     optimizer_vae = AdamW(vae.parameters(), lr=base_lr, eps=1e-8)
     optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*8e-2, eps=1e-8)
+    optimizer_vae.zero_grad()
     optimizer_disc.zero_grad()
 
     # Add exponential decay schedule
@@ -69,9 +71,9 @@ if __name__=="__main__":
 
     #%%
     # Training loop
-    for batch_idx, batch in pbar:
+    for batch_idx, micro_batch in pbar:
         with torch.no_grad():
-            frames, _ = batch  # Ignore actions and reward for this VggAE training
+            frames, _ = micro_batch  # Ignore actions and reward for this VggAE training
             frames = frames.float() / 127.5 - 1  # Normalize to [-1, 1]
             frames = frames[:batch_size]
             frames = einops.rearrange(frames, 'b t h w c-> b c t h w').to(device)
@@ -92,19 +94,20 @@ if __name__=="__main__":
         targets = torch.ones(logits.shape[0], *logits.shape[2:], device=device, dtype=torch.long)
 
         adversarial_loss = F.cross_entropy(logits, targets, reduction='none')/np.log(2)
-        adv_multiplier = 2e-5
-        adv_loss = adv_multiplier * (F.relu(adversarial_loss-1)**2).mean()
-
+        adv_loss = (F.relu(adversarial_loss-1)**2).mean()
 
         # VAE losses
-        recon_loss = color_balanced_recon_loss(recon, frames)
+        recon_loss = F.l1_loss(recon, frames)
 
         # Define the loss components
-        main_loss = recon_loss + kl_group*1e-3 + kl_loss*1e-4
+        main_loss = recon_loss + kl_group*1e-3 + kl_loss*1e-3 + adv_loss*1e-3
+        main_loss.backward()
 
-        apply_clipped_grads(vae, optimizer_vae, main_loss, adv_loss, 1, None)
-        optimizer_vae.step()
-        scheduler_vae.step()
+        if batch_idx % (batch_size//micro_batch_size) == 0:
+            nn.utils.clip_grad_norm_(vae.parameters(), 1)
+            optimizer_vae.step()
+            scheduler_vae.step()
+            optimizer_vae.zero_grad()
 
 
         logits_real = discriminator(frames.detach())
@@ -113,12 +116,13 @@ if __name__=="__main__":
         loss_disc_fake = F.cross_entropy(logits_fake, torch.zeros_like(targets))/np.log(2)
         loss_disc = (loss_disc_real + loss_disc_fake)/2
 
-        # Update discriminator
-        optimizer_disc.zero_grad()
         loss_disc.backward()
-        nn.utils.clip_grad_norm_(discriminator.parameters(), 1)
-        optimizer_disc.step()
-        scheduler_disc.step()
+        # Update discriminator
+        if batch_idx % (batch_size//micro_batch_size) == 0:
+            nn.utils.clip_grad_norm_(discriminator.parameters(), 1)
+            optimizer_disc.step()
+            scheduler_disc.step()
+            optimizer_disc.zero_grad()
         
         pbar.set_postfix_str(f"recon loss: {recon_loss.item():.4f}, KL group loss: {kl_group.item():.4f} KL loss: {kl_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}, Adversarial Loss: {adversarial_loss.mean().item():.4f}")
         recon_losses.append(recon_loss.item())

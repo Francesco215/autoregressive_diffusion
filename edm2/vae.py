@@ -211,12 +211,12 @@ class EncoderDecoder(nn.Module):
         self.time_compressions = time_compressions
         self.spatial_compressions = spatial_compressions
         self.encoding_type = type
+        channels = channels.copy()
 
         group_sizes = np.cumprod(time_compressions)
-        
         if type=='encoder':
             group_sizes = group_sizes[::-1]
-            # channels[-1]=channels[-1]*2
+            channels[-1]=channels[-1]*2
             self.logvar_multiplier = nn.Parameter(torch.tensor(0.))
         elif type=='decoder':
             channels = channels[::-1]
@@ -239,11 +239,11 @@ class EncoderDecoder(nn.Module):
         if self.encoding_type in ['decoder','discriminator']:
             return x, cache
 
-        return x, torch.ones_like(x)*np.log(0.5), cache
-        # mean, logvar = x.split(split_size=x.shape[1]//2, dim = 1)
-        # logvar = logvar*torch.exp(self.logvar_multiplier)
+        # return x, torch.ones_like(x)*np.log(0.2), cache
+        mean, logvar = x.split(split_size=x.shape[1]//2, dim = 1)
+        logvar = logvar*torch.exp(self.logvar_multiplier)
 
-        # return mean, logvar, cache
+        return mean, logvar, cache
 
 
 

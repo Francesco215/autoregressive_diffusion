@@ -32,7 +32,7 @@ class CsDataset(IterableDataset):
                 frames, actions = frames[self.clip_size:], actions[self.clip_size:]
 
     def __len__(self):
-        return len(self.dataset)
+        return len(self.dataset)*(1000//32)
 
 
 
