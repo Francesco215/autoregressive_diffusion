@@ -31,6 +31,9 @@ class CsDataset(IterableDataset):
                 yield frames[:self.clip_size], actions[:self.clip_size]
                 frames, actions = frames[self.clip_size:], actions[self.clip_size:]
 
+    def __len__(self):
+        return len(self.dataset)
+
 
 
 class CsCollate:

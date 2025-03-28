@@ -203,16 +203,16 @@ class UpDownBlock:
 
 
 class EncoderDecoder(nn.Module):
-    def __init__(self, latent_channels, n_res_blocks, time_compressions = [1,2,2], spatial_compressions = [1,2,2], type='encoder'):
+    def __init__(self, channels = [3, 32, 32, 8], n_res_blocks = 2, time_compressions = [1,2,2], spatial_compressions = [1,2,2], type='encoder'):
         super().__init__()
         assert type in ['encoder', 'decoder', 'discriminator'], 'Invalid type, expected encoder, decoder or discriminator'
+        assert len(channels) -1 == len(time_compressions) == len(spatial_compressions)
 
         self.time_compressions = time_compressions
         self.spatial_compressions = spatial_compressions
         self.encoding_type = type
 
         group_sizes = np.cumprod(time_compressions)
-        channels = [3, 8, 8, latent_channels] #assuming the input is always rgb
         
         if type=='encoder':
             group_sizes = group_sizes[::-1]
@@ -221,6 +221,7 @@ class EncoderDecoder(nn.Module):
         elif type=='decoder':
             channels = channels[::-1]
         elif type=='discriminator':
+            raise NotImplementedError
             group_sizes = group_sizes[::-1]
             assert latent_channels == 2, 'Discriminator should have 2 latent channels, one for each logit'
 
@@ -247,11 +248,11 @@ class EncoderDecoder(nn.Module):
 
 
 class VAE(nn.Module):
-    def __init__(self, latent_channels, n_res_blocks, time_compressions=[1, 2, 2], spatial_compressions=[1, 2, 2]):
+    def __init__(self, channels, n_res_blocks, time_compressions=[1, 2, 2], spatial_compressions=[1, 2, 2]):
         super().__init__()
         
-        self.encoder = EncoderDecoder(latent_channels, n_res_blocks, time_compressions, spatial_compressions, type='encoder')
-        self.decoder = EncoderDecoder(latent_channels, n_res_blocks, time_compressions, spatial_compressions, type='decoder')
+        self.encoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='encoder')
+        self.decoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='decoder')
 
         frame = inspect.currentframe()
         args, _, _, values = inspect.getargvalues(frame)

@@ -34,13 +34,14 @@ if __name__=="__main__":
     # Hyperparameters
     latent_channels = 8
     n_res_blocks = 2
+    channels = [3, 32, 32, latent_channels]
 
     # Initialize models
-    vae = VAE(latent_channels=latent_channels, n_res_blocks=n_res_blocks).to(device)
+    vae = VAE(channels = channels, n_res_blocks=n_res_blocks).to(device)
     # Example instantiation
     discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(32,)).to(device)
     
-    dataset = CsDataset(clip_size=state_size, remote='s3://counter-strike-data/original/hdf5_dm_july2021_4201_to_4400/', local = '/tmp/streaming_dataset/cs_vae',batch_size=batch_size, shuffle=False)
+    dataset = CsDataset(clip_size=state_size, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae',batch_size=batch_size, shuffle=False)
     dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=CsCollate(state_size), num_workers=8, shuffle=False)
 
     vae_params = sum(p.numel() for p in vae.parameters())
@@ -62,7 +63,7 @@ if __name__=="__main__":
     scheduler_disc = lr_scheduler.ExponentialLR(optimizer_disc, gamma=gamma)
     losses = []
 
-    pbar = tqdm(enumerate(dataloader), total=total_number_of_steps)
+    pbar = tqdm(enumerate(dataloader), total=len(dataset))
 
     recon_losses, kl_group_losses, kl_losses, disc_losses, adversarial_losses= [], [], [], [], []
 
@@ -210,12 +211,10 @@ if __name__=="__main__":
 
             # Save the combined plot
             os.makedirs("images_training", exist_ok=True)
-            plt.savefig(f"images_training/combined_step_{batch_idx}.png")
+            plt.savefig(f"images_training/combined_step_cs_{batch_idx}.png")
             plt.close()
         if batch_idx % (total_number_of_steps//10) == 0 and batch_idx != 0:
             os.makedirs("saved_models", exist_ok=True)
-            vae.save_to_state_dict(f'saved_models/vae_{batch_idx}.pt')
-        if batch_idx == total_number_of_steps:
-            break
+            vae.save_to_state_dict(f'saved_models/vae_cs_{batch_idx}.pt')
 
 # %%
