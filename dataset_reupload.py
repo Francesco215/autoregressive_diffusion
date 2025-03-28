@@ -52,10 +52,10 @@ def read_folder(save_folder):
         frames, actions = read_frames_and_actions(f"{save_folder}/{file}")
         os.remove(f"{save_folder}/{file}")
 
-        yield frames, actions
+        yield {'frames': frames, 'actions': actions}
 
 def write_mds(save_folder, mds_dirname):
-    columns = {'frames': 'ndarray', 'action': 'ndarray'}
+    columns = {'frames': 'ndarray', 'actions': 'ndarray'}
     n_clips = len(os.listdir(save_folder))
 
     # the mdswriter uploads the data to the s3 bucket

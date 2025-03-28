@@ -1,4 +1,5 @@
 import torch
+from torch.nn import functional as F
 
 
 def color_balanced_recon_loss(recon_x, x, purple_blue_weight=1.0, epsilon=1e-8):
