@@ -15,7 +15,7 @@ from streaming import StreamingDataset
 
 
 from edm2.gym_dataloader import GymDataGenerator, gym_collate_function
-from edm2.dataloading import CsCollate
+from edm2.dataloading import CsCollate, CsDataset
 from edm2.utils import apply_clipped_grads
 from edm2.vae import VAE, Discriminator3D, EncoderDecoder, MixedDiscriminator
 from colour_balanced_recon_loss import color_balanced_recon_loss
@@ -40,7 +40,7 @@ if __name__=="__main__":
     # Example instantiation
     discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(32,)).to(device)
     
-    dataset = StreamingDataset(remote='s3://counter-strike-data/original/hdf5_dm_july2021_4201_to_4400/', local = '/tmp/streaming_dataset/cs_vae',batch_size=batch_size, shuffle=False)
+    dataset = CsDataset(clip_size=state_size, remote='s3://counter-strike-data/original/hdf5_dm_july2021_4201_to_4400/', local = '/tmp/streaming_dataset/cs_vae',batch_size=batch_size, shuffle=False)
     dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=CsCollate(state_size), num_workers=8, shuffle=False)
 
     vae_params = sum(p.numel() for p in vae.parameters())
