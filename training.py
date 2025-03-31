@@ -2,16 +2,15 @@
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from streaming import StreamingDataset
-import einops
 
-from diffusers import AutoencoderKLMochi
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+from streaming.base.util import clean_stale_shared_memory
 
 
-
-from edm2.gym_dataloader import GymDataGenerator, gym_collate_function, frames_to_latents
+from edm2.gym_dataloader import frames_to_latents
+from edm2.vae import VAE
+from edm2.dataloading import CsCollate, CsDataset
 from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.mars import MARS
@@ -19,37 +18,15 @@ from edm2.phema import PowerFunctionEMA
 
 torch._dynamo.config.recompile_limit = 100
 
-autoencoder = AutoencoderKLMochi.from_pretrained("genmo/mochi-1-preview", subfolder="vae", torch_dtype=torch.float16)
-vae_mean, vae_std = torch.tensor(autoencoder.config.latents_mean)[:, None, None], torch.tensor(autoencoder.config.latents_std)[:, None, None]
-def collate_function(batch):
-    # batch is a list of dicts with keys 'mean', 'logvar', 'actions'
-    # we want to return a tuple of tensors (means, logvars, actions)
-    means = torch.tensor(np.array([b['mean'] for b in batch]))
-    logvars = torch.tensor(np.array([b['logvar'] for b in batch]), dtype = torch.float32)
-    actions = torch.tensor(np.array([b['action'] for b in batch]), dtype = torch.float32)
-
-    # now i sample a frame 
-    frames = means + torch.exp(0.5 * logvars) * torch.randn_like(means)
-    frames = einops.rearrange(frames, 'b c t h w -> b t c h w')
-    frames = (frames - vae_mean)/vae_std
-    # frames = frames[:, :16]
-    return frames*0.7, actions
         
-#%%
 if __name__=="__main__":
+    clean_stale_shared_memory()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    original_env = "LunarLander-v3"
-    model_id="stabilityai/stable-diffusion-2-1"
-
-    # autoencoder = AutoencoderKL.from_pretrained(model_id, subfolder="vae").to(device).eval().requires_grad_(False)
-
-    # autoencoder = AutoencoderKLCogVideoX.from_pretrained("THUDM/CogVideoX-2b", subfolder="vae", torch_dtype=torch.float32).to("cuda")
-    # autoencoder = AutoencoderKLMochi.from_pretrained("genmo/mochi-1-preview", subfolder="vae", torch_dtype=torch.float32).to("cuda")
-    latent_channels = 12
+    autoencoder = VAE.load_from_pretrained('saved_models/vae_cs_4264.pt').to(device)
 
     unet = UNet(img_resolution=32, # Match your latent resolution
-                img_channels=latent_channels, # Match your latent channels
+                img_channels=autoencoder.latent_channels, # Match your latent channels
                 label_dim = 4,
                 model_channels=128,
                 channel_mult=[1,2,4,4],
@@ -59,13 +36,13 @@ if __name__=="__main__":
                 attn_resolutions=[8,4]
                 )
 
-    micro_batch_size = 1
+    micro_batch_size = 2
     batch_size = 8
     accumulation_steps = batch_size//micro_batch_size
-    state_size = 64 
+    clip_length = 32
     # training_steps = total_number_of_steps * batch_size
-    dataset = StreamingDataset(remote='s3://counter-strike-data/dataset_small/',batch_size=micro_batch_size)
-    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=collate_function, num_workers=16)
+    dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False)
+    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(clip_length), num_workers=8, shuffle=False)
     steps_per_epoch = len(dataset)//micro_batch_size
     n_epochs = 10
     total_number_of_steps = n_epochs * steps_per_epoch
@@ -107,9 +84,10 @@ if __name__=="__main__":
         for i, batch in pbar:
             with torch.no_grad():
                 frames, actions = batch
-                latents = frames.to(device)
-                actions = None #if i%4==0 else actions.to(device)
-
+                latents = frames_to_latents(autoencoder, frames)/1.4
+                actions = None
+                
+                    
             # Calculate loss    
             loss, un_weighted_loss = loss_fn(precond, latents, actions)
             losses.append(un_weighted_loss)
@@ -124,7 +102,7 @@ if __name__=="__main__":
                 ema_tracker.update(cur_nimg= i * batch_size, batch_size=batch_size)
 
                 for g in optimizer.param_groups:
-                    current_lr = learning_rate_schedule(i + epoch*steps_per_epoch, ref_lr, total_number_of_steps/50, total_number_of_steps/50)
+                    current_lr = learning_rate_schedule(i + epoch*steps_per_epoch, ref_lr, total_number_of_steps/500, total_number_of_steps/500)
                     g['lr'] = current_lr
 
             # Save model checkpoint (optional)

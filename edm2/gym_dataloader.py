@@ -102,7 +102,7 @@ def frames_to_latents(autoencoder, frames)->Tensor:
     split_size = 64
     for i in range (0, frames.shape[0], split_size):
         # l = autoencoder.encode(frames[i:i+split_size]).latent_dist.sample()
-        _, l, _, _ = autoencoder.encode(frames[i:i+split_size])
+        _, l, _, _ = autoencoder.encode(frames[i:i+split_size].to(autoencoder.device))
         if i == 0:
             latents = l
         else:

@@ -37,8 +37,8 @@ class CsDataset(IterableDataset):
 
 
 class CsCollate:
-    def __init__(self, state_size):
-        self.state_size = state_size
+    def __init__(self, clip_length):
+        self.clip_length = clip_length
 
     def __call__(self, batch):
         frames, actions = zip(*batch)

@@ -90,7 +90,6 @@ def bmult(x:Tensor, t:Tensor):
 # Example implementation
 def apply_clipped_grads(model, optimizer, main_loss, adv_loss, max_norm_main, max_norm_adv):
     # Assign to .grad
-    optimizer.zero_grad()
     if max_norm_adv is None:
         (main_loss + adv_loss).backward()
         clip_grad_norm_(model.parameters(), max_norm_main)

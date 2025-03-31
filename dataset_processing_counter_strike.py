@@ -14,6 +14,7 @@ import threading
 from huggingface_hub import hf_hub_download, HfApi
 import re
 import tempfile
+from edm2.vae import VAE
 
 #%%
 # Load with h5py
@@ -34,26 +35,15 @@ def read_frames_and_actions(filename):
     return frames, actions
 
 @torch.no_grad()
-def encode_frames(autoencoder, frames, actions, stack_size):
+def encode_frames(autoencoder, frames, actions):
     # TODO: add caching to the autoencoder source code to make sure it can work with long sequences
-    n_stacks = len(frames) // stack_size
-    frames = frames[:n_stacks * stack_size] # for simplicity we are going to ignore the last set of frames
-    actions = actions[:n_stacks * stack_size]
 
-    actions = einops.rearrange(actions, '(b t m) a-> b t m a', b=n_stacks, m=6).mean(-2)
-
-
-    frames = einops.rearrange(frames, '(b t) h w c -> b c t h w', b=n_stacks)
+    frames = einops.rearrange(frames, 't h w c -> c t h w')
+    frames = torch.tensor(frames).to(torch.float)
     frames = frames / 127.5 - 1  # Normalize from (0,255) to (-1,1)
-    frames = torch.tensor(frames).to(torch.float16).to("cuda")
 
-    autoencoder.enable_slicing()
-    encoded_frames = autoencoder.encode(frames).latent_dist
-    means, logvars = encoded_frames.mean.cpu().numpy(), encoded_frames.logvar.cpu().numpy()
-
-    for mean, logvar, action in zip(means, logvars, actions):
-        yield {"mean": mean, "logvar": logvar, "action": action}
-
+    mean, logvar = autoencoder.encode_long_sequence(frames.unsqueeze(0))
+    return mean[0].cpu().numpy(), logvar[0].cpu().numpy(), actions
 
 def download_tar_file(hf_repo_id, hf_filename):
     with tempfile.TemporaryDirectory() as temp_cache_dir:
@@ -69,25 +59,24 @@ def download_tar_file(hf_repo_id, hf_filename):
             tar.extractall(f"/tmp/{hf_filename.split('.')[0]}")
 
 
-def compress_huggingface_filename(save_folder, stack_size):
+def compress_huggingface_filename(save_folder):
     file_list = os.listdir(save_folder)
 
     for file in file_list:
         frames, actions = read_frames_and_actions(f"{save_folder}/{file}")
         os.remove(f"{save_folder}/{file}")
 
-        yield from encode_frames(autoencoder, frames, actions, stack_size)
+        yield encode_frames(autoencoder, frames, actions)
 
 
-def write_mds(save_folder, mds_dirname, stack_size):
+def write_mds(save_folder, mds_dirname):
     columns = {'mean': 'ndarray', 'logvar': 'ndarray', 'action': 'ndarray'}
 
     n_clips, n_frames = len(os.listdir(save_folder)), 1000
-    total = (n_clips * n_frames) // stack_size
 
     # the mdswriter uploads the data to the s3 bucket and deletes the local files
     with MDSWriter(out=mds_dirname, columns=columns, compression='zstd') as writer:
-        for encoded_frame in tqdm(compress_huggingface_filename(save_folder, stack_size), total=total):
+        for encoded_frame in tqdm(compress_huggingface_filename(save_folder), total=n_clips):
             writer.write(encoded_frame)
     
     os.rmdir(save_folder)
@@ -100,9 +89,8 @@ dataset_filenames = api.list_repo_files(repo_id=hf_repo_id, repo_type="dataset")
 
 #have to filter out some of the data because its's saved slightly differently...
 hf_filenames = [f for f in dataset_filenames if re.match(r"^hdf5_dm_july2021_.*_to_.*\.tar$", f)]
-stack_size = 64*6
 
-autoencoder = AutoencoderKLMochi.from_pretrained("genmo/mochi-1-preview", subfolder="vae", torch_dtype=torch.float16).to("cuda").requires_grad_(False)
+autoencoder = VAE.load_from_pretrained('saved_models/vae_cs_4264.pt').to("cuda")
 
 #%%
 # Download the first tar file
@@ -121,7 +109,7 @@ for i in range(len(hf_filenames)):
         download_thread.start()
     
     # Process the current tar file
-    write_mds(save_folder, f"s3://counter-strike-data/dataset_small/{hf_filenames[i].split('.')[0]}", stack_size)
+    write_mds(save_folder, f"s3://counter-strike-data/dataset_compressed/{hf_filenames[i].split('.')[0]}")
     
     # Wait for the next download to finish (if applicable)
     if i < len(hf_filenames) - 1:
