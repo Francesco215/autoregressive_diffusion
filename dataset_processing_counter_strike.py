@@ -3,7 +3,6 @@
 import einops
 import numpy as np
 import torch
-from diffusers import AutoencoderKLMochi
 import os
 import h5py
 import cv2
@@ -16,7 +15,6 @@ import re
 import tempfile
 from edm2.vae import VAE
 
-#%%
 # Load with h5py
 def read_frames_and_actions(filename):
     with h5py.File(filename, "r") as file:
@@ -43,7 +41,8 @@ def encode_frames(autoencoder, frames, actions):
     frames = frames / 127.5 - 1  # Normalize from (0,255) to (-1,1)
 
     mean, logvar = autoencoder.encode_long_sequence(frames.unsqueeze(0))
-    return mean[0].cpu().numpy(), logvar[0].cpu().numpy(), actions
+    out_dict = {'mean':mean[0].cpu().numpy(), 'logvar':logvar[0].cpu().numpy(), 'action':actions}
+    return out_dict
 
 def download_tar_file(hf_repo_id, hf_filename):
     with tempfile.TemporaryDirectory() as temp_cache_dir:
@@ -72,7 +71,7 @@ def compress_huggingface_filename(save_folder):
 def write_mds(save_folder, mds_dirname):
     columns = {'mean': 'ndarray', 'logvar': 'ndarray', 'action': 'ndarray'}
 
-    n_clips, n_frames = len(os.listdir(save_folder)), 1000
+    n_clips = len(os.listdir(save_folder))
 
     # the mdswriter uploads the data to the s3 bucket and deletes the local files
     with MDSWriter(out=mds_dirname, columns=columns, compression='zstd') as writer:
@@ -114,3 +113,6 @@ for i in range(len(hf_filenames)):
     # Wait for the next download to finish (if applicable)
     if i < len(hf_filenames) - 1:
         download_thread.join()
+
+        
+#%%
