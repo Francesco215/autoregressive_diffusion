@@ -10,7 +10,7 @@ from streaming.base.util import clean_stale_shared_memory
 
 from edm2.gym_dataloader import frames_to_latents
 from edm2.vae import VAE
-from edm2.dataloading import CsCollate, CsDataset
+from edm2.dataloading import CsCollate, CsDataset, CsVaeCollate, CsVaeDataset
 from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.mars import MARS
@@ -23,26 +23,24 @@ if __name__=="__main__":
     clean_stale_shared_memory()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    autoencoder = VAE.load_from_pretrained('saved_models/vae_cs_4264.pt').to(device)
-
     unet = UNet(img_resolution=32, # Match your latent resolution
-                img_channels=autoencoder.latent_channels, # Match your latent channels
+                img_channels=8, # Match your latent channels
                 label_dim = 4,
                 model_channels=128,
-                channel_mult=[1,2,4,4],
+                channel_mult=[1,2,4],
                 channel_mult_noise=None,
                 channel_mult_emb=None,
                 num_blocks=3,
                 attn_resolutions=[8,4]
                 )
 
-    micro_batch_size = 2
+    micro_batch_size = 1
     batch_size = 8
     accumulation_steps = batch_size//micro_batch_size
     clip_length = 32
     # training_steps = total_number_of_steps * batch_size
-    dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False)
-    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(clip_length), num_workers=8, shuffle=False)
+    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed/', local = '/tmp/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False)
+    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsVaeCollate(), num_workers=24, shuffle=False)
     steps_per_epoch = len(dataset)//micro_batch_size
     n_epochs = 10
     total_number_of_steps = n_epochs * steps_per_epoch
@@ -83,8 +81,9 @@ if __name__=="__main__":
         pbar = tqdm(enumerate(dataloader, start=steps_taken),total=steps_per_epoch)
         for i, batch in pbar:
             with torch.no_grad():
-                frames, actions = batch
-                latents = frames_to_latents(autoencoder, frames)/1.4
+                means, logvars, actions = batch
+                latents = means + torch.randn_like(means)*torch.exp(logvars*.5)
+                latents = latents.to(device)/1.4
                 actions = None
                 
                     

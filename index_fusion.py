@@ -45,7 +45,7 @@ def merge_s3_indices(bucket: str, prefix: str):
 
 #%%
 bucket = "counter-strike-data"
-prefix = "dataset_small/"
+prefix = "dataset_compressed/"
 #%%
 merge_s3_indices(bucket, prefix)
 # %%
