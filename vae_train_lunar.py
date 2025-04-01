@@ -18,6 +18,7 @@ from edm2.gym_dataloader import GymDataGenerator, gym_collate_function
 from edm2.utils import apply_clipped_grads
 from edm2.vae import VAE, MixedDiscriminator
 from colour_balanced_recon_loss import color_balanced_recon_loss
+from worst_k_percent_loss import worst_k_percent_loss
 
 torch.autograd.set_detect_anomaly(True)
 if __name__=="__main__":
@@ -95,7 +96,7 @@ if __name__=="__main__":
 
 
         # VAE losses
-        recon_loss = color_balanced_recon_loss(recon, frames)
+        recon_loss = worst_k_percent_loss(recon, frames, 0.5)
 
         # Define the loss components
         main_loss = recon_loss + kl_group*1e-3 + kl_loss*1e-4
