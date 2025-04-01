@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 
 from edm2.gym_dataloader import GymDataGenerator, gym_collate_function
 from edm2.utils import apply_clipped_grads
-from edm2.vae import VAE, Discriminator3D, EncoderDecoder, MixedDiscriminator
+from edm2.vae import VAE, MixedDiscriminator
 from colour_balanced_recon_loss import color_balanced_recon_loss
 
 torch.autograd.set_detect_anomaly(True)
@@ -35,7 +35,7 @@ if __name__=="__main__":
     n_res_blocks = 2
 
     # Initialize models
-    vae = VAE(latent_channels=latent_channels, n_res_blocks=n_res_blocks).to(device)
+    vae = VAE(channels = [3,8,8,latent_channels], n_res_blocks=n_res_blocks).to(device)
     # Example instantiation
     discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(32,)).to(device)
     
