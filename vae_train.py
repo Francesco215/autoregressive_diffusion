@@ -18,6 +18,8 @@ from edm2.gym_dataloader import GymDataGenerator, gym_collate_function
 from edm2.utils import apply_clipped_grads
 from edm2.vae import VAE, Discriminator3D, EncoderDecoder, MixedDiscriminator
 from edm2.mars import MARS
+from worst_k_percent_loss import worst_k_percent_loss
+
 torch.autograd.set_detect_anomaly(True)
 if __name__=="__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -92,9 +94,11 @@ if __name__=="__main__":
         adv_multiplier = 2e-5
         adv_loss = adv_multiplier * (F.relu(adversarial_loss-1)**2).mean()
 
+        # Replace your original loss with this
+        recon_loss = worst_k_percent_loss(recon, frames, percent=0.2)
 
         # VAE losses
-        recon_loss = F.mse_loss(recon, frames, reduction='mean')
+        #recon_loss = F.mse_loss(recon, frames, reduction='mean')
 
         # Define the loss components
         main_loss = recon_loss + kl_group*1e-4 + kl_loss*1e-4
