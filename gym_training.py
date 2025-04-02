@@ -8,8 +8,10 @@ from torch.nn.utils import clip_grad_norm_
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
+from diffusers import AutoencoderKLMochi
 
 
+from edm2.utils import nan_inspector
 from edm2.vae import VAE    
 from edm2.gym_dataloader import GymDataGenerator, gym_collate_function, frames_to_latents
 from edm2.networks_edm2 import UNet, Precond
@@ -18,8 +20,7 @@ from edm2.mars import MARS
 from edm2.phema import PowerFunctionEMA
 
 # torch._dynamo.config.recompile_limit = 100
-torch.autograd.set_detect_anomaly(True)
-#%%
+# torch.autograd.set_detect_anomaly(True)
 if __name__=="__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -27,11 +28,11 @@ if __name__=="__main__":
     model_id="stabilityai/stable-diffusion-2-1"
 
     latent_channels = 8
-    autoencoder = VAE.load_from_pretrained("saved_models/vae_4000.pt").to(device).requires_grad_(False)
-
+    # autoencoder = VAE.load_from_pretrained("saved_models/vae_4000.pt").to(device).requires_grad_(False)
+    autoencoder = AutoencoderKLMochi.from_pretrained("genmo/mochi-1-preview", subfolder="vae", torch_dtype=torch.float32).to("cuda")
 
     unet = UNet(img_resolution=64, # Match your latent resolution
-                img_channels=latent_channels, # Match your latent channels
+                img_channels=12, # Match your latent channels
                 label_dim = 4,
                 model_channels=64,
                 channel_mult=[1,2,2,4],
@@ -41,13 +42,13 @@ if __name__=="__main__":
                 attn_resolutions=[8,4]
                 )
 
-    micro_batch_size = 8
+    micro_batch_size = 2
     batch_size = 8
     accumulation_steps = batch_size//micro_batch_size
-    state_size = 32 
+    state_size = 48 
     total_number_of_steps = 40_000
     training_steps = total_number_of_steps * batch_size
-    dataset = GymDataGenerator(state_size, original_env, training_steps*10, autoencoder_time_compression = 4)
+    dataset = GymDataGenerator(state_size, original_env, training_steps*10, autoencoder_time_compression = 6)
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=16)
 
     unet_params = sum(p.numel() for p in unet.parameters())
@@ -86,13 +87,14 @@ if __name__=="__main__":
             frames, actions, reward = batch
             frames = frames.to(device)
             actions = None if i%4==1 else actions.to(device)
-            latents = frames_to_latents(autoencoder, frames)/0.49
-
+            latents = frames_to_latents(autoencoder, frames)
+        
         # Calculate loss    
+        # with nan_inspector(precond):
         loss, un_weighted_loss = loss_fn(precond, latents, actions)
-        losses.append(un_weighted_loss)
         # Backpropagation and optimization
         loss.backward()
+        losses.append(un_weighted_loss)
         pbar.set_postfix_str(f"Loss: {np.mean(losses[-accumulation_steps:]):.4f}, lr: {current_lr:.6f}")
 
         if i % accumulation_steps == 0 and i!=0:
@@ -127,15 +129,15 @@ if __name__=="__main__":
             plt.close()
             ulw=True
 
-        if i % (total_number_of_steps//30) == 0 and i!=0:  # save every 10% of epochs
-            torch.save({
-                'batch': i,
-                'model_state_dict': precond.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'ema_state_dict': ema_tracker.state_dict(),
-                'losses': losses,
-                'ref_lr': ref_lr
-            }, f"saved_models/lunar_lander_{unet_params//1e6}M.pt")
+        # if i % (total_number_of_steps//30) == 0 and i!=0:  # save every 10% of epochs
+        #     torch.save({
+        #         'batch': i,
+        #         'model_state_dict': precond.state_dict(),
+        #         'optimizer_state_dict': optimizer.state_dict(),
+        #         'ema_state_dict': ema_tracker.state_dict(),
+        #         'losses': losses,
+        #         'ref_lr': ref_lr
+        #     }, f"saved_models/lunar_lander_{unet_params//1e6}M.pt")
 
         if i == total_number_of_steps:
             break
