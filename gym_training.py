@@ -129,15 +129,15 @@ if __name__=="__main__":
             plt.close()
             ulw=True
 
-        # if i % (total_number_of_steps//30) == 0 and i!=0:  # save every 10% of epochs
-        #     torch.save({
-        #         'batch': i,
-        #         'model_state_dict': precond.state_dict(),
-        #         'optimizer_state_dict': optimizer.state_dict(),
-        #         'ema_state_dict': ema_tracker.state_dict(),
-        #         'losses': losses,
-        #         'ref_lr': ref_lr
-        #     }, f"saved_models/lunar_lander_{unet_params//1e6}M.pt")
+        if i % (total_number_of_steps//10) == 0 and i!=0:  # save every 10% of epochs
+            torch.save({
+                'batch': i,
+                'model_state_dict': precond.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'ema_state_dict': ema_tracker.state_dict(),
+                'losses': losses,
+                'ref_lr': ref_lr
+            }, f"saved_models/lunar_lander_{unet_params//1e6}M.pt")
 
         if i == total_number_of_steps:
             break

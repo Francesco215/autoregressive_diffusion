@@ -102,7 +102,7 @@ def frames_to_latents(autoencoder, frames)->Tensor:
     split_size = 64
     for i in range (0, frames.shape[0], split_size):
         # l = autoencoder.encode(frames[i:i+split_size]).latent_dist.sample()
-        _, l, _, _ = autoencoder.encode(frames[i:i+split_size].to(autoencoder.device))
+        l = autoencoder.encode(frames[i:i+split_size].to(autoencoder.device)).latent_dist.sample()
         if i == 0:
             latents = l
         else:
@@ -110,9 +110,9 @@ def frames_to_latents(autoencoder, frames)->Tensor:
 
     # Apply scaling factor
     # latents = latents * autoencoder.config.scaling_factor
-    # mean,std = torch.tensor(autoencoder.config.latents_mean)[:,None, None, None].to(latents), torch.tensor(autoencoder.config.latents_std)[:, None, None, None].to(latents)
+    mean,std = torch.tensor(autoencoder.config.latents_mean)[:,None, None, None].to(latents), torch.tensor(autoencoder.config.latents_std)[:, None, None, None].to(latents)
     # mean = mean + saved_mean.view(mean.shape).to(latents) 
-    # latents = (latents - mean)/std
+    latents = (latents - mean)/std
 
     latents = einops.rearrange(latents, 'b c t h w -> b t c h w', b=batch_size)
     return latents
@@ -134,12 +134,13 @@ def latents_to_frames(autoencoder,latents):
     batch_size = latents.shape[0]
     latents = einops.rearrange(latents, 'b t c h w -> b c t h w')
 
-    latents = latents * 1.2
+    mean,std = torch.tensor(autoencoder.config.latents_mean)[:,None, None, None].to(latents), torch.tensor(autoencoder.config.latents_std)[:, None, None, None].to(latents)
+    latents = latents*std - mean 
 
     #split the conversion to not overload the GPU RAM
     split_size = 16
     for i in range (0, latents.shape[0], split_size):
-        l, _ = autoencoder.decode(latents[i:i+split_size])
+        l = autoencoder.decode(latents[i:i+split_size]).sample
         if i == 0:
             frames = l
         else:
