@@ -3,6 +3,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
+from torch.nn.utils import clip_grad_norm_
 
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -16,7 +17,8 @@ from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.mars import MARS
 from edm2.phema import PowerFunctionEMA
 
-torch._dynamo.config.recompile_limit = 100
+# torch._dynamo.config.recompile_limit = 100
+torch.autograd.set_detect_anomaly(True)
 #%%
 if __name__=="__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -25,7 +27,7 @@ if __name__=="__main__":
     model_id="stabilityai/stable-diffusion-2-1"
 
     latent_channels = 8
-    autoencoder = VAE.load_from_pretrained("saved_models/vae_4000.pt").to("cuda").requires_grad_(False)
+    autoencoder = VAE.load_from_pretrained("saved_models/vae_4000.pt").to(device).requires_grad_(False)
 
 
     unet = UNet(img_resolution=64, # Match your latent resolution
@@ -53,7 +55,7 @@ if __name__=="__main__":
     # sigma_data = 0.434
     sigma_data = 1.
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
-    loss_fn = EDM2Loss(P_mean=0.3,P_std=2., sigma_data=sigma_data, context_noise_reduction=0.5)
+    loss_fn = EDM2Loss(P_mean=0.3,P_std=1.5, sigma_data=sigma_data, context_noise_reduction=0.5)
 
     ref_lr = 1e-2
     current_lr = ref_lr
@@ -84,7 +86,7 @@ if __name__=="__main__":
             frames, actions, reward = batch
             frames = frames.to(device)
             actions = None if i%4==1 else actions.to(device)
-            latents = frames_to_latents(autoencoder, frames)/1.3
+            latents = frames_to_latents(autoencoder, frames)/0.49
 
         # Calculate loss    
         loss, un_weighted_loss = loss_fn(precond, latents, actions)
@@ -95,6 +97,8 @@ if __name__=="__main__":
 
         if i % accumulation_steps == 0 and i!=0:
             #microbatching
+            
+            clip_grad_norm_(precond.parameters(), 1)
             optimizer.step()
             optimizer.zero_grad()
             ema_tracker.update(cur_nimg= i * batch_size, batch_size=batch_size)
@@ -104,7 +108,7 @@ if __name__=="__main__":
                 g['lr'] = current_lr
 
         # Save model checkpoint (optional)
-        if i % 50 * accumulation_steps == 0 and i!=0:
+        if i % 200 * accumulation_steps == 0 and i!=0:
             precond.noise_weight.fit_loss_curve()
             precond.noise_weight.plot('images_training/plot.png')
             n_clips = np.linspace(0, i * micro_batch_size, len(losses))
@@ -123,7 +127,7 @@ if __name__=="__main__":
             plt.close()
             ulw=True
 
-        if i % (total_number_of_steps//10) == 0 and i!=0:  # save every 10% of epochs
+        if i % (total_number_of_steps//30) == 0 and i!=0:  # save every 10% of epochs
             torch.save({
                 'batch': i,
                 'model_state_dict': precond.state_dict(),

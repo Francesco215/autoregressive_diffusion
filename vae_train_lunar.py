@@ -36,7 +36,7 @@ if __name__=="__main__":
     n_res_blocks = 2
 
     # Initialize models
-    vae = VAE(channels = [3,8,8,latent_channels], n_res_blocks=n_res_blocks).to(device)
+    vae = VAE(channels = [3,8,8,latent_channels], n_res_blocks=n_res_blocks, spatial_compressions=[1,4,2]).to(device)
     # Example instantiation
     discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(32,)).to(device)
     
@@ -79,13 +79,13 @@ if __name__=="__main__":
         recon, mean, logvar, _ = vae(frames)
 
         # in theory the mean should be only with respect to the batch size
-        individual_var = logvar.exp().mean(dim=(0, 2, 3, 4))  # Average of individual variances
-        mean_var = mean.var(dim=(0, 2, 3, 4))  # Variance of means
-        group_var = individual_var + mean_var  # Total mixture variance
-        group_mean = mean.mean(dim=(0, 2, 3, 4))
-        kl_group = -0.5 * (1 + group_var.log() - group_mean.pow(2) - group_var).sum(dim=0)
-        kl_loss  = -0.5 * (1 + logvar - logvar.exp()).sum(dim=1).mean()
-        # kl_loss = -0.5 * (1 + logvar - mean.pow(2) - logvar.exp()).sum(dim=1).mean()
+        # individual_var = logvar.exp().mean(dim=(0, 2, 3, 4))  # Average of individual variances
+        # mean_var = mean.var(dim=(0, 2, 3, 4))  # Variance of means
+        # group_var = individual_var + mean_var  # Total mixture variance
+        # group_mean = mean.mean(dim=(0, 2, 3, 4))
+        # kl_group = -0.5 * (1 + group_var.log() - group_mean.pow(2) - group_var).sum(dim=0)
+        # kl_loss  = -0.5 * (1 + logvar - logvar.exp()).sum(dim=1).mean()
+        kl_loss = -0.5 * (1 + logvar - mean.pow(2) - logvar.exp()).sum(dim=1).mean()
 
         logits = discriminator(recon)
         targets = torch.ones(logits.shape[0], *logits.shape[2:], device=device, dtype=torch.long)
@@ -94,12 +94,11 @@ if __name__=="__main__":
         adv_multiplier = 2e-5
         adv_loss = adv_multiplier * (F.relu(adversarial_loss-1)**2).mean()
 
-
         # VAE losses
         recon_loss = worst_k_percent_loss(recon, frames, 0.5)
 
         # Define the loss components
-        main_loss = recon_loss + kl_group*1e-3 + kl_loss*1e-4
+        main_loss = recon_loss + kl_loss*3e-3
 
         apply_clipped_grads(vae, optimizer_vae, main_loss, adv_loss, 1, None)
         optimizer_vae.step()
@@ -119,9 +118,9 @@ if __name__=="__main__":
         optimizer_disc.step()
         scheduler_disc.step()
         
-        pbar.set_postfix_str(f"recon loss: {recon_loss.item():.4f}, KL group loss: {kl_group.item():.4f} KL loss: {kl_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}, Adversarial Loss: {adversarial_loss.mean().item():.4f}")
+        pbar.set_postfix_str(f"recon loss: {recon_loss.item():.4f}, KL loss: {kl_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}, Adversarial Loss: {adversarial_loss.mean().item():.4f}")
         recon_losses.append(recon_loss.item())
-        kl_group_losses.append(kl_group.item())
+        # kl_group_losses.append(kl_group.item())
         kl_losses.append(kl_loss.item())
         adversarial_losses.append(adversarial_loss.mean().item())
         disc_losses.append(loss_disc.item())
