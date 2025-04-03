@@ -18,7 +18,7 @@ from edm2.mars import MARS
 from edm2.phema import PowerFunctionEMA
 
 # torch._dynamo.config.recompile_limit = 100
-torch.autograd.set_detect_anomaly(True)
+# torch.autograd.set_detect_anomaly(True)
 #%%
 if __name__=="__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -55,17 +55,17 @@ if __name__=="__main__":
     # sigma_data = 0.434
     sigma_data = 1.
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
-    loss_fn = EDM2Loss(P_mean=0.3,P_std=1.5, sigma_data=sigma_data, context_noise_reduction=0.5)
+    loss_fn = EDM2Loss(P_mean=0.3,P_std=2., sigma_data=sigma_data, context_noise_reduction=0.5)
 
-    ref_lr = 1e-2
+    ref_lr = 3e-3
     current_lr = ref_lr
     optimizer = AdamW(precond.parameters(), lr=ref_lr, eps = 1e-8)
     optimizer.zero_grad()
     ema_tracker = PowerFunctionEMA(precond, stds=[0.050, 0.100])
     losses = []
 
-    resume_training_run = None
-    # resume_training_run = 'saved_models/lunar_lander_67.0M.pt'
+    # resume_training_run = None
+    resume_training_run = 'saved_models/lunar_lander_67.0M.pt'
     steps_taken = 0
     if resume_training_run is not None:
         print(f"Resuming training from {resume_training_run}")
@@ -86,7 +86,7 @@ if __name__=="__main__":
             frames, actions, reward = batch
             frames = frames.to(device)
             actions = None if i%4==1 else actions.to(device)
-            latents = frames_to_latents(autoencoder, frames)/0.49
+            latents = frames_to_latents(autoencoder, frames)/0.5
 
         # Calculate loss    
         loss, un_weighted_loss = loss_fn(precond, latents, actions)
@@ -98,7 +98,7 @@ if __name__=="__main__":
         if i % accumulation_steps == 0 and i!=0:
             #microbatching
             
-            clip_grad_norm_(precond.parameters(), 1)
+            clip_grad_norm_(precond.parameters(), .1)
             optimizer.step()
             optimizer.zero_grad()
             ema_tracker.update(cur_nimg= i * batch_size, batch_size=batch_size)

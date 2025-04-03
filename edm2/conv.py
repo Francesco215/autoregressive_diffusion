@@ -61,7 +61,8 @@ class MPCausal3DConv(torch.nn.Module):
         # TODO: there should be a multiplicative factor in the causal_pad. 
         # to understand the theory check out the variance-preserving concatenation
         # however variance preserving concatenatinon doesn't work because it will give different results depending if self.training is true
-        causal_pad = torch.ones(batch_size, x.shape[1], w.shape[2]-1, *x.shape[2:], device=x.device, dtype=x.dtype)
+        causal_pad = einops.rearrange(x, '(b t) c ... -> b c t ...', b = batch_size)[:,:,:w.shape[2]-1].clone()
+        # causal_pad = torch.ones(batch_size, x.shape[1], w.shape[2]-1, *x.shape[2:], device=x.device, dtype=x.dtype)
 
         if self.training:
             # Warning: to understand this, read first how it works during inference
