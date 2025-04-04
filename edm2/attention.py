@@ -53,6 +53,7 @@ class VideoAttention(nn.Module):
             cache = (k.detach(), v.detach())
 
         q, k = self.rope(q, k)
+        q, k = F.normalize(q, p=2, dim=-1), F.normalize(k, p=2, dim=-1)
         v = einops.rearrange(v, ' b m t hw c -> b m (t hw) c') # q and k are already rearranged inside of rope
 
         if self.training:

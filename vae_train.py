@@ -16,11 +16,8 @@ import matplotlib.pyplot as plt
 
 from edm2.gym_dataloader import GymDataGenerator, gym_collate_function
 from edm2.utils import apply_clipped_grads
-from edm2.vae import VAE, Discriminator3D, EncoderDecoder, MixedDiscriminator
-from edm2.mars import MARS
-from worst_k_percent_loss import worst_k_percent_loss
+from edm2.vae import VAE, MixedDiscriminator, worst_k_percent_loss
 
-torch.autograd.set_detect_anomaly(True)
 if __name__=="__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -32,11 +29,11 @@ if __name__=="__main__":
     training_steps = total_number_of_steps * batch_size
     
     # Hyperparameters
-    latent_channels = 8
+    latent_channels = 16
     n_res_blocks = 2
 
     # Initialize models
-    vae = VAE(latent_channels=latent_channels, n_res_blocks=n_res_blocks).to(device)
+    vae = VAE(channels = [3,8,8,latent_channels], n_res_blocks=n_res_blocks, spatial_compressions=[1,2,4]).to(device)
     # Example instantiation
     discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(32,)).to(device)
     
@@ -101,7 +98,7 @@ if __name__=="__main__":
         #recon_loss = F.mse_loss(recon, frames, reduction='mean')
 
         # Define the loss components
-        main_loss = recon_loss + kl_group*1e-4 + kl_loss*1e-4
+        main_loss = recon_loss + kl_group*1e-3 + kl_loss*1e-4
 
         apply_clipped_grads(vae, optimizer_vae, main_loss, adv_loss, 1, None)
         optimizer_vae.step()

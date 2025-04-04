@@ -150,7 +150,7 @@ class EncoderDecoder(nn.Module):
         group_sizes = np.cumprod(time_compressions)
         if type=='encoder':
             group_sizes = group_sizes[::-1]
-            channels[-1]=channels[-1]*2
+            # channels[-1]=channels[-1]*2
             self.logvar_multiplier = nn.Parameter(torch.tensor(0.))
         elif type=='decoder':
             channels = channels[::-1]
@@ -173,11 +173,11 @@ class EncoderDecoder(nn.Module):
         if self.encoding_type in ['decoder','discriminator']:
             return x, cache
 
-        # return x, torch.ones_like(x)*np.log(0.2), cache
-        mean, logvar = x.split(split_size=x.shape[1]//2, dim = 1)
-        logvar = logvar*torch.exp(self.logvar_multiplier)
+        return x, torch.ones_like(x)*np.log(0.5), cache
+        # mean, logvar = x.split(split_size=x.shape[1]//2, dim = 1)
+        # logvar = logvar*torch.exp(self.logvar_multiplier)
 
-        return mean, logvar, cache
+        # return mean, logvar, cache
 
 
 
@@ -189,6 +189,7 @@ class VAE(nn.Module):
         self.encoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='encoder')
         self.decoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='decoder')
 
+        self.time_compression = np.prod(time_compressions)
         frame = inspect.currentframe()
         args, _, _, values = inspect.getargvalues(frame)
         self.kwargs = {arg: values[arg] for arg in args if arg != "self"}
@@ -220,7 +221,7 @@ class VAE(nn.Module):
         torch.save({"state_dict": self.state_dict(), "kwargs": self.kwargs}, path)
         
     @classmethod
-    def load_from_pretrained(cls, checkpoint):
+    def from_pretrained(cls, checkpoint):
 
         if isinstance(checkpoint,str):
             checkpoint = torch.load(checkpoint)

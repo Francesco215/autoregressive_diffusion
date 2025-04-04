@@ -209,6 +209,20 @@ class UNet(torch.nn.Module):
         x = mp_sum(x, res, out_res)
         return x, cache
 
+    def save_to_state_dict(self, path):
+        torch.save({"state_dict": self.state_dict(), "kwargs": self.kwargs}, path)
+        
+    @classmethod
+    def from_pretrained(cls, checkpoint):
+
+        if isinstance(checkpoint,str):
+            checkpoint = torch.load(checkpoint)
+
+        model = cls(**checkpoint['kwargs'])
+
+        model.load_state_dict(checkpoint['state_dict'])
+        return model 
+
 #----------------------------------------------------------------------------
 # Preconditioning and uncertainty estimation.
 

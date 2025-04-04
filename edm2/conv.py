@@ -3,6 +3,7 @@ import torch
 from torch.nn import functional as F
 import numpy as np
 from .utils import normalize, mp_cat
+from .vae import compute_multiplicative_time_wise
 
 class NormalizedWeight(torch.nn.Module):
     
@@ -54,6 +55,9 @@ class MPCausal3DConv(torch.nn.Module):
         self.weight = NormalizedWeight(in_channels, out_channels, kernel)
 
     def forward(self, x, emb, batch_size, gain=1, cache=None):
+        # x.shape = (batch_size, time), channels, height, width
+
+        # x.shape = batch_size, channels, time, height, width 
         w = self.weight(gain).to(x.dtype)
 
         image_padding = (0, w.shape[-2]//2, w.shape[-1]//2)
@@ -61,8 +65,10 @@ class MPCausal3DConv(torch.nn.Module):
         # TODO: there should be a multiplicative factor in the causal_pad. 
         # to understand the theory check out the variance-preserving concatenation
         # however variance preserving concatenatinon doesn't work because it will give different results depending if self.training is true
-        causal_pad = einops.rearrange(x, '(b t) c ... -> b c t ...', b = batch_size)[:,:,:w.shape[2]-1].clone()
+        # causal_pad = einops.rearrange(x, '(b t) c ... -> b c t ...', b = batch_size)[:,:,0].unsqueeze(2).repeat(1,1,w.shape[2]-1,1,1).clone()
         # causal_pad = torch.ones(batch_size, x.shape[1], w.shape[2]-1, *x.shape[2:], device=x.device, dtype=x.dtype)
+        # causal_pad = torch.zeros(batch_size, x.shape[1], w.shape[2]-1, *x.shape[2:], device=x.device, dtype=x.dtype)
+        causal_pad = torch.randn(batch_size, x.shape[1], w.shape[2]-1, *x.shape[2:], device=x.device, dtype=x.dtype)
 
         if self.training:
             # Warning: to understand this, read first how it works during inference
@@ -88,6 +94,10 @@ class MPCausal3DConv(torch.nn.Module):
 
             # we use the fact that the convolution is linear to sum the results of the 2d and 3d convolutions
             x = context + last_frame_conv
+
+            # multiplier = compute_multiplicative_time_wise(x_shape=x.shape, kernel_size=w.shape[2], dilation=(1,1,1), group_size=1, device=x.device)
+            # multiplier = torch.stack((multiplier, multiplier), dim = 0)
+            # multiplier = einops.rearrange(multiplier, 's b c t h w -> (b s t) c h w')
             return x, None
 
         if cache is None:

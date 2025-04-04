@@ -26,20 +26,24 @@ if __name__=="__main__":
     original_env = "LunarLander-v3"
     model_id="stabilityai/stable-diffusion-2-1"
 
-    latent_channels = 8
-    autoencoder = VAE.load_from_pretrained("saved_models/vae_4000.pt").to(device).requires_grad_(False)
+    autoencoder = VAE.from_pretrained("saved_models/vae_4000.pt").to(device).requires_grad_(False)
 
-
-    unet = UNet(img_resolution=64, # Match your latent resolution
-                img_channels=latent_channels, # Match your latent channels
+    resume_training_run = False
+    unet = UNet(img_resolution=32, # Match your latent resolution
+                img_channels=autoencoder.latent_channels, # Match your latent channels
                 label_dim = 4,
-                model_channels=64,
+                model_channels=32,
                 channel_mult=[1,2,2,4],
                 channel_mult_noise=None,
                 channel_mult_emb=None,
                 num_blocks=3,
-                attn_resolutions=[8,4]
+                attn_resolutions=[]
                 )
+
+    unet_params = sum(p.numel() for p in unet.parameters())
+    print(f"Number of UNet parameters: {unet_params//1e6}M")
+    if resume_training_run:
+        unet=UNet.load_state_dict(f'saved_models/unet_{unet_params//1e6}M.pt')
 
     micro_batch_size = 8
     batch_size = 8
@@ -47,17 +51,15 @@ if __name__=="__main__":
     state_size = 32 
     total_number_of_steps = 40_000
     training_steps = total_number_of_steps * batch_size
-    dataset = GymDataGenerator(state_size, original_env, training_steps*10, autoencoder_time_compression = 4)
+    dataset = GymDataGenerator(state_size, original_env, training_steps*10, autoencoder_time_compression = autoencoder.time_compression)
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=16)
 
-    unet_params = sum(p.numel() for p in unet.parameters())
-    print(f"Number of UNet parameters: {unet_params//1e6}M")
     # sigma_data = 0.434
     sigma_data = 1.
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
     loss_fn = EDM2Loss(P_mean=0.3,P_std=2., sigma_data=sigma_data, context_noise_reduction=0.5)
 
-    ref_lr = 3e-3
+    ref_lr = 1e-2
     current_lr = ref_lr
     optimizer = AdamW(precond.parameters(), lr=ref_lr, eps = 1e-8)
     optimizer.zero_grad()
@@ -65,19 +67,15 @@ if __name__=="__main__":
     losses = []
 
     # resume_training_run = None
-    resume_training_run = 'saved_models/lunar_lander_67.0M.pt'
-    steps_taken = 0
-    if resume_training_run is not None:
-        print(f"Resuming training from {resume_training_run}")
-        checkpoint = torch.load(resume_training_run, weights_only=False, map_location='cuda')
-        precond.load_state_dict(checkpoint['model_state_dict'])
+    if resume_training_run:
+        checkpoint = torch.load(f'saved_models/optimizers_{unet_params//1e6}M.pt', weights_only=False, map_location='cuda')
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         ema_tracker.load_state_dict(checkpoint['ema_state_dict'])
         losses = checkpoint['losses']
         print(f"Resuming training from batch {checkpoint['batch']} with loss {losses[-1]:.4f}")
         current_lr = optimizer.param_groups[0]['lr']
         ref_lr = checkpoint['ref_lr']
-        steps_taken = checkpoint['batch']
+        steps_taken = checkpoint['steps_taken']
 
     #%%
     pbar = tqdm(enumerate(dataloader, start=steps_taken),total=total_number_of_steps)
@@ -86,7 +84,7 @@ if __name__=="__main__":
             frames, actions, reward = batch
             frames = frames.to(device)
             actions = None if i%4==1 else actions.to(device)
-            latents = frames_to_latents(autoencoder, frames)/0.5
+            latents = frames_to_latents(autoencoder, frames)/1.2
 
         # Calculate loss    
         loss, un_weighted_loss = loss_fn(precond, latents, actions)
@@ -128,14 +126,14 @@ if __name__=="__main__":
             ulw=True
 
         if i % (total_number_of_steps//30) == 0 and i!=0:  # save every 10% of epochs
+            unet.save_to_state_dict(f"saved_models/unet_{unet_params//1e6}M.pt")
             torch.save({
-                'batch': i,
-                'model_state_dict': precond.state_dict(),
+                'steps_taken': i,
                 'optimizer_state_dict': optimizer.state_dict(),
                 'ema_state_dict': ema_tracker.state_dict(),
                 'losses': losses,
                 'ref_lr': ref_lr
-            }, f"saved_models/lunar_lander_{unet_params//1e6}M.pt")
+            }, f"saved_models/optimizers_{unet_params//1e6}M.pt")
 
         if i == total_number_of_steps:
             break
