@@ -105,3 +105,51 @@ def apply_clipped_grads(model, optimizer, main_loss, adv_loss, max_norm_main, ma
     
     for param, main_g, adv_g in zip(model.parameters(), main_grads, adv_grads):
         param.grad = main_g + adv_g
+
+        
+        
+from torch import nn
+from contextlib import contextmanager
+
+def nan_hook(module, input, output):
+    """
+    Hook function to check for NaNs in the output of a module.
+    """
+    if isinstance(output, tuple):
+        for o in output:
+            return nan_hook(module, input, o) 
+
+    if torch.isnan(output).any():
+        raise Exception(f"NaN detected in output of {module.__class__.__name__}")
+
+
+@contextmanager
+def nan_inspector(model):
+    """
+    Context manager to attach NaN-checking hooks to all modules in the model.
+    
+    Args:
+        model (nn.Module): The PyTorch model to inspect.
+    
+    Usage:
+        with nan_inspector(model):
+            # Your forward pass code here
+    """
+    hooks = []
+    
+    def register_hooks(module):
+        # Skip the top-level model itself to avoid redundant checks
+        if not isinstance(module, nn.Module) or module == model:
+            return
+        # Register the hook to monitor the module's forward pass
+        hook = module.register_forward_hook(nan_hook)
+        hooks.append(hook)
+    
+    try:
+        # Apply the hook registration to all submodules
+        model.apply(register_hooks)
+        yield  # Run the code inside the 'with' block
+    finally:
+        # Clean up by removing all hooks
+        for hook in hooks:
+            hook.remove()

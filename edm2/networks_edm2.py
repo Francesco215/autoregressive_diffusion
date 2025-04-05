@@ -8,6 +8,7 @@
 """Improved diffusion model architecture proposed in the paper
 "Analyzing and Improving the Training Dynamics of Diffusion Models"."""
 
+import inspect
 import numpy as np
 import torch
 from torch import nn, Tensor
@@ -163,6 +164,11 @@ class UNet(torch.nn.Module):
                 cout = channels
                 self.dec[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=(res in attn_resolutions), **block_kwargs)
         self.out_conv = MPCausal3DConv(cout, img_channels, kernel=[3,3,3])
+
+        # Saves the kwargs
+        frame = inspect.currentframe()
+        args, _, _, values = inspect.getargvalues(frame)
+        self.kwargs = {arg: values[arg] for arg in args if arg != "self"}
 
     def forward(self, x, c_noise, conditioning = None, cache:dict=None):
         if cache is None: cache = {}

@@ -190,6 +190,8 @@ class VAE(nn.Module):
         self.decoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='decoder')
 
         self.time_compression = np.prod(time_compressions)
+        self.spatial_compression = np.prod(spatial_compressions)
+
         frame = inspect.currentframe()
         args, _, _, values = inspect.getargvalues(frame)
         self.kwargs = {arg: values[arg] for arg in args if arg != "self"}

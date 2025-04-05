@@ -89,7 +89,7 @@ dataset_filenames = api.list_repo_files(repo_id=hf_repo_id, repo_type="dataset")
 #have to filter out some of the data because its's saved slightly differently...
 hf_filenames = [f for f in dataset_filenames if re.match(r"^hdf5_dm_july2021_.*_to_.*\.tar$", f)]
 
-autoencoder = VAE.load_from_pretrained('saved_models/vae_cs_4264.pt').to("cuda")
+autoencoder = VAE.from_pretrained('saved_models/vae_cs_4264.pt').to("cuda")
 
 #%%
 # Download the first tar file

@@ -28,11 +28,11 @@ if __name__=="__main__":
 
     autoencoder = VAE.from_pretrained("saved_models/vae_4000.pt").to(device).requires_grad_(False)
 
-    resume_training_run = False
-    unet = UNet(img_resolution=32, # Match your latent resolution
+    resume_training = False
+    unet = UNet(img_resolution=256//autoencoder.spatial_compression, # Match your latent resolution
                 img_channels=autoencoder.latent_channels, # Match your latent channels
-                label_dim = 4,
-                model_channels=32,
+                label_dim = 4, #this should be equal to the action space of the gym environment
+                model_channels=16,
                 channel_mult=[1,2,2,4],
                 channel_mult_noise=None,
                 channel_mult_emb=None,
@@ -42,17 +42,17 @@ if __name__=="__main__":
 
     unet_params = sum(p.numel() for p in unet.parameters())
     print(f"Number of UNet parameters: {unet_params//1e6}M")
-    if resume_training_run:
+    if resume_training:
         unet=UNet.load_state_dict(f'saved_models/unet_{unet_params//1e6}M.pt')
 
-    micro_batch_size = 8
-    batch_size = 8
+    micro_batch_size = 4
+    batch_size = 4
     accumulation_steps = batch_size//micro_batch_size
     state_size = 32 
     total_number_of_steps = 40_000
     training_steps = total_number_of_steps * batch_size
-    dataset = GymDataGenerator(state_size, original_env, training_steps*10, autoencoder_time_compression = autoencoder.time_compression)
-    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=16)
+    dataset = GymDataGenerator(state_size, original_env, total_number_of_steps, autoencoder_time_compression = autoencoder.time_compression)
+    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=8)
 
     # sigma_data = 0.434
     sigma_data = 1.
@@ -64,10 +64,9 @@ if __name__=="__main__":
     optimizer = AdamW(precond.parameters(), lr=ref_lr, eps = 1e-8)
     optimizer.zero_grad()
     ema_tracker = PowerFunctionEMA(precond, stds=[0.050, 0.100])
-    losses = []
+    losses, steps_taken = [], 0
 
-    # resume_training_run = None
-    if resume_training_run:
+    if resume_training:
         checkpoint = torch.load(f'saved_models/optimizers_{unet_params//1e6}M.pt', weights_only=False, map_location='cuda')
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         ema_tracker.load_state_dict(checkpoint['ema_state_dict'])
@@ -81,9 +80,9 @@ if __name__=="__main__":
     pbar = tqdm(enumerate(dataloader, start=steps_taken),total=total_number_of_steps)
     for i, batch in pbar:
         with torch.no_grad():
-            frames, actions, reward = batch
+            frames, actions, _ = batch
             frames = frames.to(device)
-            actions = None if i%4==1 else actions.to(device)
+            actions = actions.to(device)
             latents = frames_to_latents(autoencoder, frames)/1.2
 
         # Calculate loss    

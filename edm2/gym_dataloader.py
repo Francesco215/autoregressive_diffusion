@@ -5,6 +5,7 @@ from torch.utils.data import IterableDataset
 import cv2
 import einops
 import gymnasium as gym
+import gc
 
 
 
@@ -36,9 +37,7 @@ class GymDataGenerator(IterableDataset):
                 terminated = False
                 reward = 0
                 action = 0
-                frame_history = []
-                state_history = []  # Added to track states
-                action_history = []
+                frame_history, state_history, action_history = [], [], []
                 step_count = -self.evolution_time
             else:
                 if step_count % (self.autoencoder_time_compression * self.frame_collection_interval) == 0:
@@ -58,7 +57,7 @@ class GymDataGenerator(IterableDataset):
                 if self.return_anyways or all(self.is_lander_in_frame(s) for s in state_history[-self.state_size:]):
                     frames = torch.stack(frame_history[-self.state_size:])
                     actions = torch.tensor(action_history[-self.state_size // self.autoencoder_time_compression:])
-                    yield frames, actions, torch.tensor(reward).clone()
+                    yield frames, actions, reward
                     n_data_yielded += 1
                 # Reset histories whether we yield or not to maintain sequence alignment
                 frame_history, state_history, action_history = [], [], []
@@ -83,7 +82,7 @@ def gym_collate_function(batch):
     frame_histories, action_histories, rewards = zip(*batch)
     padded_frames = torch.stack(frame_histories)
     padded_actions = torch.stack(action_histories)
-    return padded_frames, padded_actions, torch.Tensor(rewards)
+    return padded_frames, padded_actions, rewards
 
 # saved_mean = torch.load('mean_LunarLander-v3_latent.pt').mean(dim=(1,2))
 # std_latent = 12446.0

@@ -16,7 +16,6 @@ from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.mars import MARS
 from edm2.phema import PowerFunctionEMA
 
-torch._dynamo.config.recompile_limit = 100
 
         
 if __name__=="__main__":
@@ -33,13 +32,19 @@ if __name__=="__main__":
                 num_blocks=3,
                 attn_resolutions=[8,4]
                 )
+    unet_params = sum(p.numel() for p in unet.parameters())
+    print(f"Number of UNet parameters: {unet_params//1e6}M")
+    resume_training = False
+    if resume_training:
+        unet=UNet.load_state_dict(f'saved_models/unet_{unet_params//1e6}M.pt')
+
 
     micro_batch_size = 1
     batch_size = 8
     accumulation_steps = batch_size//micro_batch_size
     clip_length = 32
     # training_steps = total_number_of_steps * batch_size
-    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed/', local = '/tmp/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False)
+    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed/', local = '/tmp/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsVaeCollate(), num_workers=24, shuffle=False)
     steps_per_epoch = len(dataset)//micro_batch_size
     n_epochs = 10
@@ -47,8 +52,6 @@ if __name__=="__main__":
     # total_number_of_steps = 40_000
 
 
-    unet_params = sum(p.numel() for p in unet.parameters())
-    print(f"Number of UNet parameters: {unet_params//1e6}M")
     # sigma_data = 0.434
     sigma_data = 1.
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
@@ -61,27 +64,23 @@ if __name__=="__main__":
     ema_tracker = PowerFunctionEMA(precond, stds=[0.050, 0.100])
     losses = []
 
-    resume_training_run = None
-    # resume_training_run = 'lunar_lander_68.0M.pt'
     steps_taken = 0
-    if resume_training_run is not None:
-        print(f"Resuming training from {resume_training_run}")
-        checkpoint = torch.load(resume_training_run, weights_only=False, map_location='cuda')
-        precond.load_state_dict(checkpoint['model_state_dict'])
+    if resume_training:
+        checkpoint = torch.load(f'saved_models/optimizers_{unet_params//1e6}M.pt', weights_only=False, map_location='cuda')
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         ema_tracker.load_state_dict(checkpoint['ema_state_dict'])
         losses = checkpoint['losses']
         print(f"Resuming training from batch {checkpoint['batch']} with loss {losses[-1]:.4f}")
         current_lr = optimizer.param_groups[0]['lr']
         ref_lr = checkpoint['ref_lr']
-        steps_taken = checkpoint['batch']
+        steps_taken = checkpoint['steps_taken']
 
     #%%
     for epoch in range (n_epochs):
         pbar = tqdm(enumerate(dataloader, start=steps_taken),total=steps_per_epoch)
         for i, batch in pbar:
             with torch.no_grad():
-                means, logvars, actions = batch
+                means, logvars, _ = batch
                 latents = means + torch.randn_like(means)*torch.exp(logvars*.5)
                 latents = latents.to(device)/1.4
                 actions = None
@@ -122,16 +121,15 @@ if __name__=="__main__":
                 plt.savefig('images_training/losses.png')
                 plt.show()
                 plt.close()
-                ulw=True
 
         # if i % (total_number_of_steps//100) == 0 and i!=0:  # save every 10% of epochs
+        unet.save_to_state_dict(f"saved_models/unet_{unet_params//1e6}M.pt")
         torch.save({
-            'batch': i,
-            'model_state_dict': precond.state_dict(),
+            'steps_taken': i,
             'optimizer_state_dict': optimizer.state_dict(),
             'ema_state_dict': ema_tracker.state_dict(),
             'losses': losses,
             'ref_lr': ref_lr
-        }, f"lunar_lander_{unet_params//1e6}M.pt")
+        }, f"saved_models/optimizers_{unet_params//1e6}M.pt")
 
 # %%
