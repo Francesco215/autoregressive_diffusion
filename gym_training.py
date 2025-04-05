@@ -28,7 +28,7 @@ if __name__=="__main__":
 
     autoencoder = VAE.from_pretrained("saved_models/vae_4000.pt").to(device).requires_grad_(False)
 
-    resume_training = False
+    resume_training = True
     unet = UNet(img_resolution=256//autoencoder.spatial_compression, # Match your latent resolution
                 img_channels=autoencoder.latent_channels, # Match your latent channels
                 label_dim = 4, #this should be equal to the action space of the gym environment
@@ -43,16 +43,16 @@ if __name__=="__main__":
     unet_params = sum(p.numel() for p in unet.parameters())
     print(f"Number of UNet parameters: {unet_params//1e6}M")
     if resume_training:
-        unet=UNet.load_state_dict(f'saved_models/unet_{unet_params//1e6}M.pt')
+        unet=UNet.from_pretrained(f'saved_models/unet_{unet_params//1e6}M.pt')
 
-    micro_batch_size = 4
-    batch_size = 4
+    micro_batch_size = 8
+    batch_size = micro_batch_size
     accumulation_steps = batch_size//micro_batch_size
     state_size = 32 
     total_number_of_steps = 40_000
     training_steps = total_number_of_steps * batch_size
     dataset = GymDataGenerator(state_size, original_env, total_number_of_steps, autoencoder_time_compression = autoencoder.time_compression)
-    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=8)
+    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=micro_batch_size, prefetch_factor=4)
 
     # sigma_data = 0.434
     sigma_data = 1.
@@ -71,18 +71,18 @@ if __name__=="__main__":
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         ema_tracker.load_state_dict(checkpoint['ema_state_dict'])
         losses = checkpoint['losses']
-        print(f"Resuming training from batch {checkpoint['batch']} with loss {losses[-1]:.4f}")
         current_lr = optimizer.param_groups[0]['lr']
         ref_lr = checkpoint['ref_lr']
         steps_taken = checkpoint['steps_taken']
+        print(f"Resuming training from batch {checkpoint['steps_taken']} with loss {losses[-1]:.4f}")
 
     #%%
     pbar = tqdm(enumerate(dataloader, start=steps_taken),total=total_number_of_steps)
     for i, batch in pbar:
         with torch.no_grad():
             frames, actions, _ = batch
-            frames = frames.to(device)
-            actions = actions.to(device)
+            frames = torch.tensor(frames, device=device)
+            actions = torch.tensor(actions, device = device)
             latents = frames_to_latents(autoencoder, frames)/1.2
 
         # Calculate loss    
@@ -124,7 +124,7 @@ if __name__=="__main__":
             plt.close()
             ulw=True
 
-        if i % (total_number_of_steps//30) == 0 and i!=0:  # save every 10% of epochs
+        if i % (total_number_of_steps//40) == 0 and i!=0:  # save every 10% of epochs
             unet.save_to_state_dict(f"saved_models/unet_{unet_params//1e6}M.pt")
             torch.save({
                 'steps_taken': i,

@@ -222,7 +222,7 @@ class UNet(torch.nn.Module):
     def from_pretrained(cls, checkpoint):
 
         if isinstance(checkpoint,str):
-            checkpoint = torch.load(checkpoint)
+            checkpoint = torch.load(checkpoint, weights_only=False)
 
         model = cls(**checkpoint['kwargs'])
 
