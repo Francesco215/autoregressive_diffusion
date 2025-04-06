@@ -29,11 +29,11 @@ if __name__=="__main__":
     training_steps = total_number_of_steps * batch_size
     
     # Hyperparameters
-    latent_channels = 16
+    latent_channels = 8
     n_res_blocks = 2
 
     # Initialize models
-    vae = VAE(channels = [3,8,8,latent_channels], n_res_blocks=n_res_blocks, spatial_compressions=[1,2,4]).to(device)
+    vae = VAE(channels = [3,8,8,latent_channels], n_res_blocks=n_res_blocks, spatial_compressions=[1,2,2]).to(device)
     # Example instantiation
     discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(32,)).to(device)
     
@@ -69,8 +69,8 @@ if __name__=="__main__":
     for batch_idx, batch in pbar:
         with torch.no_grad():
             frames, _, _ = batch  # Ignore actions and reward for this VggAE training
-            frames = frames.float() / 127.5 - 1  # Normalize to [-1, 1]
-            frames = einops.rearrange(frames, 'b t h w c-> b c t h w').to(device)
+            frames = torch.tensor(frames, device = device, dtype = torch.float) / 127.5 - 1  # Normalize to [-1, 1]
+            frames = einops.rearrange(frames, 'b t h w c-> b c t h w')
 
         # VAE forward pass
         recon, mean, logvar, _ = vae(frames)
