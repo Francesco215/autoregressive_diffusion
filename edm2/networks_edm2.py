@@ -17,7 +17,7 @@ import einops
 
 from .loss_weight import MultiNoiseLoss
 from .utils import normalize, resample, mp_silu, mp_sum, mp_cat, MPFourier, bmult
-from .conv import MPCausal3DConv, MPConv
+from .conv import MPCausal3DConv, MPConv, MPCausal3DGatedConv
 from .attention import FrameAttention, VideoAttention
 
 
@@ -53,8 +53,8 @@ class Block(torch.nn.Module):
         self.emb_gain = torch.nn.Parameter(torch.zeros([]))
         self.emb_linear = MPConv(emb_channels, out_channels, kernel=[])
         # if attention:
-        self.conv_res0 = MPCausal3DConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3,3])
-        self.conv_res1 = MPCausal3DConv(out_channels, out_channels, kernel=[3,3,3])
+        self.conv_res0 = MPCausal3DGatedConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3,3])
+        self.conv_res1 = MPCausal3DGatedConv(out_channels, out_channels, kernel=[3,3,3])
         # else:
         # self.conv_res0 = MPConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3])
         # self.conv_res1 = MPConv(out_channels, out_channels, kernel=[3,3])
@@ -76,7 +76,7 @@ class Block(torch.nn.Module):
             x = normalize(x, dim=1) # pixel norm
 
         # Residual branch.
-        y, cache['conv_res0'] = self.conv_res0.forward(mp_silu(x), emb, batch_size=batch_size, cache=cache.get('conv_res0', None)) 
+        y, cache['conv_res0'] = self.conv_res0(mp_silu(x), emb, batch_size=batch_size, cache=cache.get('conv_res0', None)) 
         c = self.emb_linear(emb, gain=self.emb_gain) + 1
         y = bmult(y, c.to(y.dtype)) 
         y = mp_silu(y)
@@ -141,7 +141,7 @@ class UNet(torch.nn.Module):
             if level == 0:
                 cin = cout
                 cout = channels
-                self.enc[f'{res}x{res}_conv'] = MPCausal3DConv(cin, cout, kernel=[3,3,3])
+                self.enc[f'{res}x{res}_conv'] = MPCausal3DGatedConv(cin, cout, kernel=[3,3,3])
             else:
                 self.enc[f'{res}x{res}_down'] = Block(cout, cout, cemb, flavor='enc', resample_mode='down', **block_kwargs)
             for idx in range(num_blocks):
@@ -163,7 +163,7 @@ class UNet(torch.nn.Module):
                 cin = cout + skips.pop()
                 cout = channels
                 self.dec[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=(res in attn_resolutions), **block_kwargs)
-        self.out_conv = MPCausal3DConv(cout, img_channels, kernel=[3,3,3])
+        self.out_conv = MPCausal3DGatedConv(cout, img_channels, kernel=[3,3,3])
 
         # Saves the kwargs
         frame = inspect.currentframe()

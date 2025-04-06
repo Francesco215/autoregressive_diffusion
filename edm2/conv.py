@@ -1,9 +1,9 @@
 import einops
 import torch
+from torch import nn, Tensor
 from torch.nn import functional as F
 import numpy as np
-from .utils import normalize, mp_cat
-from .vae import compute_multiplicative_time_wise
+from .utils import mp_sum, normalize, mp_cat
 
 class NormalizedWeight(torch.nn.Module):
     
@@ -110,3 +110,87 @@ class MPCausal3DConv(torch.nn.Module):
         x = einops.rearrange(x, 'b c t h w -> (b t) c h w')
         return x, cache.detach()
 
+#----------------------------------------------------------------------------
+# Magnitude-preserving convolution or fully-connected layer (Equation 47)
+# with force weight normalization (Equation 66).
+class MPCausal3DGatedConv(torch.nn.Module):
+    def __init__(self, in_channels, out_channels, kernel):
+        super().__init__()
+        self.out_channels = out_channels
+        assert len(kernel)==3
+        self.last_frame_conv = MPConv(in_channels, out_channels, kernel[1:])
+        kernel[0]-=1
+        self.weight = NormalizedWeight(in_channels, out_channels, kernel)
+        self.gating = Gating()
+
+    def forward(self, x, emb, batch_size, gain=1, cache=None):
+        if cache is None: cache = {}
+        w = self.weight(gain).to(x.dtype)
+
+        image_padding = (0, w.shape[-2]//2, w.shape[-1]//2)
+
+        # to understand the theory check out the variance-preserving concatenation
+        # however variance preserving concatenatinon doesn't work because it will give different results depending if self.training is true
+        causal_pad = torch.zeros(batch_size, x.shape[1], w.shape[2], *x.shape[2:], device=x.device, dtype=x.dtype)
+        gating, cache['n_context_frames'] = self.gating((batch_size, x.shape[0]//batch_size), cache.get('n_context_frames', 0)) # Change the context frames for inference
+
+        if self.training:
+            # Warning: to understand this, read first how it works during inference
+
+            # this convolution is hard to do because each frame to be denoised has to do the convolution with the previous frames of the context
+            # so we need to either have a really large kernel with lots of zeros in between (bad and dumb)
+            # or we exploit linearity of the conv layers (good and smart). 
+            
+            # we do the 2d convolutions over the last frames
+            last_frame_conv = self.last_frame_conv(x)
+
+            # we just take the context frames
+            context, _ = einops.rearrange(x, '(b s t) c h w -> s b c t h w', b=batch_size, s=2).unbind(0)
+            #pad context along the time dimention to make sure that it's causal
+            context = torch.cat((causal_pad, context), dim=-3)
+
+            # now we do the 3d convolutions over the previous frames of the context
+            context = F.conv3d(context[:,:,:-1], w, padding=image_padding)
+
+            # we concatenate the results and reshape them to sum them back to the 2d convolutions
+            context = torch.stack((context, context), dim=0)
+            context = einops.rearrange(context, 's b c t h w -> (b s t) c h w')
+
+            # we use the fact that the convolution is linear to sum the results of the 2d and 3d convolutions
+            x = mp_sum(context, last_frame_conv, gating)
+
+            return x, None
+
+        raise NotImplementedError("fix the gating!")
+        causal_pad = cache.get('activations', causal_pad)
+
+        # during inference is much simpler
+        x = einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
+        x = torch.cat((cache, x), dim=-3)
+        cache['activations'] = x[:,:,-w.shape[2]:].clone()
+
+        x = F.conv3d(x, w, padding=image_padding)
+
+        x = einops.rearrange(x, 'b c t h w -> (b t) c h w')
+        return x, cache.detach()
+
+
+class Gating(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.offset = nn.Parameter(torch.tensor([0.]))
+        self.mult = nn.Parameter(torch.tensor([1.]))
+        self.activation = nn.Sigmoid()
+
+    def forward(self, sequence_shape, n_context_frames:int=0, dtype=torch.float16, device = "cuda" if torch.cuda.is_available() else "cpu"):
+        batch_size, time_dimention = sequence_shape
+        numel = batch_size * time_dimention
+        if self.training: time_dimention = time_dimention//2
+
+        positions = torch.arange(numel, device=device) % time_dimention
+        positions = positions + n_context_frames
+
+        positions = positions.to(dtype).log1p()
+        state_vector = positions * self.mult + self.offset
+
+        return self.activation(state_vector), n_context_frames+time_dimention # TODO:check this thing
