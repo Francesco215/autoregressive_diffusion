@@ -38,8 +38,7 @@ class MPConv(torch.nn.Module):
         if w.ndim == 2:
             return x @ w.t()
         assert w.ndim == 4
-        x = F.pad(x, pad = self.padding, mode="constant", value = 0)
-        x = F.conv2d(x, w, dilation=self.dilation)
+        x = F.conv2d(x, w, padding=(w.shape[-1]//2,))
         return x
 
 
@@ -129,50 +128,35 @@ class MPCausal3DGatedConv(torch.nn.Module):
 
         image_padding = (0, w.shape[-2]//2, w.shape[-1]//2)
 
-        # to understand the theory check out the variance-preserving concatenation
         # however variance preserving concatenatinon doesn't work because it will give different results depending if self.training is true
         causal_pad = torch.zeros(batch_size, x.shape[1], w.shape[2], *x.shape[2:], device=x.device, dtype=x.dtype)
+        causal_pad = cache.get('activations', causal_pad)
         gating, cache['n_context_frames'] = self.gating((batch_size, x.shape[0]//batch_size), cache.get('n_context_frames', 0)) # Change the context frames for inference
 
+        # we do the 2d convolutions over the last frames
+        last_frame_conv = self.last_frame_conv(x)
+
         if self.training:
-            # Warning: to understand this, read first how it works during inference
-
-            # this convolution is hard to do because each frame to be denoised has to do the convolution with the previous frames of the context
-            # so we need to either have a really large kernel with lots of zeros in between (bad and dumb)
-            # or we exploit linearity of the conv layers (good and smart). 
-            
-            # we do the 2d convolutions over the last frames
-            last_frame_conv = self.last_frame_conv(x)
-
             # we just take the context frames
-            context, _ = einops.rearrange(x, '(b s t) c h w -> s b c t h w', b=batch_size, s=2).unbind(0)
-            #pad context along the time dimention to make sure that it's causal
-            context = torch.cat((causal_pad, context), dim=-3)
+            x, _ = einops.rearrange(x, '(b s t) c h w -> s b c t h w', b=batch_size, s=2).unbind(0)
+        else: 
+            x = einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
 
-            # now we do the 3d convolutions over the previous frames of the context
-            context = F.conv3d(context[:,:,:-1], w, padding=image_padding)
+        #pad context along the time dimention to make sure that it's causal
+        context = torch.cat((causal_pad, x), dim=-3)
+        cache['activations'] = context[:,:,-w.shape[2]:].clone().detach()
+        # now we do the 3d convolutions over the previous frames of the context
+        context = F.conv3d(context[:,:,:-1], w, padding=image_padding)
 
+        if self.training:
             # we concatenate the results and reshape them to sum them back to the 2d convolutions
             context = torch.stack((context, context), dim=0)
             context = einops.rearrange(context, 's b c t h w -> (b s t) c h w')
+        else:
+            context = einops.rearrange(context, 'b c t h w -> (b t) c h w')
 
-            # we use the fact that the convolution is linear to sum the results of the 2d and 3d convolutions
-            x = mp_sum(context, last_frame_conv, gating)
+        return mp_sum(context, last_frame_conv, gating), cache
 
-            return x, None
-
-        raise NotImplementedError("fix the gating!")
-        causal_pad = cache.get('activations', causal_pad)
-
-        # during inference is much simpler
-        x = einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
-        x = torch.cat((cache, x), dim=-3)
-        cache['activations'] = x[:,:,-w.shape[2]:].clone()
-
-        x = F.conv3d(x, w, padding=image_padding)
-
-        x = einops.rearrange(x, 'b c t h w -> (b t) c h w')
-        return x, cache.detach()
 
 
 class Gating(torch.nn.Module):
