@@ -122,7 +122,7 @@ class MPCausal3DGatedConv(torch.nn.Module):
         self.weight = NormalizedWeight(in_channels, out_channels, kernel)
         self.gating = Gating()
 
-    def forward(self, x, emb, batch_size, gain=1, cache=None):
+    def forward(self, x, emb, batch_size, c_noise, gain=1, cache=None):
         if cache is None: cache = {}
         w = self.weight(gain).to(x.dtype)
 
@@ -131,7 +131,7 @@ class MPCausal3DGatedConv(torch.nn.Module):
         # however variance preserving concatenatinon doesn't work because it will give different results depending if self.training is true
         causal_pad = torch.zeros(batch_size, x.shape[1], w.shape[2], *x.shape[2:], device=x.device, dtype=x.dtype)
         causal_pad = cache.get('activations', causal_pad)
-        gating, cache['n_context_frames'] = self.gating((batch_size, x.shape[0]//batch_size), cache.get('n_context_frames', 0)) # Change the context frames for inference
+        gating, cache['n_context_frames'] = self.gating(c_noise, cache.get('n_context_frames', 0)) # Change the context frames for inference
 
         # we do the 2d convolutions over the last frames
         last_frame_conv = self.last_frame_conv(x)
@@ -155,26 +155,24 @@ class MPCausal3DGatedConv(torch.nn.Module):
         else:
             context = einops.rearrange(context, 'b c t h w -> (b t) c h w')
 
-        return mp_sum(context, last_frame_conv, gating), cache
+        return mp_sum(context, last_frame_conv, gating.flatten()), cache
 
 
 
-class Gating(torch.nn.Module):
+class Gating(nn.Module):
     def __init__(self):
         super().__init__()
-        self.offset = nn.Parameter(torch.tensor([0.]))
-        self.mult = nn.Parameter(torch.tensor([1.]))
+        self.offset = nn.Parameter(torch.tensor([0.,0.]))
+        self.mult = nn.Parameter(torch.tensor([1.5,-0.5]))
         self.activation = nn.Sigmoid()
 
-    def forward(self, sequence_shape, n_context_frames:int=0, dtype=torch.float16, device = "cuda" if torch.cuda.is_available() else "cpu"):
-        batch_size, time_dimention = sequence_shape
-        numel = batch_size * time_dimention
+    def forward(self, c_noise:Tensor, n_context_frames:int=0):
+        batch_size, time_dimention = c_noise.shape
         if self.training: time_dimention = time_dimention//2
+        positions = torch.arange(c_noise.numel(), device=c_noise.device) % time_dimention
+        positions = einops.rearrange(positions, '(b t) -> b t', b=batch_size) + n_context_frames
 
-        positions = torch.arange(numel, device=device) % time_dimention
-        positions = positions + n_context_frames
-
-        positions = positions.to(dtype).log1p()
-        state_vector = positions * self.mult + self.offset
-
+        positions = positions.to(c_noise.dtype).log1p()
+        state_vector = torch.stack([c_noise, positions], dim=-1)
+        state_vector = (state_vector * self.mult + self.offset).sum(dim=-1)
         return self.activation(state_vector), n_context_frames+time_dimention # TODO:check this thing

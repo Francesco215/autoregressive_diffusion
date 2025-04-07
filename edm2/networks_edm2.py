@@ -17,7 +17,7 @@ import einops
 
 from .loss_weight import MultiNoiseLoss
 from .utils import normalize, resample, mp_silu, mp_sum, mp_cat, MPFourier, bmult
-from .conv import MPCausal3DConv, MPConv, MPCausal3DGatedConv
+from .conv import MPCausal3DConv, MPConv, MPCausal3DGatedConv, Gating
 from .attention import FrameAttention, VideoAttention
 
 
@@ -65,7 +65,7 @@ class Block(torch.nn.Module):
         if self.num_heads > 0: 
             assert (out_channels & (out_channels - 1) == 0) and out_channels != 0, f"out_channels must be a power of 2, got {out_channels}"
 
-    def forward(self, x, emb, batch_size, cache=None):
+    def forward(self, x, emb, batch_size, c_noise, cache=None):
         if cache is None: cache = {}
 
         # Main branch.
@@ -76,13 +76,13 @@ class Block(torch.nn.Module):
             x = normalize(x, dim=1) # pixel norm
 
         # Residual branch.
-        y, cache['conv_res0'] = self.conv_res0(mp_silu(x), emb, batch_size=batch_size, cache=cache.get('conv_res0', None)) 
+        y, cache['conv_res0'] = self.conv_res0(mp_silu(x), emb, batch_size, c_noise, cache=cache.get('conv_res0', None)) 
         c = self.emb_linear(emb, gain=self.emb_gain) + 1
         y = bmult(y, c.to(y.dtype)) 
         y = mp_silu(y)
         if self.training and self.dropout != 0:
             y = torch.nn.functional.dropout(y, p=self.dropout)
-        y, cache['conv_res1'] = self.conv_res1(y, emb, batch_size=batch_size, cache=cache.get('conv_res1', None)) 
+        y, cache['conv_res1'] = self.conv_res1(y, emb, batch_size, c_noise, cache=cache.get('conv_res1', None)) 
 
         # Connect the branches.
         if self.flavor == 'dec' and self.conv_skip is not None:
@@ -196,20 +196,21 @@ class UNet(torch.nn.Module):
             emb = mp_sum(emb, conditioning, t=1/3)
         emb = mp_silu(emb)
 
+        c_noise = einops.rearrange(c_noise, '(b t) -> b t', b=batch_size)
 
         # Encoder.
         x = torch.cat([x, torch.ones_like(x[:, :1])], dim=1)
         skips = []
         for name, block in self.enc.items():
-            x, cache['enc', name] = block(x, emb, batch_size=batch_size, cache=cache.get(('enc',name), None))
+            x, cache['enc', name] = block(x, emb, batch_size, c_noise, cache=cache.get(('enc',name), None))
             skips.append(x)
 
         # Decoder.
         for name, block in self.dec.items():
             if 'block' in name:
                 x = mp_cat(x, skips.pop(), t=self.concat_balance)
-            x, cache['dec', name] = block(x, emb, batch_size=batch_size, cache=cache.get(('dec',name), None))
-        x, cache['out_conv'] = self.out_conv(x, emb, batch_size=batch_size, cache=cache.get('out_conv', None))
+            x, cache['dec', name] = block(x, emb, batch_size, c_noise, cache=cache.get(('dec',name), None))
+        x, cache['out_conv'] = self.out_conv(x, emb, batch_size, c_noise, cache=cache.get('out_conv', None))
 
         x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
         x = mp_sum(x, res, out_res)
@@ -273,23 +274,4 @@ class Precond(torch.nn.Module):
         return next(self.parameters()).device
 
 #----------------------------------------------------------------------------
-
-
-class Gating(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.offset = nn.Parameter(torch.tensor([0.,0.]))
-        self.mult = nn.Parameter(torch.tensor([1.5,-0.5]))
-        self.activation = nn.Sigmoid()
-
-    def forward(self, c_noise:Tensor, n_context_frames:int=0):
-        batch_size, time_dimention = c_noise.shape
-        if self.training: time_dimention = time_dimention//2
-        positions = torch.arange(c_noise.numel(), device=c_noise.device) % time_dimention
-        positions = einops.rearrange(positions, '(b t) -> b t', b=batch_size) + n_context_frames
-
-        positions = positions.to(c_noise.dtype).log1p()
-        state_vector = torch.stack([c_noise, positions], dim=-1)
-        state_vector = (state_vector * self.mult + self.offset).sum(dim=-1)
-        return self.activation(state_vector), n_context_frames+time_dimention # TODO:check this thing
 

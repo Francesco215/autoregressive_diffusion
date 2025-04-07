@@ -28,7 +28,7 @@ if __name__=="__main__":
 
     autoencoder = VAE.from_pretrained("saved_models/vae_4000.pt").to(device).requires_grad_(False)
 
-    resume_training = True
+    resume_training = False
     unet = UNet(img_resolution=256//autoencoder.spatial_compression, # Match your latent resolution
                 img_channels=autoencoder.latent_channels, # Match your latent channels
                 label_dim = 4, #this should be equal to the action space of the gym environment
