@@ -53,7 +53,7 @@ class VideoAttention(nn.Module):
             cache = (k.detach(), v.detach())
 
         q, k = self.rope(q, k)
-        q, k = F.normalize(q, p=2, dim=-1), F.normalize(k, p=2, dim=-1)
+        # q, k = F.normalize(q, p=2, dim=-1), F.normalize(k, p=2, dim=-1)
         v = einops.rearrange(v, ' b m t hw c -> b m (t hw) c') # q and k are already rearranged inside of rope
 
         if self.training:
@@ -95,9 +95,9 @@ class FrameAttention(nn.Module):
         self.attn_qkv = MPConv(channels, channels * 3, kernel=[1,1]) 
         self.attn_proj = MPConv(channels, channels, kernel=[1,1]) 
 
-    def forward(self, x, batch_size):
+    def forward(self, x, batch_size, cache=None):
         if self.num_heads==0:
-            return x
+            return x, None
         # x.shape = bt c h w
         h, w = x.shape[-2:]
         y = self.attn_qkv(x)
@@ -109,4 +109,4 @@ class FrameAttention(nn.Module):
         y = einops.rearrange(y, 'bt m (h w) c -> bt (m c) h w', h=h, w=w)
 
         y = self.attn_proj(y)
-        return mp_sum(x, y, t=self.attn_balance)
+        return mp_sum(x, y, t=self.attn_balance), None

@@ -33,11 +33,11 @@ if __name__=="__main__":
                 img_channels=autoencoder.latent_channels, # Match your latent channels
                 label_dim = 4, #this should be equal to the action space of the gym environment
                 model_channels=16,
-                channel_mult=[1,2,2,4],
+                channel_mult=[1,2,4,8],
                 channel_mult_noise=None,
                 channel_mult_emb=None,
                 num_blocks=3,
-                attn_resolutions=[]
+                attn_resolutions=[16,8]
                 )
 
     unet_params = sum(p.numel() for p in unet.parameters())
@@ -59,7 +59,7 @@ if __name__=="__main__":
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
     loss_fn = EDM2Loss(P_mean=0.3,P_std=2., sigma_data=sigma_data, context_noise_reduction=0.5)
 
-    ref_lr = 1e-2
+    ref_lr = 3e-2
     current_lr = ref_lr
     optimizer = AdamW(precond.parameters(), lr=ref_lr, eps = 1e-8)
     optimizer.zero_grad()

@@ -53,7 +53,7 @@ class MPCausal3DConv(torch.nn.Module):
         assert len(kernel)==3
         self.weight = NormalizedWeight(in_channels, out_channels, kernel)
 
-    def forward(self, x, emb, batch_size, gain=1, cache=None):
+    def forward(self, x, emb, batch_size, c_noise, gain=1, cache=None):
         # x.shape = (batch_size, time), channels, height, width
 
         # x.shape = batch_size, channels, time, height, width 
