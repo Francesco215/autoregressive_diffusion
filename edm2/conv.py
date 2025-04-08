@@ -53,7 +53,7 @@ class MPCausal3DConv(torch.nn.Module):
         assert len(kernel)==3
         self.weight = NormalizedWeight(in_channels, out_channels, kernel)
 
-    def forward(self, x, emb, batch_size, c_noise, gain=1, cache=None):
+    def forward(self, x, emb, batch_size, c_noise=None, gain=1, cache=None):
         # x.shape = (batch_size, time), channels, height, width
 
         # x.shape = batch_size, channels, time, height, width 
@@ -67,7 +67,7 @@ class MPCausal3DConv(torch.nn.Module):
         # causal_pad = einops.rearrange(x, '(b t) c ... -> b c t ...', b = batch_size)[:,:,0].unsqueeze(2).repeat(1,1,w.shape[2]-1,1,1).clone()
         # causal_pad = torch.ones(batch_size, x.shape[1], w.shape[2]-1, *x.shape[2:], device=x.device, dtype=x.dtype)
         # causal_pad = torch.zeros(batch_size, x.shape[1], w.shape[2]-1, *x.shape[2:], device=x.device, dtype=x.dtype)
-        causal_pad = torch.randn(batch_size, x.shape[1], w.shape[2]-1, *x.shape[2:], device=x.device, dtype=x.dtype)
+        causal_pad = torch.ones(batch_size, x.shape[1], w.shape[2]-1, *x.shape[2:], device=x.device, dtype=x.dtype)
 
         if self.training:
             # Warning: to understand this, read first how it works during inference
@@ -118,7 +118,7 @@ class MPCausal3DGatedConv(torch.nn.Module):
         self.out_channels = out_channels
         assert len(kernel)==3
         self.last_frame_conv = MPConv(in_channels, out_channels, kernel[1:])
-        kernel[0]-=1
+        kernel = (kernel[0]-1,kernel[1],kernel[2])
         self.weight = NormalizedWeight(in_channels, out_channels, kernel)
         self.gating = Gating()
 
@@ -129,7 +129,7 @@ class MPCausal3DGatedConv(torch.nn.Module):
         image_padding = (0, w.shape[-2]//2, w.shape[-1]//2)
 
         # however variance preserving concatenatinon doesn't work because it will give different results depending if self.training is true
-        causal_pad = torch.zeros(batch_size, x.shape[1], w.shape[2], *x.shape[2:], device=x.device, dtype=x.dtype)
+        causal_pad = torch.ones(batch_size, x.shape[1], w.shape[2], *x.shape[2:], device=x.device, dtype=x.dtype)
         causal_pad = cache.get('activations', causal_pad)
         gating, cache['n_context_frames'] = self.gating(c_noise, cache.get('n_context_frames', 0)) # Change the context frames for inference
 
