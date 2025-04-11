@@ -111,7 +111,7 @@ def plot_training_dashboard(
     # Uses latents_viz_orig
     ax3 = axes[1, 0]
     try:
-        latents = latents[:,:5]
+        latents = latents[:,2:7]
         # latents = batch["latents"][start:start+num_samples].to(device)
         # text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
         context = latents[:, :-1]  # First frames (context)
@@ -146,14 +146,13 @@ def plot_training_dashboard(
     # Replicate the *exact* logic from sampler_training_callback
     ax4 = axes[1, 1]
     try:
-        latents = latents[:,:2]
+        latents = latents[:2,:2]
         sigma = torch.ones(latents.shape[:2], device=latents.device) * 0.05
         _, cache = precond(latents, sigma)
         for _ in tqdm(range(4)):
             x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, sigma_max = 80, num_steps=32, rho=7, guidance=1, S_churn=20)
             latents = torch.cat((latents,x),dim=1)
 
-    
         frames = latents_to_frames(autoencoder, latents)
 
         x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=8)
