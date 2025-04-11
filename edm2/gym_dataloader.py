@@ -26,7 +26,8 @@ class GymDataGenerator(IterableDataset):
     def is_lander_in_frame(self, state):
         """Check if the lander is within the visible frame based on its state."""
         x, y = state[0], state[1]
-        return abs(y) < 1 and abs(x) < .95
+        #this numbers are wrong
+        return y < 1.4 and abs(x) < 1.
 
     def __iter__(self):
         env = gym.make(self.environment_name, render_mode="rgb_array")
@@ -36,7 +37,7 @@ class GymDataGenerator(IterableDataset):
         while n_data_yielded < self.training_examples:
             if not terminated and step_count > 0 and step_count % (self.state_size * self.frame_collection_interval)== 0:
                 # Check if the lander is in the frame for all states in the sequence
-                if self.return_anyways or all(self.is_lander_in_frame(s) for s in state_history[-self.state_size:]):
+                if self.return_anyways or all(self.is_lander_in_frame(s) for s in state_history):
                     frames, actions = np.stack(frame_history), np.stack(action_history)
                     yield frames, actions, reward
                     n_data_yielded += 1

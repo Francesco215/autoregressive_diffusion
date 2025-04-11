@@ -14,6 +14,8 @@ def edm_sampler_with_mse(
     rho=7, guidance=1, S_churn=0, S_min=0, S_max=float('inf'), S_noise=1,
     dtype=torch.float32,
 ):
+    starts_in_training_mode = net.training
+    net.eval()
     batch_size, n_frames, channels, height, width = cache.get('shape', (None, None, None, None, None)) # TODO: change this
     device = net.device
     
@@ -79,7 +81,7 @@ def edm_sampler_with_mse(
             mse_values.append(mse)
             mse_pred_values.append(mse_pred)
 
-    net.train()
+    if starts_in_training_mode: net.train()
     return x_next, mse_values, mse_pred_values, cache
 
     
@@ -89,7 +91,7 @@ def edm_sampler_with_mse(
 @torch.no_grad()
 
 def sampler_training_callback(latents, precond, autoencoder):
-    latents = latents[:,:4]
+    latents = latents[:,:5]
     # latents = batch["latents"][start:start+num_samples].to(device)
     # text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
     context = latents[:, :-1]  # First frames (context)
@@ -126,8 +128,7 @@ def sampler_training_callback(latents, precond, autoencoder):
     plt.savefig("images_training/denoising_steps.png")
     plt.close()
 
-    precond.eval()
-    latents = latents[:2,:2]
+    latents = latents[:,:2]
     sigma = torch.ones(latents.shape[:2], device=latents.device) * 0.05
     _, cache = precond(latents, sigma)
     for _ in tqdm(range(4)):
@@ -137,7 +138,7 @@ def sampler_training_callback(latents, precond, autoencoder):
     
     frames = latents_to_frames(autoencoder, latents)
 
-    x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=4)
+    x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=8)
     #set high resolution
     plt.imshow(x[0])
     plt.axis('off')

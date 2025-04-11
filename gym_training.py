@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 
 
 
+from edm2.plotting import plot_training_dashboard
 from edm2.vae import VAE    
 from edm2.gym_dataloader import GymDataGenerator, gym_collate_function, frames_to_latents
 from edm2.networks_edm2 import UNet, Precond
@@ -31,7 +32,7 @@ if __name__=="__main__":
 
     autoencoder = VAE.from_pretrained("saved_models/vae_lunar_lander.pt").to(device).requires_grad_(False)
 
-    resume_training = True
+    resume_training = False
     unet = UNet(img_resolution=256//autoencoder.spatial_compression, # Match your latent resolution
                 img_channels=autoencoder.latent_channels, # Match your latent channels
                 label_dim = 4, #this should be equal to the action space of the gym environment
@@ -54,7 +55,7 @@ if __name__=="__main__":
     state_size = 32 
     total_number_of_steps = 40_000
     training_steps = total_number_of_steps * batch_size
-    dataset = GymDataGenerator(state_size, original_env, total_number_of_steps, autoencoder_time_compression = autoencoder.time_compression)
+    dataset = GymDataGenerator(state_size, original_env, total_number_of_steps, autoencoder_time_compression = autoencoder.time_compression, return_anyways=False)
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=micro_batch_size, prefetch_factor=4)
 
     # sigma_data = 0.434
@@ -110,23 +111,18 @@ if __name__=="__main__":
         # Save model checkpoint (optional)
         if i % 200 * accumulation_steps == 0 and i!=0:
             precond.noise_weight.fit_loss_curve()
-            precond.noise_weight.plot('images_training/plot.png')
-            n_clips = np.linspace(0, i * micro_batch_size, len(losses))
-            plt.plot(n_clips, losses, label='Loss', color='blue', alpha=0.5)
-            if len(losses) >= 100:
-                moving_avg = np.convolve(losses, np.ones(100) / 100, mode='valid')
-                n_images_avg = np.linspace(0, i * micro_batch_size, len(moving_avg))
-                plt.plot(n_images_avg, moving_avg, label='Moving Average', color='blue', alpha=1)
-            plt.xscale('log')
-            plt.xlabel('n images')
-            plt.ylabel('loss')
-            plt.yscale('log')
-            plt.title(f'Losses with {unet_params} parameters')
-            plt.savefig('images_training/losses.png')
-            plt.show()
-            plt.close()
-
-            sampler_training_callback(latents, precond, autoencoder)
+            print(f"\nGenerating dashboard at step {i}...")
+            # Pass the necessary arguments, including the current batch's latents
+            plot_training_dashboard(
+                save_path=f'images_training/dashboard_step_{i}.png', # Dynamic filename
+                precond=precond,
+                autoencoder=autoencoder,
+                losses_history=losses, # Pass the list of scalar losses
+                current_step=i,
+                micro_batch_size=micro_batch_size,
+                unet_params=unet_params,
+                latents=latents, # Pass the latents from the current batch
+            )
 
         if i % (total_number_of_steps//40) == 0 and i!=0:  # save every 10% of epochs
             unet.save_to_state_dict(f"saved_models/unet_{unet_params//1e6}M.pt")
