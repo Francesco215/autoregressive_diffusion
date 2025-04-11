@@ -15,8 +15,9 @@ from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.mars import MARS
 from edm2.phema import PowerFunctionEMA
+import torch._dynamo.config
 
-
+torch._dynamo.config.cache_size_limit = 100
         
 if __name__=="__main__":
     clean_stale_shared_memory()
@@ -26,23 +27,23 @@ if __name__=="__main__":
                 img_channels=8, # Match your latent channels
                 label_dim = 4,
                 model_channels=128,
-                channel_mult=[1,2,4],
+                channel_mult=[1,2,4,4],
                 channel_mult_noise=None,
                 channel_mult_emb=None,
-                num_blocks=3,
+                num_blocks=2,
                 attn_resolutions=[8,4]
                 )
+    resume_training=False
     unet_params = sum(p.numel() for p in unet.parameters())
     print(f"Number of UNet parameters: {unet_params//1e6}M")
-    resume_training = False
     if resume_training:
-        unet=UNet.load_state_dict(f'saved_models/unet_{unet_params//1e6}M.pt')
+        unet=UNet.from_pretrained(f'saved_models/unet_{unet_params//1e6}M.pt')
 
 
     micro_batch_size = 1
     batch_size = 8
     accumulation_steps = batch_size//micro_batch_size
-    clip_length = 32
+    clip_length = 8
     # training_steps = total_number_of_steps * batch_size
     dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed/', local = '/tmp/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsVaeCollate(), num_workers=24, shuffle=False)
@@ -57,7 +58,7 @@ if __name__=="__main__":
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
     loss_fn = EDM2Loss(P_mean=0.3,P_std=2., sigma_data=sigma_data, context_noise_reduction=0.5)
 
-    ref_lr = 2e-3
+    ref_lr = 1e-2
     current_lr = ref_lr
     optimizer = MARS(precond.parameters(), lr=ref_lr, eps = 1e-4)
     optimizer.zero_grad()
@@ -70,19 +71,18 @@ if __name__=="__main__":
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         ema_tracker.load_state_dict(checkpoint['ema_state_dict'])
         losses = checkpoint['losses']
-        print(f"Resuming training from batch {checkpoint['batch']} with loss {losses[-1]:.4f}")
         current_lr = optimizer.param_groups[0]['lr']
         ref_lr = checkpoint['ref_lr']
         steps_taken = checkpoint['steps_taken']
+        print(f"Resuming training from batch {checkpoint['steps_taken']} with loss {losses[-1]:.4f}")
 
     #%%
     for epoch in range (n_epochs):
         pbar = tqdm(enumerate(dataloader, start=steps_taken),total=steps_per_epoch)
         for i, batch in pbar:
             with torch.no_grad():
-                means, logvars, _ = batch
-                latents = means + torch.randn_like(means)*torch.exp(logvars*.5)
-                latents = latents.to(device)/1.4
+                latents, _, _ = batch
+                latents = latents.to(device)/1.3
                 actions = None
                 
                     

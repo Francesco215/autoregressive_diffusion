@@ -4,6 +4,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from torch.nn.utils import clip_grad_norm_
+import torch._dynamo.config
 
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -16,8 +17,10 @@ from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.mars import MARS
 from edm2.phema import PowerFunctionEMA
+from edm2.sampler import sampler_training_callback
 
-# torch._dynamo.config.recompile_limit = 100
+
+torch._dynamo.config.cache_size_limit = 100
 # torch.autograd.set_detect_anomaly(True)
 #%%
 if __name__=="__main__":
@@ -26,9 +29,9 @@ if __name__=="__main__":
     original_env = "LunarLander-v3"
     model_id="stabilityai/stable-diffusion-2-1"
 
-    autoencoder = VAE.from_pretrained("saved_models/vae_4000.pt").to(device).requires_grad_(False)
+    autoencoder = VAE.from_pretrained("saved_models/vae_lunar_lander.pt").to(device).requires_grad_(False)
 
-    resume_training = False
+    resume_training = True
     unet = UNet(img_resolution=256//autoencoder.spatial_compression, # Match your latent resolution
                 img_channels=autoencoder.latent_channels, # Match your latent channels
                 label_dim = 4, #this should be equal to the action space of the gym environment
@@ -37,7 +40,7 @@ if __name__=="__main__":
                 channel_mult_noise=None,
                 channel_mult_emb=None,
                 num_blocks=3,
-                attn_resolutions=[16,8]
+                attn_resolutions=[8]
                 )
 
     unet_params = sum(p.numel() for p in unet.parameters())
@@ -59,7 +62,7 @@ if __name__=="__main__":
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
     loss_fn = EDM2Loss(P_mean=0.3,P_std=2., sigma_data=sigma_data, context_noise_reduction=0.5)
 
-    ref_lr = 3e-2
+    ref_lr = 1e-2
     current_lr = ref_lr
     optimizer = AdamW(precond.parameters(), lr=ref_lr, eps = 1e-8)
     optimizer.zero_grad()
@@ -83,7 +86,7 @@ if __name__=="__main__":
             frames, actions, _ = batch
             frames = torch.tensor(frames, device=device)
             actions = torch.tensor(actions, device = device)
-            latents = frames_to_latents(autoencoder, frames)/1.2
+            latents = frames_to_latents(autoencoder, frames)/1.33
 
         # Calculate loss    
         loss, un_weighted_loss = loss_fn(precond, latents, actions)
@@ -122,7 +125,8 @@ if __name__=="__main__":
             plt.savefig('images_training/losses.png')
             plt.show()
             plt.close()
-            ulw=True
+
+            sampler_training_callback(latents, precond, autoencoder)
 
         if i % (total_number_of_steps//40) == 0 and i!=0:  # save every 10% of epochs
             unet.save_to_state_dict(f"saved_models/unet_{unet_params//1e6}M.pt")

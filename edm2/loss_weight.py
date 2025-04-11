@@ -29,7 +29,7 @@ class MultiNoiseLoss(nn.Module):
     @torch.no_grad()
     def add_data(self, sigmas: Tensor, losses: Tensor):
         # Assuming sigmas and losses are 2D tensors.
-        positions = torch.arange(sigmas.shape[0] * sigmas.shape[1]) % sigmas.shape[1]
+        positions = torch.arange(sigmas.numel()) % sigmas.shape[1]
         # Flatten and flip the data.
         self.sigmas = torch.cat((self.sigmas, sigmas.flatten().detach().cpu()))[-self.history_size:]
         self.losses = torch.cat((self.losses, losses.flatten().detach().cpu()))[-self.history_size:]

@@ -1,7 +1,11 @@
 #%%
+import einops
+from tqdm import tqdm
 import torch
 import numpy as np
 import copy
+import matplotlib.pyplot as plt
+from .gym_dataloader import latents_to_frames
 
 @torch.no_grad()
 def edm_sampler_with_mse(
@@ -77,3 +81,67 @@ def edm_sampler_with_mse(
 
     net.train()
     return x_next, mse_values, mse_pred_values, cache
+
+    
+    
+    
+    
+@torch.no_grad()
+
+def sampler_training_callback(latents, precond, autoencoder):
+    latents = latents[:,:4]
+    # latents = batch["latents"][start:start+num_samples].to(device)
+    # text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
+    context = latents[:, :-1]  # First frames (context)
+    target = latents[:, -1:]    # Last frame (ground truth)
+    precond.eval()
+    sigma = torch.ones(context.shape[:2], device=latents.device) * 0.05
+    _, cache = precond(context, sigma)
+
+    # Run sampler with sigma_max=0.5 for initial noise level
+    _, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(
+        net=precond,
+        cache=cache,
+        target=target,
+        sigma_max=3,  # Initial noise level matches our test
+        num_steps=32,
+        conditioning=None,
+        # gnet=g_net,
+        rho = 7,
+        guidance = 1,
+        S_churn=20,
+        S_noise=1,
+    )
+
+    # Plot results
+    plt.figure(figsize=(10, 6))
+    plt.plot(mse_steps, marker='o', linestyle='-', label="MSE")
+    plt.plot(mse_pred_values, marker='o', linestyle='-', label="MSE (Predicted)")
+    plt.xlabel("Denoising Step")
+    plt.ylabel("MSE")
+    plt.yscale("log")
+    plt.title("Denoising Progress (Lower is Better)")
+    plt.grid(True)
+    plt.legend()
+    plt.savefig("images_training/denoising_steps.png")
+    plt.close()
+
+    precond.eval()
+    latents = latents[:2,:2]
+    sigma = torch.ones(latents.shape[:2], device=latents.device) * 0.05
+    _, cache = precond(latents, sigma)
+    for _ in tqdm(range(4)):
+        x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, sigma_max = 80, num_steps=32, rho=7, guidance=1, S_churn=20)
+        latents = torch.cat((latents,x),dim=1)
+
+    
+    frames = latents_to_frames(autoencoder, latents)
+
+    x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=4)
+    #set high resolution
+    plt.imshow(x[0])
+    plt.axis('off')
+    plt.savefig("images_training/generated_frames.png",bbox_inches='tight',pad_inches=0, dpi=1000)
+    plt.close()
+    precond.train()
+    
