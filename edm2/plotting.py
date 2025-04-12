@@ -1,3 +1,4 @@
+from edm2.networks_edm2 import Precond
 from .sampler import edm_sampler_with_mse
 from .gym_dataloader import latents_to_frames
 import matplotlib.pyplot as plt
@@ -17,13 +18,14 @@ from tqdm import tqdm # If not already imported where this function is defined
 @torch.no_grad()
 def plot_training_dashboard(
     save_path,
-    precond, # precond object which should have precond.noise_weight of type MultiNoiseLoss
+    precond:Precond, # precond object which should have precond.noise_weight of type MultiNoiseLoss
     autoencoder,
     losses_history,
     current_step,
     micro_batch_size,
     unet_params,
     latents, 
+    actions,
     ):
     """
     Generates and saves a consolidated 2x2 plot dashboard for training monitoring.
@@ -110,64 +112,47 @@ def plot_training_dashboard(
     # (Code remains the same as the previous corrected version)
     # Uses latents_viz_orig
     ax3 = axes[1, 0]
-    try:
-        latents = latents[:,2:7]
-        # latents = batch["latents"][start:start+num_samples].to(device)
-        # text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
-        context = latents[:, :-1]  # First frames (context)
-        target = latents[:, -1:]    # Last frame (ground truth)
-        precond.eval()
-        sigma = torch.ones(context.shape[:2], device=latents.device) * 0.05
-        _, cache = precond(context, sigma)
+    latents = latents[:,:4]
+    # latents = batch["latents"][start:start+num_samples].to(device)
+    # text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
+    context = latents[:, :-1]  # First frames (context)
+    target = latents[:, -1:]    # Last frame (ground truth)
+    precond.eval()
+    sigma = torch.ones(context.shape[:2], device=latents.device) * 0.05
+    _, cache = precond.forward(context, sigma, conditioning=actions[:,:context.shape[1]])
 
-        # Run sampler with sigma_max=0.5 for initial noise level
-        _, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(net=precond, cache=cache, target=target, sigma_max=3,   num_steps=32, conditioning=None, rho = 7, guidance = 1, S_churn=20, S_noise=1,
-        )
+    # Run sampler with sigma_max=0.5 for initial noise level
+    _, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(net=precond, cache=cache, target=target, sigma_max=3,   num_steps=32, conditioning=actions[:,context.shape[1]:context.shape[1]+1], rho = 7, guidance = 1, S_churn=20, S_noise=1,
+    )
 
-        # Plot results
-        ax3.plot(mse_steps, marker='o', linestyle='-', label="MSE")
-        ax3.plot(mse_pred_values, marker='o', linestyle='-', label="MSE (Predicted)")
-        ax3.set_xlabel("Denoising Step")
-        ax3.set_ylabel("MSE")
-        ax3.set_yscale("log")
-        ax3.set_title("Denoising Progress (Lower is Better)")
-        ax3.grid(True, which="both", ls="--", alpha=0.5)
-        # ax3.legend()
-    except Exception as e:
-        print(f"Error during MSE plot generation: {e}")
-        import traceback
-        traceback.print_exc()
-        ax3.text(0.5, 0.5, 'Error generating MSE plot', ha='center', va='center', color='red')
-        ax3.set_title("Denoising MSE Progress")
-        ax3.grid(True)
+    # Plot results
+    ax3.plot(mse_steps, marker='o', linestyle='-', label="MSE")
+    ax3.plot(mse_pred_values, marker='o', linestyle='-', label="MSE (Predicted)")
+    ax3.set_xlabel("Denoising Step")
+    ax3.set_ylabel("MSE")
+    ax3.set_yscale("log")
+    ax3.set_title("Denoising Progress (Lower is Better)")
+    ax3.grid(True, which="both", ls="--", alpha=0.5)
+    # ax3.legend()
 
 
     # --- Plot 4: Generated Frames (Bottom-Right) ---
     # Replicate the *exact* logic from sampler_training_callback
     ax4 = axes[1, 1]
-    try:
-        latents = latents[:2,:2]
-        sigma = torch.ones(latents.shape[:2], device=latents.device) * 0.05
-        _, cache = precond(latents, sigma)
-        for _ in tqdm(range(4)):
-            x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, sigma_max = 80, num_steps=32, rho=7, guidance=1, S_churn=20)
-            latents = torch.cat((latents,x),dim=1)
+    sigma = torch.ones(latents.shape[:2], device=latents.device) * 0.05
+    _, cache = precond(latents, sigma, conditioning = actions[:,:latents.shape[1]])
+    for i in tqdm(range(6)):
+        actions = torch.randint(0,3,(latents.shape[0],1), device=latents.device)
+        x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, conditioning = actions, sigma_max = 80, num_steps=32, rho=7, guidance=1, S_churn=20)
+        latents = torch.cat((latents,x),dim=1)
 
-        frames = latents_to_frames(autoencoder, latents)
+    frames = latents_to_frames(autoencoder, latents)
 
-        x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=8)
-        #set high resolution
-        ax4.imshow(x[0])
-        ax4.axis('off')
+    x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=8)
+    #set high resolution
+    ax4.imshow(x[0])
+    ax4.axis('off')
 
-
-    except Exception as e:
-         print(f"Error during frame generation plot: {e}")
-         import traceback
-         traceback.print_exc()
-         ax4.text(0.5, 0.5, 'Error generating frames plot', ha='center', va='center', color='red')
-         ax4.set_title('Generated Frames')
-         ax4.axis('off')
 
 
     # --- Final Steps ---

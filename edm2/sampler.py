@@ -28,7 +28,7 @@ def edm_sampler_with_mse(
         Dx, cache = net(x, t, conditioning, cache=cache)
         if guidance == 1:
             return Dx, cache
-        ref_Dx, _ = gnet(x, t, conditioning, cache = {}) # TODO: play with the cache
+        ref_Dx, _ = net(x, t, conditioning, cache = {}) # TODO: play with the cache
         return ref_Dx.lerp(Dx, guidance), cache
 
     # Time step discretization
@@ -44,6 +44,7 @@ def edm_sampler_with_mse(
     if target is not None:
         target = target.to(dtype)
         x_next = x_next + target
+
 
     net.eval()
     if gnet is not None: gnet.eval()

@@ -16,9 +16,7 @@ from edm2.vae import VAE
 from edm2.gym_dataloader import GymDataGenerator, gym_collate_function, frames_to_latents
 from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
-from edm2.mars import MARS
 from edm2.phema import PowerFunctionEMA
-from edm2.sampler import sampler_training_callback
 
 
 torch._dynamo.config.cache_size_limit = 100
@@ -53,7 +51,7 @@ if __name__=="__main__":
     batch_size = micro_batch_size
     accumulation_steps = batch_size//micro_batch_size
     state_size = 32 
-    total_number_of_steps = 40_000
+    total_number_of_steps = 80_000
     training_steps = total_number_of_steps * batch_size
     dataset = GymDataGenerator(state_size, original_env, total_number_of_steps, autoencoder_time_compression = autoencoder.time_compression, return_anyways=False)
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=micro_batch_size, prefetch_factor=4)
@@ -87,8 +85,7 @@ if __name__=="__main__":
             frames, actions, _ = batch
             frames = torch.tensor(frames, device=device)
             actions = torch.tensor(actions, device = device)
-            latents = frames_to_latents(autoencoder, frames)/1.33
-
+            latents = frames_to_latents(autoencoder, frames)
         # Calculate loss    
         loss, un_weighted_loss = loss_fn(precond, latents, actions)
         losses.append(un_weighted_loss)
@@ -109,7 +106,7 @@ if __name__=="__main__":
                 g['lr'] = current_lr
 
         # Save model checkpoint (optional)
-        if i % 200 * accumulation_steps == 0 and i!=0:
+        if i % 500 * accumulation_steps == 0 and i!=0:
             precond.noise_weight.fit_loss_curve()
             print(f"\nGenerating dashboard at step {i}...")
             # Pass the necessary arguments, including the current batch's latents
@@ -122,6 +119,7 @@ if __name__=="__main__":
                 micro_batch_size=micro_batch_size,
                 unet_params=unet_params,
                 latents=latents, # Pass the latents from the current batch
+                actions=actions,
             )
 
         if i % (total_number_of_steps//40) == 0 and i!=0:  # save every 10% of epochs

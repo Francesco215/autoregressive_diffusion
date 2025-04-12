@@ -173,7 +173,7 @@ class EncoderDecoder(nn.Module):
         if self.encoding_type in ['decoder','discriminator']:
             return x, cache
 
-        return x, torch.ones_like(x)*np.log(0.5), cache
+        return x, torch.ones_like(x)*np.log(0.65), cache
         # mean, logvar = x.split(split_size=x.shape[1]//2, dim = 1)
         # logvar = logvar*torch.exp(self.logvar_multiplier)
 
@@ -192,6 +192,8 @@ class VAE(nn.Module):
         self.time_compression = np.prod(time_compressions)
         self.spatial_compression = np.prod(spatial_compressions)
 
+        # self.std=1.68 # this is when i pass z
+        self.std=1.2  #this is when i pass mean
         frame = inspect.currentframe()
         args, _, _, values = inspect.getargvalues(frame)
         self.kwargs = {arg: values[arg] for arg in args if arg != "self"}

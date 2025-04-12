@@ -30,11 +30,11 @@ state_size = 16
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 latent_channels=8
-autoencoder = VAE.from_pretrained("saved_models/vae_4000.pt").to("cuda")
+autoencoder = VAE.from_pretrained("saved_models/vae_lunar_lander.pt").to("cuda")
 dataset = GymDataGenerator(state_size, original_env, total_number_of_steps, autoencoder_time_compression = 4, return_anyways=False)
 dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=0)
 
-unet=UNet.from_pretrained('saved_models/unet_4.0M.pt')
+unet=UNet.from_pretrained('saved_models/unet_14.0M.pt')
 g_net=None
 precond = Precond(unet, use_fp16=True, sigma_data=1.).to(device)
 # Modify the sampler to collect intermediate steps and compute MSE
@@ -44,7 +44,10 @@ precond = Precond(unet, use_fp16=True, sigma_data=1.).to(device)
 # batch ={"latents": torch.randn(2, 8, 16, 64, 64)}
 
 # Prepare data
-batch = next(iter(dataloader))
+batch = None
+for i, batch in enumerate(dataloader):
+    if i==100: break
+
 
 with torch.no_grad():
     frames, actions, reward = batch
@@ -66,12 +69,14 @@ _, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(
     net=precond,
     cache=cache,
     target=target,
-    sigma_max=3,  # Initial noise level matches our test
+    sigma_max=1,  # Initial noise level matches our test
     num_steps=32,
     conditioning=None,
     # gnet=g_net,
     rho = 7,
     guidance = 1,
+    S_churn=0,
+    S_noise=1,
 )
 # Plot results
 import matplotlib.pyplot as plt
@@ -88,7 +93,7 @@ plt.show()
 print(mse_steps[-1])
 # %%
 for i in tqdm(range(4)):
-    x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, gnet=g_net, sigma_max = 80, num_steps=32, rho=7, guidance=1)
+    x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, gnet=g_net, sigma_max = 80, num_steps=32, rho=7, guidance=1, S_churn=20)
     latents = torch.cat((latents,x),dim=1)
 
 print(latents.shape)
