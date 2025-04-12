@@ -1,0 +1,127 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.11, pytest-8.3.5, pluggy-1.5.0
+rootdir: /root/autoregressive_diffusion
+configfile: pyproject.toml
+plugins: anyio-4.9.0
+collected 2 items
+
+lunar_lander_test.py F.                                                  [100%]
+
+=================================== FAILURES ===================================
+__________________________ test_lander_initial_state ___________________________
+
+env = <TimeLimit<OrderEnforcing<PassiveEnvChecker<LunarLander<LunarLander-v3>>>>>
+
+    def test_lander_initial_state(env):
+        """
+        Test Case 1: Check in-frame status after forcing downwards slightly.
+        Reset, apply main engine thrust briefly to ensure lander is well within
+        the top boundary, then check frame status.
+        """
+        print("\nRunning Test: Initial State (Forced Down)")
+        THRUST_STEPS = 5 # Number of steps to apply downward thrust
+        state = None
+        info = None
+        pos_after_thrust = None
+        img = None # Initialize img
+        in_frame_status = False
+        terminated, truncated = False, False # Track termination
+    
+        try:
+            state, info = env.reset(seed=42) # Use consistent seed
+            action_down = 2 # Fire main engine
+    
+            # Get initial position for comparison
+            initial_pos = env.unwrapped.lander.position if hasattr(env.unwrapped, 'lander') and env.unwrapped.lander else None
+            print(f"Initial Pos before thrust: {initial_pos}")
+    
+            print(f"Applying downward thrust (action {action_down}) for {THRUST_STEPS} steps...")
+            for i in range(THRUST_STEPS):
+                # Check for termination during thrust (e.g., crash if rotated badly)
+                if terminated or truncated:
+                     print(f"Warning: Episode terminated/truncated after {i} steps during thrust.")
+                     break # Stop thrusting if episode ends
+    
+                state, reward, terminated, truncated, info = env.step(action_down)
+    
+                # Optional: Log position during thrust
+                # current_pos = env.unwrapped.lander.position if hasattr(env.unwrapped, 'lander') and env.unwrapped.lander else None
+                # print(f"  After thrust step {i+1}: Pos={current_pos}")
+    
+            # Check the status AFTER applying thrust
+            print(f"Checking status AFTER {THRUST_STEPS} thrust steps:")
+            # Ensure lander exists before checking
+            if hasattr(env.unwrapped, 'lander') and env.unwrapped.lander:
+                # It's possible the lander was destroyed by the thrust if it hit something
+                in_frame_status = is_lander_in_frame(env, state) # Use the latest state
+                pos_after_thrust = env.unwrapped.lander.position
+                img = env.render()
+            else:
+                 # If lander is gone after thrusting, the test cannot proceed as intended
+                 pytest.fail("Lander object missing after applying thrust steps.")
+    
+        except Exception as e:
+            pytest.fail(f"Error during env.reset(), thrust loop or env.render(): {e}")
+    
+        # --- Perform assertions after the thrust ---
+        assert img is not None, "Failed to render an image after applying thrust."
+        assert isinstance(img, np.ndarray), "env.render() did not return a numpy array."
+        assert img.shape == (VIEWPORT_H, VIEWPORT_W, 3), f"Image shape mismatch: {img.shape}"
+    
+        purple_count = count_matching_pixels(img, LANDER_PURPLE)
+        print(f"After {THRUST_STEPS} thrust steps: Pos={pos_after_thrust}, is_lander_in_frame={in_frame_status}, Purple Pixel Count={purple_count}")
+    
+        # Check y-position explicitly to ensure thrust moved it downwards RELATIVE to H
+        world_h = VIEWPORT_H / SCALE
+        # Use a small epsilon for safety, ensure it's clearly below H
+        epsilon = 1e-4
+>       assert pos_after_thrust.y < world_h - epsilon, \
+             f"Lander y-pos ({pos_after_thrust.y:.4f}) should be clearly below H ({world_h:.4f}) after thrust."
+E       AssertionError: Lander y-pos (13.6985) should be clearly below H (13.3333) after thrust.
+E       assert 13.698518753051758 < (13.333333333333334 - 0.0001)
+E        +  where 13.698518753051758 = b2Vec2(10.1329,13.6985).y
+
+lunar_lander_test.py:177: AssertionError
+---------------------------- Captured stdout setup -----------------------------
+
+Setting up LunarLander environment for tests...
+----------------------------- Captured stdout call -----------------------------
+
+Running Test: Initial State (Forced Down)
+Initial Pos before thrust: b2Vec2(10.023,13.3875)
+Applying downward thrust (action 2) for 5 steps...
+Checking status AFTER 5 thrust steps:
+After 5 thrust steps: Pos=b2Vec2(10.1329,13.6985), is_lander_in_frame=False, Purple Pixel Count=12
+=============================== warnings summary ===============================
+lunar_lander_test.py::test_lander_initial_state
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+lunar_lander_test.py::test_lander_initial_state
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+lunar_lander_test.py::test_lander_initial_state
+  <frozen importlib._bootstrap>:241: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+lunar_lander_test.py::test_lander_initial_state
+  /root/autoregressive_diffusion/.venv/lib/python3.11/site-packages/pygame/pkgdata.py:25: DeprecationWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html
+    from pkg_resources import resource_stream, resource_exists
+
+lunar_lander_test.py::test_lander_initial_state
+  /root/autoregressive_diffusion/.venv/lib/python3.11/site-packages/pkg_resources/__init__.py:3117: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('google')`.
+  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+    declare_namespace(pkg)
+
+lunar_lander_test.py::test_lander_initial_state
+  /root/autoregressive_diffusion/.venv/lib/python3.11/site-packages/pkg_resources/__init__.py:3117: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('google.cloud')`.
+  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+    declare_namespace(pkg)
+
+lunar_lander_test.py::test_lander_initial_state
+  /root/autoregressive_diffusion/.venv/lib/python3.11/site-packages/pkg_resources/__init__.py:2529: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('google')`.
+  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+    declare_namespace(parent)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED lunar_lander_test.py::test_lander_initial_state - AssertionError: Land...
+=================== 1 failed, 1 passed, 7 warnings in 0.40s ====================
