@@ -30,7 +30,7 @@ if __name__=="__main__":
     original_env = "LunarLander-v3"
     model_id="stabilityai/stable-diffusion-2-1"
 
-    autoencoder = VAE.from_pretrained("saved_models/vae_lunar_lander.pt").to(device).requires_grad_(False)
+    autoencoder = VAE.from_pretrained("saved_models/vae_10000.pt").to(device).requires_grad_(False)
 
     resume_training = False
     unet = UNet(img_resolution=256//autoencoder.spatial_compression, # Match your latent resolution

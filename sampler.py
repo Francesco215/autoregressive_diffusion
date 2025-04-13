@@ -49,8 +49,8 @@ batch = next(iter(dataloader))
 with torch.no_grad():
     frames, actions, reward = batch
     frames, actions = torch.tensor(frames, device=device), torch.tensor(actions, device=device)
-    latents = frames_to_latents(autoencoder, frames)/1.3
-latents = latents[:,:2].to(device)
+    latents = frames_to_latents(autoencoder, frames)
+latents = latents[:,:6].to(device)
 actions = None #if i%4==0 else actions.to(device)
 # latents = batch["latents"][start:start+num_samples].to(device)
 # text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
@@ -111,7 +111,7 @@ from matplotlib import pyplot as plt
 f = frames[:,:90]
 x = einops.rearrange(f, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=8)
 #set high resolution
-plt.imshow(x[1])
+plt.imshow(x[3])
 plt.axis('off')
 plt.savefig("lunar_lander.png",bbox_inches='tight',pad_inches=0, dpi=1000)
 
