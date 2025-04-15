@@ -2,18 +2,17 @@
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
+from torch.optim import AdamW
 
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from streaming.base.util import clean_stale_shared_memory
 
 
-from edm2.gym_dataloader import frames_to_latents
 from edm2.vae import VAE
 from edm2.cs_dataloading import CsCollate, CsDataset, CsVaeCollate, CsVaeDataset
 from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
-from edm2.mars import MARS
 from edm2.phema import PowerFunctionEMA
 import torch._dynamo.config
 
@@ -60,7 +59,7 @@ if __name__=="__main__":
 
     ref_lr = 1e-2
     current_lr = ref_lr
-    optimizer = MARS(precond.parameters(), lr=ref_lr, eps = 1e-4)
+    optimizer = AdamW(precond.parameters(), lr=ref_lr, eps = 1e-4)
     optimizer.zero_grad()
     ema_tracker = PowerFunctionEMA(precond, stds=[0.050, 0.100])
     losses = []
