@@ -5,7 +5,6 @@ import torch
 import numpy as np
 import copy
 import matplotlib.pyplot as plt
-from .gym_dataloader import latents_to_frames
 
 @torch.no_grad()
 def edm_sampler_with_mse(
@@ -90,7 +89,6 @@ def edm_sampler_with_mse(
     
     
 @torch.no_grad()
-
 def sampler_training_callback(latents, precond, autoencoder):
     latents = latents[:,:5]
     # latents = batch["latents"][start:start+num_samples].to(device)
@@ -137,7 +135,7 @@ def sampler_training_callback(latents, precond, autoencoder):
         latents = torch.cat((latents,x),dim=1)
 
     
-    frames = latents_to_frames(autoencoder, latents)
+    frames = autoencoder.latents_to_frames(latents)
 
     x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=8)
     #set high resolution

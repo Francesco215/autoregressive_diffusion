@@ -1,7 +1,7 @@
 import einops
 import warnings
 import torch
-from torch.nn.attention.flex_attention import flex_attention, create_block_mask, BlockMask, _DEFAULT_SPARSE_BLOCK_SIZE
+from torch.nn.attention.flex_attention import create_block_mask, BlockMask, _DEFAULT_SPARSE_BLOCK_SIZE
 
 
 class AutoregressiveDiffusionMask:

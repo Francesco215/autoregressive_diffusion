@@ -3,7 +3,7 @@ import io
 import torch
 from typing import Optional
 from datasets import load_dataset
-from edm2.dataloading import OpenVidDataloader
+from edm2.cs_dataloading import OpenVidDataloader
 
 batch_size = 16
 dataloader = OpenVidDataloader(batch_size=batch_size, num_workers=32, device="cuda")

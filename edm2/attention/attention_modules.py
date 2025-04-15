@@ -7,8 +7,8 @@ import einops
 
 from .RoPe import RotaryEmbedding
 from .attention_masking import make_train_mask, make_infer_mask
-from .utils import  mp_sum
-from .conv import MPConv
+from ..utils import  mp_sum
+from ..conv import MPConv
 
 #----------------------------------------------------------------------------
 # Self-Attention module. It shouldn't need anything extra to make it magniture-preserving

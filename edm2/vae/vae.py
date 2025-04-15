@@ -32,24 +32,16 @@ class GroupCausal3DConvVAE(torch.nn.Module):
 
     def forward(self, x, gain=1, cache=None):
         x = F.pad(x, pad = self.image_padding, mode="constant", value = 0)
-        # weight, bias = self.weight(gain)
 
-        multiplicative = 1.
-        # multiplicative = compute_multiplicative_space_wise(x.shape, self.conv3d.weight.shape[2:], self.image_padding, self.dilation, device=x.device)
         if cache is None:
             cache = x[:,:,:self.time_padding_size].clone().detach()
-            
-            # cache = torch.zeros(*x.shape[:2], self.time_padding_size, *x.shape[3:], device=x.device, dtype=x.dtype)
-            # multiplicative = compute_multiplicative_time_wise(x.shape, self.conv3d.weight.shape[2], self.dilation, self.group_size, device=x.device)
 
         x = torch.cat((cache, x), dim=-3)
         cache =  None if self.training else x[:,:,-self.time_padding_size:].clone().detach()
 
-        # x = F.conv3d(x, weight, bias, stride = (self.group_size, 1, 1), dilation=self.dilation)
         x = self.conv3d(x)
 
         x = einops.rearrange(x, 'b (c g) t h w -> b c (t g) h w', g=self.group_size)
-        x = x * multiplicative
 
         return x, cache
 
@@ -193,7 +185,7 @@ class VAE(nn.Module):
         self.spatial_compression = np.prod(spatial_compressions)
 
         # self.std=1.68 # this is when i pass z
-        self.std=1.2  #this is when i pass mean
+        self.std=1.45
         frame = inspect.currentframe()
         args, _, _, values = inspect.getargvalues(frame)
         self.kwargs = {arg: values[arg] for arg in args if arg != "self"}
@@ -240,6 +232,7 @@ class VAE(nn.Module):
         return next(self.parameters()).device
 
 
+    @torch.no_grad()
     def encode_long_sequence(self, frames, cache=None, split_size=256):
         assert frames.shape[0]==1
         assert frames.dim()==5
@@ -257,8 +250,61 @@ class VAE(nn.Module):
         return mean, logvar
             
 
+    # TODO: substitute this with encode_long_sequence. make sure it's also efficient
+    torch.no_grad()
+    def frames_to_latents(self, frames)->Tensor:
+        """
+        frames.shape: (batch_size, time, height, width, rgb)
+        latents.shape: (batch_size, time, latent_channels, latent_height, latent_width)
+        """
+        batch_size = frames.shape[0]
+
+        frames = frames / 127.5 - 1  # Normalize from (0,255) to (-1,1)
+        frames = einops.rearrange(frames, 'b t h w c -> b c t h w')
+
+        #split the conversion to not overload the GPU RAM
+        split_size = 64
+        for i in range (0, frames.shape[0], split_size):
+            _, l, _, _ = self.encode(frames[i:i+split_size].to(self.device))
+            if i == 0:
+                latents = l
+            else:
+                latents = torch.cat((latents, l), dim=0)
+
+        latents = einops.rearrange(latents, 'b c t h w -> b t c h w', b=batch_size)
+        return latents/self.std
 
 
+    # TODO: substitute this with decode_long_sequence. make sure it's also efficient
+    @torch.no_grad()        
+    def latents_to_frames(self,latents):
+        """
+            Converts latent representations to frames.
+            Args:
+                latents (torch.Tensor): A tensor of shape (batch_size, time, latent_channels, latent_height, latent_width) 
+                                        representing the latent representations.
+            Returns:
+                numpy.ndarray: A numpy array of shape (batch_size, height, width * time, rgb) representing the decoded frames.
+            Note:
+                - The method uses an autoencoder to decode the latent representations.
+                - The frames are rearranged and clipped to the range [0, 255] before being converted to a numpy array.
+        """
+        batch_size = latents.shape[0]
+        latents = einops.rearrange(latents, 'b t c h w -> b c t h w')
 
+        latents = latents * self.std
 
+        #split the conversion to not overload the GPU RAM
+        split_size = 16
+        for i in range (0, latents.shape[0], split_size):
+            l, _ = self.decode(latents[i:i+split_size])
+            if i == 0:
+                frames = l
+            else:
+                frames = torch.cat((frames, l), dim=0)
 
+        frames = einops.rearrange(frames, 'b c t h w -> b t h w c', b=batch_size) 
+        frames = torch.clip((frames + 1) * 127.5, 0, 255).cpu().detach().numpy().astype(int)
+        return frames
+
+        

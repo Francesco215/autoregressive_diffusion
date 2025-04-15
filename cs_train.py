@@ -10,7 +10,7 @@ from streaming.base.util import clean_stale_shared_memory
 
 from edm2.gym_dataloader import frames_to_latents
 from edm2.vae import VAE
-from edm2.dataloading import CsCollate, CsDataset, CsVaeCollate, CsVaeDataset
+from edm2.cs_dataloading import CsCollate, CsDataset, CsVaeCollate, CsVaeDataset
 from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.mars import MARS

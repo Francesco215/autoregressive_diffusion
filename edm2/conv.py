@@ -43,9 +43,6 @@ class MPConv(torch.nn.Module):
 
 
 
-#----------------------------------------------------------------------------
-# Magnitude-preserving convolution or fully-connected layer (Equation 47)
-# with force weight normalization (Equation 66).
 class MPCausal3DConv(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel):
         super().__init__()
@@ -109,9 +106,6 @@ class MPCausal3DConv(torch.nn.Module):
         x = einops.rearrange(x, 'b c t h w -> (b t) c h w')
         return x, cache.detach()
 
-#----------------------------------------------------------------------------
-# Magnitude-preserving convolution or fully-connected layer (Equation 47)
-# with force weight normalization (Equation 66).
 class MPCausal3DGatedConv(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel):
         super().__init__()

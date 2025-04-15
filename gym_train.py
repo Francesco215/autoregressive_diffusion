@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 
 from edm2.plotting import plot_training_dashboard
 from edm2.vae import VAE    
-from edm2.gym_dataloader import GymDataGenerator, gym_collate_function, frames_to_latents
+from edm2.gym_dataloader import GymDataGenerator, gym_collate_function
 from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.phema import PowerFunctionEMA
@@ -38,7 +38,7 @@ if __name__=="__main__":
                 channel_mult=[1,2,4,8],
                 channel_mult_noise=None,
                 channel_mult_emb=None,
-                num_blocks=3,
+                num_blocks=1,
                 attn_resolutions=[8]
                 )
 
@@ -85,7 +85,8 @@ if __name__=="__main__":
             frames, actions, _ = batch
             frames = torch.tensor(frames, device=device)
             actions = torch.tensor(actions, device = device)
-            latents = frames_to_latents(autoencoder, frames)
+            latents = autoencoder.frames_to_latents(frames)
+            # print(latents.std())
         # Calculate loss    
         loss, un_weighted_loss = loss_fn(precond, latents, actions)
         losses.append(un_weighted_loss)
