@@ -28,9 +28,9 @@ if __name__=="__main__":
     original_env = "LunarLander-v3"
     model_id="stabilityai/stable-diffusion-2-1"
 
-    autoencoder = VAE.from_pretrained("saved_models/vae_lunar_lander.pt").to(device).requires_grad_(False)
+    autoencoder = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_lunar_lander.pt").to(device).requires_grad_(False)
 
-    resume_training = True
+    resume_training = False
     unet = UNet(img_resolution=256//autoencoder.spatial_compression, # Match your latent resolution
                 img_channels=autoencoder.latent_channels, # Match your latent channels
                 label_dim = 4, #this should be equal to the action space of the gym environment
@@ -42,8 +42,7 @@ if __name__=="__main__":
                 attn_resolutions=[8]
                 )
 
-    unet_params = sum(p.numel() for p in unet.parameters())
-    print(f"Number of UNet parameters: {unet_params//1e6}M")
+    print(f"Number of UNet parameters: {unet.n_params//1e6}M")
     if resume_training:
         unet=UNet.from_pretrained(f'saved_models/unet_{unet_params//1e6}M.pt')
 

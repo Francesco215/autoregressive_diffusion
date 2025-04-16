@@ -1,9 +1,82 @@
+import os
+import inspect
+import tempfile
+from urllib.parse import urlparse
+import boto3
+
 import torch
-from torch import Tensor
+from torch import Tensor, nn
 from torch.nn.utils import clip_grad_norm_
 import numpy as np
 import einops
 from . import misc
+
+class BetterModule(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+
+        frame = inspect.currentframe()
+        args, _, _, values = inspect.getargvalues(frame)
+        self.kwargs = {arg: values[arg] for arg in args if arg != "self"}
+
+    def save_to_state_dict(self, path):
+        data = {"state_dict": self.state_dict(), "kwargs": self.kwargs}
+
+        if path.startswith("s3://"):
+            # Save to a temporary local file first
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                torch.save(data, tmp.name)
+                tmp_path = tmp.name
+
+            # Parse the S3 path
+            parsed = urlparse(path)
+            bucket_name = parsed.netloc
+            key = parsed.path.lstrip("/")
+
+            s3 = boto3.client('s3')
+            s3.upload_file(tmp_path, bucket_name, key)
+            os.remove(tmp_path)
+        else:
+            torch.save(data, path)
+
+    @classmethod
+    def from_pretrained(cls, checkpoint):
+        if isinstance(checkpoint,str):
+            if checkpoint.startswith("s3://"):
+                # Parse S3 URL
+                parsed = urlparse(checkpoint)
+                bucket_name = parsed.netloc
+                key = parsed.path.lstrip("/")
+
+                # Create /cache directory if not exists
+                cache_dir = "/cache/autoregressive_diffusion_models/"
+                os.makedirs(cache_dir, exist_ok=True)
+
+                # Local cache file path
+                filename = os.path.basename(key)
+                checkpoint = os.path.join(cache_dir, filename)
+
+                # Download from S3 if not already cached
+                if not os.path.exists(checkpoint):
+                    s3 = boto3.client('s3')
+                    s3.download_file(bucket_name, key, checkpoint)
+                
+            checkpoint = torch.load(checkpoint)
+
+        model = cls(**checkpoint['kwargs'])
+
+        model.load_state_dict(checkpoint['state_dict'])
+        return model
+
+    @property
+    def device(self):
+        return next(self.parameters()).device
+
+    @property
+    def n_params(self):
+       return sum(p.numel() for p in self.parameters())
+
+    
 #----------------------------------------------------------------------------
 # Normalize given tensor to unit magnitude with respect to the given
 # dimensions. Default = all dimensions except the first.
@@ -153,3 +226,152 @@ def nan_inspector(model):
         # Clean up by removing all hooks
         for hook in hooks:
             hook.remove()
+
+            
+            
+
+
+def compare_caches(cache1, cache2, rtol=1e-4, atol=1e-4, verbose=True):
+    """
+    Recursively compares two cache structures (dictionaries, lists, tensors, floats etc.)
+    for equality, focusing on PyTorch tensors and Python types.
+
+    Args:
+        cache1: The first cache object to compare.
+        cache2: The second cache object to compare.
+        rtol (float): Relative tolerance for comparing floats and tensors.
+                      Defaults to 1e-5.
+        atol (float): Absolute tolerance for comparing floats and tensors.
+                      Defaults to 1e-8.
+        verbose (bool): If True, prints the path of the first detected difference.
+                        Defaults to True.
+
+    Returns:
+        bool: True if the caches are considered identical within the given
+              tolerances, False otherwise.
+    """
+    return _recursive_compare(cache1, cache2, rtol, atol, verbose, path="cache")
+
+def _recursive_compare(item1, item2, rtol, atol, verbose, path):
+    """Helper function for recursive comparison."""
+
+    # 1. Check Type Equality
+    if type(item1) is not type(item2):
+        if verbose:
+            print(f"Type mismatch at {path}: {type(item1)} vs {type(item2)}")
+        return False
+
+    # 2. Handle Dictionaries
+    if isinstance(item1, dict):
+        if item1.keys() != item2.keys():
+            if verbose:
+                print(f"Dictionary key mismatch at {path}:")
+                print(f"  Keys 1 (sorted): {sorted(item1.keys())}")
+                print(f"  Keys 2 (sorted): {sorted(item2.keys())}")
+                diff1 = set(item1.keys()) - set(item2.keys())
+                diff2 = set(item2.keys()) - set(item1.keys())
+                if diff1: print(f"  Keys only in cache1: {diff1}")
+                if diff2: print(f"  Keys only in cache2: {diff2}")
+            return False
+        for key in item1:
+            new_path = f"{path}[{repr(key)}]"
+            # Ensure keys exist before comparing (redundant if keysets match, but safe)
+            if key not in item2:
+                 if verbose: print(f"Key '{key}' missing in second dict at {path}")
+                 return False # Should not happen if keysets matched
+            if not _recursive_compare(item1[key], item2[key], rtol, atol, verbose, new_path):
+                return False
+        return True
+
+    # 3. Handle Lists/Tuples
+    elif isinstance(item1, (list, tuple)):
+        if len(item1) != len(item2):
+            if verbose:
+                print(f"Sequence length mismatch at {path}: {len(item1)} vs {len(item2)}")
+            return False
+        for i in range(len(item1)):
+            new_path = f"{path}[{i}]"
+            if not _recursive_compare(item1[i], item2[i], rtol, atol, verbose, new_path):
+                return False
+        return True
+
+    # 4. Handle PyTorch Tensors
+    elif isinstance(item1, torch.Tensor):
+        if item1.shape != item2.shape:
+            if verbose:
+                print(f"Tensor shape mismatch at {path}: {item1.shape} vs {item2.shape}")
+            return False
+        if item1.dtype != item2.dtype:
+             if verbose:
+                print(f"Tensor dtype mismatch at {path}: {item1.dtype} vs {item2.dtype}")
+             # Attempt conversion for comparison if dtypes differ but might be compatible
+             try:
+                 item2_converted = item2.to(item1.dtype)
+             except Exception as e:
+                 print(f"  Cannot convert dtype {item2.dtype} to {item1.dtype} for comparison: {e}")
+                 return False # Strict dtype check failed and conversion failed
+        else:
+             item2_converted = item2 # Dtypes match
+
+        # Use torch.allclose for numerical comparison with tolerance
+        try:
+            # Use device of item1 for comparison if devices differ
+            if item1.device != item2_converted.device:
+                 item2_converted = item2_converted.to(item1.device)
+
+            # IMPORTANT: Set equal_nan=False by default. If NaNs should compare equal,
+            # set it to True when calling compare_caches.
+            result = torch.allclose(item1, item2_converted, rtol=rtol, atol=atol, equal_nan=False)
+            if not result and verbose:
+                print(f"Tensor value mismatch at {path} (using allclose with rtol={rtol}, atol={atol})")
+                # Optional: Calculate and print max difference
+                try:
+                    diff = torch.abs(item1 - item2_converted)
+                    max_diff = torch.max(diff).item()
+                    print(f"  Max difference: {max_diff:.2e}")
+                except Exception:
+                    print("  Could not compute max difference.") # Handle potential issues like incompatible types after all
+            return result
+        except Exception as e:
+             if verbose:
+                 print(f"Error comparing tensors at {path}: {e}")
+             return False # Error during comparison
+
+    # 5. Handle Floats (without NumPy)
+    elif isinstance(item1, float):
+        abs_diff = abs(item1 - item2)
+        # Calculate relative difference carefully to avoid division by zero
+        # Use max(abs(item1), abs(item2)) for scale, or a small epsilon if both are near zero
+        denominator = max(abs(item1), abs(item2))
+        if denominator < atol: # If both numbers are very close to zero, rely on absolute tolerance
+            rel_diff = 0.0
+        else:
+            rel_diff = abs_diff / denominator
+
+        result = (abs_diff <= atol) or (rel_diff <= rtol)
+
+        if not result and verbose:
+            print(f"Float value mismatch at {path}: {item1} vs {item2} (atol={atol}, rtol={rtol})")
+            print(f"  Absolute Difference: {abs_diff:.2e}, Relative Difference: {rel_diff:.2e}")
+        return result
+
+    # 6. Handle Basic Python Types (int, str, bool, None)
+    elif isinstance(item1, (int, str, bool)) or item1 is None:
+        result = (item1 == item2)
+        if not result and verbose:
+            print(f"Value mismatch at {path}: {repr(item1)} vs {repr(item2)}")
+        return result
+
+    # 7. Handle Other Types (attempt standard equality)
+    else:
+        try:
+            # Be cautious comparing unknown types, might be misleading
+            result = (item1 == item2)
+            if not result and verbose:
+                 print(f"Value mismatch for unrecognized type at {path}: {type(item1)}")
+            return result
+        except Exception as e:
+            # If comparison fails for any reason
+            if verbose:
+                print(f"Cannot compare items of type {type(item1)} at {path}: {e}")
+            return False # Treat as non-equal if comparison raises error

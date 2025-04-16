@@ -33,7 +33,7 @@ class EDM2Loss:
         denoised = out[:,n_frames:]
         errors = (denoised - images) ** 2
         # losses = errors.mean(dim=(-1,-2,-3))
-        losses = top_losses(errors, fraction=1e-3)
+        losses = top_losses(errors, fraction=3e-3)
 
         sigma = sigma[:,n_frames:]
         weight = (sigma ** 2 + self.sigma_data ** 2) / (sigma * self.sigma_data) ** 2 # the 0.5 factor is because the Karras paper is wrong

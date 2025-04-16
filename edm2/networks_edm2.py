@@ -8,7 +8,7 @@ from torch.nn import functional as F
 import einops
 
 from .loss_weight import MultiNoiseLoss
-from .utils import normalize, resample, mp_silu, mp_sum, mp_cat, MPFourier, bmult
+from .utils import BetterModule, normalize, resample, mp_silu, mp_sum, mp_cat, MPFourier, bmult
 from .conv import MPCausal3DConv, MPConv, MPCausal3DGatedConv, Gating
 from .attention import FrameAttention, VideoAttention
 
@@ -92,7 +92,7 @@ class Block(torch.nn.Module):
 #----------------------------------------------------------------------------
 # EDM2 U-Net model (Figure 21).
 
-class UNet(torch.nn.Module):
+class UNet(BetterModule):
     def __init__(self,
         img_resolution,                     # Image resolution.
         img_channels,                       # Image channels.
@@ -208,24 +208,10 @@ class UNet(torch.nn.Module):
         x = mp_sum(x, res, out_res)
         return x, cache
 
-    def save_to_state_dict(self, path):
-        torch.save({"state_dict": self.state_dict(), "kwargs": self.kwargs}, path)
-        
-    @classmethod
-    def from_pretrained(cls, checkpoint):
-
-        if isinstance(checkpoint,str):
-            checkpoint = torch.load(checkpoint, weights_only=False)
-
-        model = cls(**checkpoint['kwargs'])
-
-        model.load_state_dict(checkpoint['state_dict'])
-        return model 
-
 #----------------------------------------------------------------------------
 # Preconditioning and uncertainty estimation.
 
-class Precond(torch.nn.Module):
+class Precond(BetterModule):
     def __init__(self,
         unet,                   # UNet model.
         use_fp16        = True, # Run the model at FP16 precision?
@@ -261,9 +247,7 @@ class Precond(torch.nn.Module):
         D_x = c_skip * x + c_out * F_x.to(torch.float32)
         return D_x, cache
     
-    @property
-    def device(self):
-        return next(self.parameters()).device
+
 
 #----------------------------------------------------------------------------
 

@@ -50,7 +50,7 @@ with torch.no_grad():
     frames, actions, reward = batch
     frames, actions = torch.tensor(frames, device=device), torch.tensor(actions, device=device)
     latents = autoencoder.frames_to_latents(frames)
-latents = latents[:,:6].to(device)
+latents = latents[:,:5].to(device)
 actions = None #if i%4==0 else actions.to(device)
 # latents = batch["latents"][start:start+num_samples].to(device)
 # text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
@@ -98,8 +98,6 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 frames = autoencoder.latents_to_frames(latents)
 
 
-from matplotlib import pyplot as plt
-# frames = frames
 x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=8)
 #set high resolution
 #%%

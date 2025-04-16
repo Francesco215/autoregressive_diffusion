@@ -68,7 +68,7 @@ def edm_sampler_with_mse(
         x_next = x_hat + (t_next - t_hat) * d_cur
 
         # 2nd order correction
-        if i < num_steps - 1:
+        if i < num_steps:
             x_pred, _ = denoise(x_next, t_next, cache)
             d_prime = (x_next - x_pred) / t_next
             x_next = x_hat + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)

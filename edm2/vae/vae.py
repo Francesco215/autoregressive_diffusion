@@ -1,4 +1,6 @@
-import inspect
+
+from urllib.parse import urlparse # To parse the S3 URI
+
 import torch
 from torch import nn, Tensor
 from torch.nn import functional as F
@@ -7,7 +9,7 @@ from torch.nn import functional as F
 import einops
 import numpy as np
 
-from ..utils import mp_silu
+from ..utils import BetterModule, mp_silu
 
 
 
@@ -173,9 +175,9 @@ class EncoderDecoder(nn.Module):
 
 
 
-class VAE(nn.Module):
+class VAE(BetterModule):
     def __init__(self, channels, n_res_blocks, time_compressions=[1, 2, 2], spatial_compressions=[1, 2, 2]):
-        super().__init__()
+        super().__init__(channels, n_res_blocks, time_compressions, spatial_compressions)
         
         self.latent_channels = channels[-1]
         self.encoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='encoder')
@@ -184,11 +186,8 @@ class VAE(nn.Module):
         self.time_compression = np.prod(time_compressions)
         self.spatial_compression = np.prod(spatial_compressions)
 
-        # self.std=1.68 # this is when i pass z
-        self.std=1.45
-        frame = inspect.currentframe()
-        args, _, _, values = inspect.getargvalues(frame)
-        self.kwargs = {arg: values[arg] for arg in args if arg != "self"}
+        self.std=1.68 # this is when i pass z
+        # self.std=1.45
 
     def forward(self, x, cache=None):
         if cache is None: cache = {}
@@ -213,23 +212,6 @@ class VAE(nn.Module):
         recon, cache = self.decoder(z, cache)
         return recon, cache
     
-    def save_to_state_dict(self, path):
-        torch.save({"state_dict": self.state_dict(), "kwargs": self.kwargs}, path)
-        
-    @classmethod
-    def from_pretrained(cls, checkpoint):
-
-        if isinstance(checkpoint,str):
-            checkpoint = torch.load(checkpoint)
-
-        model = cls(**checkpoint['kwargs'])
-
-        model.load_state_dict(checkpoint['state_dict'])
-        return model
-
-    @property
-    def device(self):
-        return next(self.parameters()).device
 
 
     @torch.no_grad()
@@ -265,7 +247,7 @@ class VAE(nn.Module):
         #split the conversion to not overload the GPU RAM
         split_size = 64
         for i in range (0, frames.shape[0], split_size):
-            _, l, _, _ = self.encode(frames[i:i+split_size].to(self.device))
+            l, _, _, _ = self.encode(frames[i:i+split_size].to(self.device))
             if i == 0:
                 latents = l
             else:
