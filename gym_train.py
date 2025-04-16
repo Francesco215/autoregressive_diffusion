@@ -44,7 +44,7 @@ if __name__=="__main__":
 
     print(f"Number of UNet parameters: {unet.n_params//1e6}M")
     if resume_training:
-        unet=UNet.from_pretrained(f'saved_models/unet_{unet_params//1e6}M.pt')
+        unet=UNet.from_pretrained(f'saved_models/unet_{unet.n_params//1e6}M.pt')
 
     micro_batch_size = 8
     batch_size = micro_batch_size
