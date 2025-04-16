@@ -15,7 +15,7 @@ def edm_sampler_with_mse(
 ):
     starts_in_training_mode = net.training
     net.eval()
-    batch_size, n_frames, channels, height, width = cache.get('shape', (None, None, None, None, None)) # TODO: change this
+    batch_size, n_frames, channels, height, width = cache.get('shape', (None,)*5) 
     device = net.device
     
     # Guided denoiser (same as original)
@@ -23,7 +23,6 @@ def edm_sampler_with_mse(
         cache = copy.deepcopy(cache)
         t = torch.ones(batch_size, 1, device=device, dtype=dtype) * t
         
-        # cache = cache.copy()
         Dx, cache = net(x, t, conditioning, cache=cache)
         if guidance == 1:
             return Dx, cache
@@ -61,7 +60,7 @@ def edm_sampler_with_mse(
             x_hat = x_cur
 
         # Euler step
-        if i == num_steps:
+        if i == num_steps-1:
             x_pred, cache=denoise(x_hat, t_hat, cache)
         else:
             x_pred, _ = denoise(x_hat, t_hat, cache)
