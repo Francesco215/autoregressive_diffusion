@@ -1,8 +1,8 @@
-# Next-Gen Frame Diffusion: Autoregressive and Sample-Efficient
+# Oniris: Autoregressive and Sample-Efficient Next-Gen Video Diffusion
 > [!WARNING]
 > This repository is still in development. For now there are no instructions on how to run the code because it is subject to change
 
-This repository shows an universal and novel way of training diffusion models for video generation and world-modelling-- It generalizes and improves upon all of the previously known methods of video diffusion models and diffusion-based world-modelling
+Oniris is an universal and novel way of training diffusion models for video generation and world-modelling-- It generalizes and improves upon all of the previously known methods of video diffusion models and diffusion-based world-modelling
 
 - Each frame is generated sequencially and can attent to all of its context frames (just like LLMs generate tokens)
 - The training is sample-efficient. (just like LLM training)
@@ -32,7 +32,7 @@ All of them have deal-breaking problems:
 
 3. *__The Cross-attention architecture__* is the one that makes most sense. However, it's extremely inefficient during training because cost per sample increases (super-)linearly with the number of context frames. 
 
-### This model has ALL OF THE STRENGHTS and NONE OF THE WEAKNESSNES of all of the above.
+### Oniris has ALL OF THE STRENGHTS and NONE OF THE WEAKNESSNES of all of the above.
 1. It is sample-efficient like diffusion video generation. __On top of that__ it can generate videos of any length and can be used for world-modelling. (In the future this model can be expanded to be able to generate multiple frames at the same time)
 
 2. It implicitly employs frame-stacking because it uses 3D convolutional layers-- They can be thought as stacking frames channel-wise and then doing 2D convolutions. __On top of that__ it doesn't suffer from amnesia because it can attend all of the previous frames with the attention mechanism.
@@ -149,3 +149,22 @@ L(x,\sigma)=\frac {\mathcal L(x,\sigma)}{\mathbb E_x[\mathcal L(x,\sigma)]}
 $$
 
 This ensures that the loss $L$ that is passed to the autograd engine has always an average of one for every $\sigma$. The expectation value is computed with a best fit (see image above on the right)
+
+# The Variational Auto-Encoder
+We also developed a Group-Causal VAE that is capable of compressing arbitrarly long sequences very cheaply without compromising on performance with just one consumer gpu. We didn't want to do it in house, but we had because we didn't find anything like this.
+
+The architecture is similar to a ResNet, but instead of using standard 2D convolutions we used Group-Causal 3D-Convolutional layers inspired from [Improved Video VAE for Latent Video Diffusion Model](https://www.alphaxiv.org/html/2411.06449v1) but we simplified, streamlined and generalized their implementation. 
+
+
+ADD DIAGRAMS AND A SHORT EXPLANATION
+
+We did not use any form of attention in the VAE.
+- Temporal attention makes it impossible to encode arbitrarly long sequences as the RAM usage increases linearly with the context size. 
+- Spatial attention does not improve significantly the performance of VAEs. Most of the information moves locally.
+
+
+We also added a group-wise KL-divergence loss (following [How to train your VAE](https://arxiv.org/abs/2309.13160) paper)
+
+## Results
+
+ADD SCREENSHOT FOR TRAINING OF THE LUNAR LANDER AND COUNTERSTRIKE
