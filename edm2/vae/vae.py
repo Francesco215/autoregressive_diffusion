@@ -1,4 +1,5 @@
 
+import inspect
 from urllib.parse import urlparse # To parse the S3 URI
 
 import torch
@@ -177,7 +178,7 @@ class EncoderDecoder(nn.Module):
 
 class VAE(BetterModule):
     def __init__(self, channels, n_res_blocks, time_compressions=[1, 2, 2], spatial_compressions=[1, 2, 2]):
-        super().__init__(channels, n_res_blocks, time_compressions, spatial_compressions)
+        super().__init__()
         
         self.latent_channels = channels[-1]
         self.encoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='encoder')
@@ -186,8 +187,13 @@ class VAE(BetterModule):
         self.time_compression = np.prod(time_compressions)
         self.spatial_compression = np.prod(spatial_compressions)
 
-        self.std=1.68 # this is when i pass z
-        # self.std=1.45
+        # self.std=1.68 # this is when i pass z
+        self.std=1.45
+
+        # is it possible to put this inside of the super() class and avoid having it here?
+        frame = inspect.currentframe()
+        args, _, _, values = inspect.getargvalues(frame)
+        self.kwargs = {arg: values[arg] for arg in args if arg != "self"}
 
     def forward(self, x, cache=None):
         if cache is None: cache = {}
@@ -247,7 +253,7 @@ class VAE(BetterModule):
         #split the conversion to not overload the GPU RAM
         split_size = 64
         for i in range (0, frames.shape[0], split_size):
-            l, _, _, _ = self.encode(frames[i:i+split_size].to(self.device))
+            _, l, _, _ = self.encode(frames[i:i+split_size].to(self.device))
             if i == 0:
                 latents = l
             else:

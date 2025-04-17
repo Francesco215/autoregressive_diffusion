@@ -29,6 +29,7 @@ if __name__=="__main__":
     model_id="stabilityai/stable-diffusion-2-1"
 
     autoencoder = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_lunar_lander.pt").to(device).requires_grad_(False)
+    # autoencoder = VAE.from_pretrained("saved_models/vae_lunar_lander.pt").to(device).requires_grad_(False)
 
     resume_training = False
     unet = UNet(img_resolution=256//autoencoder.spatial_compression, # Match your latent resolution
@@ -58,7 +59,7 @@ if __name__=="__main__":
     # sigma_data = 0.434
     sigma_data = 1.
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
-    loss_fn = EDM2Loss(P_mean=0.3,P_std=2., sigma_data=sigma_data, context_noise_reduction=0.5)
+    loss_fn = EDM2Loss(P_mean=1.2,P_std=1., sigma_data=sigma_data, context_noise_reduction=0.5)
 
     ref_lr = 1e-2
     current_lr = ref_lr
@@ -68,7 +69,7 @@ if __name__=="__main__":
     losses, steps_taken = [], 0
 
     if resume_training:
-        checkpoint = torch.load(f'saved_models/optimizers_{unet_params//1e6}M.pt', weights_only=False, map_location='cuda')
+        checkpoint = torch.load(f'saved_models/optimizers_{unet.n_params//1e6}M.pt', weights_only=False, map_location='cuda')
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         ema_tracker.load_state_dict(checkpoint['ema_state_dict'])
         losses = checkpoint['losses']
@@ -85,7 +86,7 @@ if __name__=="__main__":
             frames = torch.tensor(frames, device=device)
             actions = torch.tensor(actions, device = device)
             latents = autoencoder.frames_to_latents(frames)
-            # print(latents.std())
+
         # Calculate loss    
         loss, un_weighted_loss = loss_fn(precond, latents, actions)
         losses.append(un_weighted_loss)
@@ -117,20 +118,20 @@ if __name__=="__main__":
                 losses_history=losses, # Pass the list of scalar losses
                 current_step=i,
                 micro_batch_size=micro_batch_size,
-                unet_params=unet_params,
+                unet_params=unet.n_params,
                 latents=latents, # Pass the latents from the current batch
                 actions=actions,
             )
 
         if i % (total_number_of_steps//40) == 0 and i!=0:  # save every 10% of epochs
-            unet.save_to_state_dict(f"saved_models/unet_{unet_params//1e6}M.pt")
+            unet.save_to_state_dict(f"saved_models/unet_{unet.n_params//1e6}M.pt")
             torch.save({
                 'steps_taken': i,
                 'optimizer_state_dict': optimizer.state_dict(),
                 'ema_state_dict': ema_tracker.state_dict(),
                 'losses': losses,
                 'ref_lr': ref_lr
-            }, f"saved_models/optimizers_{unet_params//1e6}M.pt")
+            }, f"saved_models/optimizers_{unet.n_params//1e6}M.pt")
 
         if i == total_number_of_steps:
             break

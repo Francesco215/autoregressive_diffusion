@@ -91,11 +91,12 @@ print(mse_steps[-1])
 # %%
 for i in tqdm(range(4)):
     x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, gnet=g_net, sigma_max = 80, num_steps=32, rho=7, guidance=1, S_churn=20)
-    latents = torch.cat((latents,x),dim=1)
+    context = torch.cat((context,x),dim=1)
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-frames = autoencoder.latents_to_frames(latents)
+frames = autoencoder.latents_to_frames(context)
+
 
 
 x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=8)

@@ -12,12 +12,6 @@ import einops
 from . import misc
 
 class BetterModule(nn.Module):
-    def __init__(self, *args, **kwargs):
-        super().__init__()
-
-        frame = inspect.currentframe()
-        args, _, _, values = inspect.getargvalues(frame)
-        self.kwargs = {arg: values[arg] for arg in args if arg != "self"}
 
     def save_to_state_dict(self, path):
         data = {"state_dict": self.state_dict(), "kwargs": self.kwargs}
@@ -61,7 +55,7 @@ class BetterModule(nn.Module):
                     s3 = boto3.client('s3')
                     s3.download_file(bucket_name, key, checkpoint)
                 
-            checkpoint = torch.load(checkpoint)
+            checkpoint = torch.load(checkpoint, weights_only=False)
 
         model = cls(**checkpoint['kwargs'])
 
@@ -75,6 +69,10 @@ class BetterModule(nn.Module):
     @property
     def n_params(self):
        return sum(p.numel() for p in self.parameters())
+
+
+
+
 
     
 #----------------------------------------------------------------------------

@@ -140,7 +140,7 @@ def plot_training_dashboard(
     ax4 = axes[1, 1]
     for _ in tqdm(range(6)):
         actions = torch.randint(0,3,(latents.shape[0],1), device=latents.device)
-        x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, conditioning = actions, sigma_max = 80, num_steps=16, rho=2, guidance=1, S_churn=0.)
+        x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, conditioning = actions, sigma_max = 80, sigma_min=0.4, num_steps=16, rho=2, guidance=1, S_churn=0.)
         context = torch.cat((context,x),dim=1)
 
     frames = autoencoder.latents_to_frames(context)
