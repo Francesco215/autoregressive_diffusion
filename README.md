@@ -126,13 +126,15 @@ The loss is computed indipendently for each frame. The equations are adapted fro
 Here are the (slightly oversiplified) equations. Let $D_\theta$ be the trainable model, $x_c$ the clean images and $x$ the images fed into the model (see Training section).
 
 $$
-\mathcal L(x,\sigma) = \lambda(x,\sigma)\cdot\mathbb E_{x_c}||D_\theta (x,\sigma)-x_c||^2
+\mathcal L(x,\sigma) = \lambda(\sigma)\cdot\mathbb E_{x_c}||D_\theta (x,\sigma)-x_c||^2
 $$
 
 where 
+
 $$
 \lambda(\sigma) = (\sigma^2 +\sigma_\textrm{data}^2)/(\sigma\cdot \sigma_\textrm{data})
 $$
+
 And this is what you see in the graph below
 
 <p align="center">
