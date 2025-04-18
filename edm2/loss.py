@@ -1,25 +1,11 @@
-# Copyright (c) 2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#
-# This work is licensed under a Creative Commons
-# Attribution-NonCommercial-ShareAlike 4.0 International License.
-# You should have received a copy of the license along with this
-# work. If not, see http://creativecommons.org/licenses/by-nc-sa/4.0/
-
-"""Main training loop."""
-
 import numpy as np
 import torch
 import einops
 from .loss_weight import MultiNoiseLoss
-# import dnnlib
-# from torch_utils import distributed as dist
-# from torch_utils import training_stats
-# from torch_utils import misc
 
 #----------------------------------------------------------------------------
-# Uncertainty-based loss function (Equations 14,15,16,21) proposed in the
+# Adapted from Uncertainty-based loss function (Equations 14,15,16,21) proposed in the
 # paper "Analyzing and Improving the Training Dynamics of Diffusion Models".
-
 class EDM2Loss:
     def __init__(self, P_mean=0.5, P_std=2., sigma_data=1., context_noise_reduction=0.1):
         self.P_mean = P_mean
@@ -45,7 +31,9 @@ class EDM2Loss:
         noise = einops.einsum(sigma, torch.randn_like(cat_images), 'b t, b t ... -> b t ...') 
         out, _ = net(cat_images + noise, sigma, conditioning)
         denoised = out[:,n_frames:]
-        losses = ((denoised - images) ** 2).mean(dim=(-1,-2,-3))
+        errors = (denoised - images) ** 2
+        # losses = errors.mean(dim=(-1,-2,-3))
+        losses = top_losses(errors, fraction=3e-3)
 
         sigma = sigma[:,n_frames:]
         weight = (sigma ** 2 + self.sigma_data ** 2) / (sigma * self.sigma_data) ** 2 # the 0.5 factor is because the Karras paper is wrong
@@ -55,12 +43,23 @@ class EDM2Loss:
 
         net.noise_weight.add_data(sigma, losses)
         mean_loss = net.noise_weight.calculate_mean_loss(sigma)
-        mean_loss = torch.clamp(mean_loss, min=1e-4, max=1)
+        # mean_loss = torch.clamp(mean_loss, min=1e-4, max=1)
         losses = losses / mean_loss
         return losses.mean(), un_weighted_avg_loss
 #----------------------------------------------------------------------------
 # Learning rate decay schedule used in the paper "Analyzing and Improving
 # the Training Dynamics of Diffusion Models".
+
+def top_losses(errors:torch.Tensor, fraction:float):
+    errors = errors.mean(dim=2)    
+    errors = einops.rearrange(errors, 'b t h w -> b t (h w)')
+    k = int(errors.shape[-1]*errors.shape[-2]*fraction)
+
+    top_k = torch.topk(errors, k, dim =-1, sorted = False)
+    return (top_k.values).mean(dim=-1)
+
+
+
 
 def learning_rate_schedule(current_step, ref_lr=1e-2, ref_step=7e4, rampup_steps=1e3):
     lr = ref_lr

@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Group Causal 3D Conv Connectivity (Final)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* Custom styles */
+        body {
+            font-family: 'Inter', sans-serif;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+        svg {
+            user-select: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none;
+            display: block; /* Prevents extra space below SVG */
+        }
+        /* Base style for boxes - Group colors (fill) applied via inline style */
+        rect.box {
+            stroke: #9CA3AF; /* Default stroke */
+            stroke-width: 1;
+            cursor: default;
+            transition: filter 0.2s ease-in-out, stroke 0.2s ease-in-out, stroke-width 0.2s ease-in-out;
+            /* fill set by inline style */
+        }
+        /* Dark mode base stroke for boxes */
+        .dark rect.box {
+             stroke: #6B7280; /* Darker gray stroke */
+        }
+
+        /* Highlight classes - Apply brightness filter and colored stroke */
+        rect.box.highlighted-input {
+            filter: brightness(1.15);
+            stroke: #EF4444 !important; /* Red stroke */
+            stroke-width: 1.5 !important;
+        }
+        rect.box.highlighted-output {
+            filter: brightness(1.15);
+            stroke: #3B82F6 !important; /* Blue stroke */
+            stroke-width: 1.5 !important;
+        }
+        /* Ensure highlight strokes have good contrast in dark mode */
+        .dark rect.box.highlighted-input { stroke: #F87171 !important; } /* Lighter Red */
+        .dark rect.box.highlighted-output { stroke: #60A5FA !important; } /* Lighter Blue */
+
+        text.label {
+            font-size: 12px;
+            fill: #4B5563; text-anchor: middle;
+            dominant-baseline: middle; pointer-events: none;
+        }
+        .dark text.label { fill: #D1D5DB; }
+
+        /* Base style for lines - Group colors (stroke) applied via inline style */
+        line.connection {
+            stroke-width: 1.5;
+            transition: opacity 0.2s ease-in-out, stroke 0.2s ease-in-out, stroke-width 0.2s ease-in-out;
+            opacity: 0.6;
+            /* stroke set by inline style */
+        }
+        .dark line.connection { opacity: 0.7; }
+
+        /* Dimming */
+        line.connection.dimmed { opacity: 0.05 !important; }
+
+        /* Highlight lines */
+        line.connection.highlighted {
+            opacity: 1 !important; stroke-width: 2.5 !important; stroke: #3B82F6 !important; /* Blue */
+         }
+         .dark line.connection.highlighted { stroke: #60A5FA !important; } /* Lighter Blue */
+
+        /* Cross-group highlight color */
+         line.connection.highlighted-cross-group {
+            opacity: 1 !important; stroke-width: 2.5 !important; stroke: #F97316 !important; /* Orange */
+         }
+         .dark line.connection.highlighted-cross-group { stroke: #FB923C !important; } /* Lighter Orange */
+
+         /* Toggle button style */
+         #theme-toggle {
+            padding: 8px 12px; border-radius: 6px; border: 1px solid transparent;
+            transition: background-color 0.2s ease, border-color 0.2s ease;
+         }
+    </style>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+    <div class="max-w-5xl mx-auto p-6">
+        <div class="flex justify-end mb-4">
+            <button id="theme-toggle" class="bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600" title="Toggle light/dark theme">
+                Toggle Theme
+            </button>
+        </div>
+
+        <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+            <h1 class="text-2xl font-bold mb-6 text-center text-gray-800 dark:text-gray-200">Group Causal 3D Conv Connectivity</h1>
+
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <div>
+                    <label for="n_frames" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Frames (T):</label>
+                    <input type="number" id="n_frames" value="8" min="1" max="40" class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                </div>
+                 <div>
+                    <label for="kernel_t" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Kernel (kt):</label>
+                    <input type="number" id="kernel_t" value="3" min="1" class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                </div>
+                 <div>
+                    <label for="dilation_t" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Dilation (dt):</label>
+                    <input type="number" id="dilation_t" value="1" min="1" class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-400" disabled title="Dilation (dt) is not used in the current user-defined rule">
+                     <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Note: dt is unused.</p>
+                </div>
+                 <div>
+                    <label for="group_size" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Group Size (G):</label>
+                    <input type="number" id="group_size" value="2" min="1" class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                </div>
+            </div>
+             <p id="warning_message" class="text-sm text-red-600 dark:text-red-400 mb-4 text-center"></p>
+
+            <div class="w-full overflow-x-auto">
+                <svg id="visualization" width="100%" height="320" class="border border-gray-200 dark:border-gray-700 rounded-md bg-gray-50 dark:bg-gray-700"></svg>
+            </div>
+
+             <div class="mt-6 p-4 border border-gray-200 dark:border-gray-700 rounded-md bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm">
+                <h3 class="text-md font-semibold mb-2 text-gray-700 dark:text-gray-200">Connectivity Logic (User-Defined Rule)</h3>
+                <p>This visualization shows connectivity based on the rule you provided, with color coding:</p>
+                <ul class="list-disc list-inside ml-4 mt-2 space-y-1">
+                    <li class="text-gray-700 dark:text-gray-300"><span class="font-medium text-blue-500 dark:text-blue-400">Output Frames</span> (top, Outᵢ) and <span class="font-medium text-red-500 dark:text-red-400">Input Frames</span> (bottom, Inᵢ) are indexed starting from 1 and colored by group (<code class="bg-gray-200 dark:bg-gray-600 px-1 rounded">floor((i-1) / G)</code>).</li>
+                    <li class="text-gray-700 dark:text-gray-300">Lines are colored based on the Output Frame's group.</li>
+                    <li class="text-gray-700 dark:text-gray-300">Rule: Output <code class="bg-gray-200 dark:bg-gray-600 px-1 rounded">Outᵢ</code> connects to input <code class="bg-gray-200 dark:bg-gray-600 px-1 rounded">Inⱼ</code> if <code class="bg-gray-200 dark:bg-gray-600 px-1 rounded">j</code> is within the output's group time range (using 0-based index <code class="bg-gray-200 dark:bg-gray-600 px-1 rounded">i-1</code>), or among the <code class="bg-gray-200 dark:bg-gray-600 px-1 rounded">max(0, kt - G)</code> preceding frames.</li>
+                     <li class="text-gray-700 dark:text-gray-300">Connection if (using 1-based indices i, j):
+                     <code class="bg-gray-200 dark:bg-gray-600 px-1 rounded text-xs">max(1, floor((i-1)/G)*G - max(0, kt - G) + 1) &lt;= j &lt;= floor((i-1)/G)*G + G</code></li>
+                    <li class="text-gray-700 dark:text-gray-300">Hovering highlights connections: Boxes become brighter with a colored outline (<span class="font-medium text-blue-500 dark:text-blue-400">Output=Blue</span>, <span class="font-medium text-red-500 dark:text-red-400">Input=Red</span>). <span class="font-semibold text-blue-600 dark:text-blue-400">Blue lines</span> for connections within the same group (relative to hovered box), <span class="font-semibold text-orange-600 dark:text-orange-400">Orange lines</span> for connections to a different group.</li>
+                    <li class="text-gray-700 dark:text-gray-300">Note: Dilation (<code class="bg-gray-200 dark:bg-gray-600 px-1 rounded">dt</code>) is not used in this rule.</li>
+                </ul>
+                 <p class="mt-2 text-gray-600 dark:text-gray-400">Hover over an <span class="font-medium text-blue-500 dark:text-blue-400">Output Frame (Top)</span> to see connected <span class="font-medium text-red-500 dark:text-red-400">Input Frames (Bottom)</span>.</p>
+                 <p class="mt-1 text-gray-600 dark:text-gray-400">Hover over an <span class="font-medium text-red-500 dark:text-red-400">Input Frame (Bottom)</span> to see influenced <span class="font-medium text-blue-500 dark:text-blue-400">Output Frames (Top)</span>.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- DOM Elements ---
+        const nFramesInput = document.getElementById('n_frames');
+        const kernelTInput = document.getElementById('kernel_t');
+        const dilationTInput = document.getElementById('dilation_t');
+        const groupSizeInput = document.getElementById('group_size');
+        const warningMessage = document.getElementById('warning_message');
+        const svg = document.getElementById('visualization');
+        const themeToggleBtn = document.getElementById('theme-toggle');
+        const htmlElement = document.documentElement;
+
+        // --- Constants ---
+        const BOX_SIZE = 30;
+        const BOX_SPACING = 15;
+        const ROW_SPACING = 150;
+        const PADDING = 40;
+        const LABEL_OFFSET_Y_TOP = BOX_SIZE / 2 + 15;
+        const LABEL_OFFSET_Y_BOTTOM = BOX_SIZE / 2 + 25; // Increased offset
+        const MAX_DISTINCT_HUES = 12;
+        const EXTRA_BOTTOM_PADDING = 20; // Added padding
+
+        // --- Theme Toggle ---
+        function applyTheme(theme) {
+            if (theme === 'dark') {
+                htmlElement.classList.add('dark');
+                localStorage.setItem('theme', 'dark');
+            } else {
+                htmlElement.classList.remove('dark');
+                localStorage.setItem('theme', 'light');
+            }
+        }
+        themeToggleBtn.addEventListener('click', () => {
+            const currentTheme = htmlElement.classList.contains('dark') ? 'light' : 'dark';
+            applyTheme(currentTheme);
+        });
+        const preferredTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        applyTheme(preferredTheme);
+
+        // --- Unicode Subscript Helper ---
+        const subscriptDigits = ['₀', '₁', '₂', '₃', '₄', '₅', '₆', '₇', '₈', '₉'];
+        function toSubscript(n) {
+            if (n <= 0) return ''; // Start from 1
+            let result = ''; let num = n;
+            while (num > 0) {
+                result = subscriptDigits[num % 10] + result;
+                num = Math.floor(num / 10);
+            }
+            return result;
+        }
+
+        // --- Color Generation ---
+        function getGroupColor(index, total, saturation, lightness) {
+            const effectiveIndex = index % MAX_DISTINCT_HUES;
+            const effectiveTotal = Math.min(total, MAX_DISTINCT_HUES);
+            const hue = (210 + effectiveIndex * (360 / effectiveTotal)) % 360;
+            return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+        }
+
+        // --- Connectivity Logic (User-Defined Rule - takes 1-based indices) ---
+        function are_connected_user_rule(t_in_1based, t_out_1based, G, kt, dt) {
+            if (G < 1 || kt < 1 || t_in_1based < 1 || t_out_1based < 1) return false;
+            // Convert to 0-based for internal calculation
+            const t_in = t_in_1based - 1;
+            const t_out = t_out_1based - 1;
+
+            const i_out = Math.floor(t_out / G); // Group index (0-based)
+            const t_group_start_0based = i_out * G;
+            const t_group_end_0based = t_group_start_0based + G - 1;
+            const lookback = Math.max(0, kt - G);
+            const start_in_0based = Math.max(0, t_group_start_0based - lookback);
+            const end_in_0based = t_group_end_0based;
+
+            // Check using 0-based indices
+            return t_in >= start_in_0based && t_in <= end_in_0based;
+        }
+
+        // --- Drawing Function ---
+        function drawVisualization() {
+            const n_frames = parseInt(nFramesInput.value, 10);
+            const kt = parseInt(kernelTInput.value, 10);
+            const dt = parseInt(dilationTInput.value, 10);
+            const G = parseInt(groupSizeInput.value, 10);
+
+            warningMessage.textContent = '';
+            let isValid = true;
+            if (isNaN(n_frames) || n_frames < 1) { warningMessage.textContent += 'Frames must be >= 1. '; isValid = false; }
+            if (isNaN(kt) || kt < 1) { warningMessage.textContent += 'Kernel Time (kt) must be >= 1. '; isValid = false; }
+            if (isNaN(G) || G < 1) { warningMessage.textContent += 'Group Size (G) must be >= 1. '; isValid = false; }
+
+            if (!isValid) {
+                 svg.innerHTML = `<text x="50%" y="50%" text-anchor="middle" class="text-red-600 dark:text-red-400">Invalid params.</text>`;
+                 return;
+            }
+
+            svg.innerHTML = '';
+            const total_frames = n_frames;
+            const totalGroups = Math.ceil(total_frames / G); // Groups are still 0-indexed internally
+
+            const svgWidth = PADDING * 2 + total_frames * BOX_SIZE + (total_frames - 1) * BOX_SPACING;
+            // Add extra padding at the bottom
+            const svgHeight = PADDING * 2 + BOX_SIZE * 2 + ROW_SPACING + EXTRA_BOTTOM_PADDING;
+            svg.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`);
+            svg.style.height = 'auto'; // Keep auto height based on aspect ratio
+
+            const startX = PADDING;
+            const outputRowY = PADDING;
+            const inputRowY = PADDING + BOX_SIZE + ROW_SPACING;
+
+            const boxes = { output: [], input: [] };
+
+            const linesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g'); linesGroup.id = 'lines-group'; svg.appendChild(linesGroup);
+            const boxesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g'); boxesGroup.id = 'boxes-group'; svg.appendChild(boxesGroup);
+            const labelsGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g'); labelsGroup.id = 'labels-group'; svg.appendChild(labelsGroup);
+
+            // --- Draw Boxes and Labels (1-based index) ---
+            for (let i = 1; i <= total_frames; i++) { // Loop from 1 to total_frames
+                // Calculate position based on 0-based index for spacing
+                const x = startX + (i - 1) * (BOX_SIZE + BOX_SPACING);
+                // Group index remains 0-based
+                const groupIndex = Math.floor((i - 1) / G);
+                const groupColorFill = getGroupColor(groupIndex, totalGroups, 70, 85);
+
+                // Output Boxes (Top)
+                const outputRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                outputRect.setAttribute('id', `out-box-${i}`);
+                outputRect.setAttribute('data-index', i); // Store 1-based index
+                outputRect.setAttribute('data-type', 'out');
+                outputRect.setAttribute('data-group', groupIndex);
+                outputRect.setAttribute('class', 'box');
+                outputRect.setAttribute('x', x); outputRect.setAttribute('y', outputRowY);
+                outputRect.setAttribute('width', BOX_SIZE); outputRect.setAttribute('height', BOX_SIZE);
+                outputRect.setAttribute('rx', 4); outputRect.setAttribute('ry', 4);
+                outputRect.style.fill = groupColorFill;
+                boxesGroup.appendChild(outputRect);
+                boxes.output.push({ x: x + BOX_SIZE / 2, y: outputRowY + BOX_SIZE });
+
+                const outputLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                outputLabel.setAttribute('x', x + BOX_SIZE / 2);
+                outputLabel.setAttribute('y', outputRowY - LABEL_OFFSET_Y_TOP + (BOX_SIZE / 2));
+                outputLabel.setAttribute('class', 'label');
+                outputLabel.textContent = 'Out' + toSubscript(i); // Use 1-based index
+                labelsGroup.appendChild(outputLabel);
+
+                // Input Boxes (Bottom)
+                const inputRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                inputRect.setAttribute('id', `in-box-${i}`);
+                inputRect.setAttribute('data-index', i); // Store 1-based index
+                inputRect.setAttribute('data-type', 'in');
+                inputRect.setAttribute('data-group', groupIndex);
+                inputRect.setAttribute('class', 'box');
+                inputRect.setAttribute('x', x); inputRect.setAttribute('y', inputRowY);
+                inputRect.setAttribute('width', BOX_SIZE); inputRect.setAttribute('height', BOX_SIZE);
+                inputRect.setAttribute('rx', 4); inputRect.setAttribute('ry', 4);
+                inputRect.style.fill = groupColorFill;
+                boxesGroup.appendChild(inputRect);
+                boxes.input.push({ x: x + BOX_SIZE / 2, y: inputRowY });
+
+                const inputLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                inputLabel.setAttribute('x', x + BOX_SIZE / 2);
+                inputLabel.setAttribute('y', inputRowY + BOX_SIZE + LABEL_OFFSET_Y_BOTTOM - (BOX_SIZE / 2));
+                inputLabel.setAttribute('class', 'label');
+                inputLabel.textContent = 'In' + toSubscript(i); // Use 1-based index
+                labelsGroup.appendChild(inputLabel);
+            }
+
+            // --- Draw Connections (Apply Group Colors - Use 1-based indices for loops/refs) ---
+            for (let t_out = 1; t_out <= total_frames; t_out++) { // Loop from 1
+                const outputGroupIndex = Math.floor((t_out - 1) / G); // Group index is 0-based
+                const groupColorStroke = getGroupColor(outputGroupIndex, totalGroups, 60, 55);
+
+                for (let t_in = 1; t_in <= total_frames; t_in++) { // Loop from 1
+                    // Pass 1-based indices to connectivity check
+                    if (are_connected_user_rule(t_in, t_out, G, kt, dt)) {
+                        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                        line.classList.add('connection');
+                        // Use 1-based indices for class names
+                        line.classList.add(`line-from-in${t_in}`);
+                        line.classList.add(`line-to-out${t_out}`);
+                        // Group indices remain 0-based
+                        line.dataset.inGroup = Math.floor((t_in - 1) / G);
+                        line.dataset.outGroup = outputGroupIndex;
+                        // Array access uses 0-based index
+                        line.setAttribute('x1', boxes.input[t_in - 1].x); line.setAttribute('y1', boxes.input[t_in - 1].y);
+                        line.setAttribute('x2', boxes.output[t_out - 1].x); line.setAttribute('y2', boxes.output[t_out - 1].y);
+                        line.style.stroke = groupColorStroke;
+                        linesGroup.appendChild(line);
+                    }
+                }
+            }
+        }
+
+        // --- Event Handlers for Hover Effects (Uses 1-based indices from data-index) ---
+        function handleMouseOver(event) {
+            const target = event.target;
+            if (target.matches('rect.box')) {
+                const G = parseInt(groupSizeInput.value, 10);
+                if (isNaN(G) || G < 1) return;
+
+                // hoveredIndex is now 1-based
+                const hoveredIndex = parseInt(target.getAttribute('data-index'), 10);
+                const hoveredType = target.getAttribute('data-type');
+                // hoveredGroup is still 0-based
+                const hoveredGroup = parseInt(target.getAttribute('data-group'), 10);
+
+                const allLines = svg.querySelectorAll('line.connection');
+                const allBoxes = svg.querySelectorAll('rect.box');
+
+                allLines.forEach(line => { line.classList.add('dimmed'); line.classList.remove('highlighted', 'highlighted-cross-group'); });
+                allBoxes.forEach(box => box.classList.remove('highlighted-input', 'highlighted-output'));
+
+                if (hoveredType === 'out') {
+                    target.classList.add('highlighted-output');
+                    // Query using 1-based index
+                    const connectedLines = svg.querySelectorAll(`.line-to-out${hoveredIndex}`);
+                    connectedLines.forEach(line => {
+                        line.classList.remove('dimmed');
+                        const inputGroup = parseInt(line.dataset.inGroup, 10); // 0-based
+                        if (inputGroup !== hoveredGroup) { line.classList.add('highlighted-cross-group'); }
+                        else { line.classList.add('highlighted'); }
+
+                        const fromClass = Array.from(line.classList).find(cls => cls.startsWith('line-from-in'));
+                        if (fromClass) {
+                             // Parse 1-based index from class
+                            const inIndex = parseInt(fromClass.replace('line-from-in', ''), 10);
+                            // Query using 1-based index
+                            const inBox = svg.querySelector(`#in-box-${inIndex}`);
+                            if (inBox) { inBox.classList.add('highlighted-input'); }
+                        }
+                    });
+                } else { // Hovering over INPUT (Bottom)
+                     target.classList.add('highlighted-input');
+                     // Query using 1-based index
+                    const connectedLines = svg.querySelectorAll(`.line-from-in${hoveredIndex}`);
+                     connectedLines.forEach(line => {
+                        line.classList.remove('dimmed');
+                        const outputGroup = parseInt(line.dataset.outGroup, 10); // 0-based
+                        if (outputGroup !== hoveredGroup) { line.classList.add('highlighted-cross-group'); }
+                        else { line.classList.add('highlighted'); }
+
+                        const toClass = Array.from(line.classList).find(cls => cls.startsWith('line-to-out'));
+                        if (toClass) {
+                             // Parse 1-based index from class
+                            const outIndex = parseInt(toClass.replace('line-to-out', ''), 10);
+                            // Query using 1-based index
+                            const outBox = svg.querySelector(`#out-box-${outIndex}`);
+                            if (outBox) { outBox.classList.add('highlighted-output'); }
+                        }
+                    });
+                }
+            }
+        }
+
+        // Function to reset all highlights by removing classes
+        function resetHighlights() {
+            const allLines = svg.querySelectorAll('line.connection');
+            const allBoxes = svg.querySelectorAll('rect.box');
+            allLines.forEach(line => line.classList.remove('dimmed', 'highlighted', 'highlighted-cross-group'));
+            allBoxes.forEach(box => box.classList.remove('highlighted-input', 'highlighted-output'));
+        }
+
+        // --- Attach Event Listeners ---
+        svg.addEventListener('mouseover', handleMouseOver);
+        svg.addEventListener('mouseleave', resetHighlights);
+        nFramesInput.addEventListener('input', drawVisualization);
+        kernelTInput.addEventListener('input', drawVisualization);
+        groupSizeInput.addEventListener('input', drawVisualization);
+
+        // --- Initial Draw ---
+        drawVisualization();
+
+    </script>
+
+</body>
+</html>

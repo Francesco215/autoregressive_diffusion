@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attention Connectivity Visualization</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']], // Define inline math delimiters
+          displayMath: [['$$', '$$'], ['\\[', '\\]']], // Define display math delimiters
+          processEscapes: true // Process escaped characters like \$
+        },
+        svg: {
+          fontCache: 'global' // Use global font cache for SVG output
+        },
+        options: {
+          skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'], // Tags to ignore
+          ignoreHtmlClass: 'tex2jax_ignore', // Class to ignore
+          processHtmlClass: 'tex2jax_process' // Class to process
+        }
+      };
+    </script>
+    <script type="text/javascript" id="MathJax-script" async
+      src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js">
+    </script>
+    <script>
+        // Apply theme immediately to prevent flash of unstyled content
+        if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+    </script>
+    <style>
+        /* Custom styles */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        svg {
+            user-select: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none;
+            transition: background-color 0.3s ease-in-out, border-color 0.3s ease-in-out;
+            display: block; /* Prevents extra space below SVG */
+        }
+        /* Style for SVG boxes */
+        rect.box {
+            stroke: #9CA3AF; stroke-width: 1; fill: #F9FAFB; cursor: default;
+            transition: fill 0.2s ease-in-out, stroke 0.2s ease-in-out;
+        }
+        .dark rect.box { stroke: #4B5563; fill: #374151; }
+        rect.box:hover { fill: #E5E7EB; }
+        .dark rect.box:hover { fill: #4B5563; }
+
+         /* Style for SVG lines */
+        line.connection {
+            stroke-width: 1.5;
+            transition: opacity 0.2s ease-in-out, stroke 0.2s ease-in-out, stroke-width 0.2s ease-in-out;
+            opacity: 0.8;
+        }
+        line.connection.dimmed { opacity: 0.05; }
+        line.connection.highlighted { opacity: 1; stroke-width: 2.5; }
+        line.connection.default-gray { stroke: #9CA3AF; }
+        .dark line.connection.default-gray { stroke: #6B7280; }
+
+        /* Style for Legend Red X icon */
+        .legend-x-icon { stroke: #ef4444; transition: stroke 0.2s ease-in-out; }
+        .dark .legend-x-icon { stroke: #f87171; }
+
+        /* Styling for MathJax container within foreignObject */
+        .math-host-span { /* Renamed from katex-host-span */
+             font-size: 12px; /* Adjust font size as needed */
+             text-align: center;
+             padding: 2px;
+             transition: color 0.2s ease-in-out;
+             pointer-events: none; /* Prevent interference with box hover */
+             display: flex; /* Use flexbox for centering */
+             justify-content: center;
+             align-items: center;
+             width: 100%;
+             height: 100%;
+             box-sizing: border-box;
+             color: inherit; /* Inherit color from parent */
+        }
+        /* Ensure MathJax output inherits text color */
+        .math-host-span mjx-container { color: inherit !important; }
+
+    </style>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 p-8 transition-colors duration-300">
+    <div class="max-w-4xl mx-auto bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md transition-colors duration-300">
+        <div class="flex justify-between items-center mb-4">
+            <h1 class="text-2xl font-bold text-gray-800 dark:text-gray-100">Attention Connectivity Visualization</h1>
+            <button id="theme-toggle" class="p-2 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all duration-300">
+                <svg id="theme-icon-light" class="w-6 h-6 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+                <svg id="theme-icon-dark" class="w-6 h-6 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>
+            </button>
+        </div>
+
+        <div class="mb-6">
+            <label for="n_frames" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Number of Clean Frames (n_frames):</label>
+            <input type="number" id="n_frames" value="8" min="1" class="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400">
+            <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">Total Frames: <span id="total_frames_display" class="font-medium text-gray-700 dark:text-gray-200">16</span> (Automatically set to 2 * n_frames)</p>
+        </div>
+
+        <div class="w-full overflow-x-auto">
+             <svg id="visualization" width="100%" class="border border-gray-200 dark:border-gray-700 rounded-md bg-gray-50 dark:bg-gray-900"></svg>
+             </div>
+
+        <div class="mt-4 p-4 border border-gray-200 dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700 transition-colors duration-300">
+            <h3 class="text-lg font-semibold mb-2 text-gray-700 dark:text-gray-200">Legend (Hover over boxes)</h3>
+            <div id="legend-content" class="flex flex-col space-y-2 text-gray-600 dark:text-gray-300">
+                </div>
+        </div>
+
+
+        <div class="mt-6 p-4 border border-gray-200 dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm transition-colors duration-300">
+            <h3 class="text-md font-semibold mb-2 text-gray-800 dark:text-gray-100">Connectivity Logic Notes</h3>
+            <p>This visualization uses the following connectivity rules (where $i$ and $j$ are the effective indices $0..n_{\text{frames}}-1$):</p>
+            <ul id="logic-notes-list" class="list-disc list-inside ml-4 mt-1 space-y-1">
+                 </ul>
+             <p class="mt-2 logic-notes-explanation">
+                 </p>
+        </div>
+    </div>
+
+    <script>
+        // Wait for the DOM to be fully loaded before running scripts
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log("DOM Loaded. Initializing script.");
+
+            // --- DOM Elements ---
+            const nFramesInput = document.getElementById('n_frames');
+            const totalFramesDisplay = document.getElementById('total_frames_display');
+            const svg = document.getElementById('visualization');
+            const themeToggleButton = document.getElementById('theme-toggle');
+            const themeIconLight = document.getElementById('theme-icon-light');
+            const themeIconDark = document.getElementById('theme-icon-dark');
+            const legendContent = document.getElementById('legend-content');
+            const logicNotesList = document.getElementById('logic-notes-list');
+            const logicNotesExplanation = document.querySelector('.logic-notes-explanation');
+
+            // --- Constants ---
+            const BOX_SIZE = 30;
+            const BOX_SPACING = 15;
+            const ROW_SPACING = 150;
+            const PADDING = 40; // Padding around the entire visualization
+            const LABEL_FO_WIDTH = 50; // Width for foreignObject containing label
+            const LABEL_FO_HEIGHT = 25; // Height for foreignObject
+            const LABEL_OFFSET_Y_TOP = LABEL_FO_HEIGHT + 5; // Space above top boxes for labels
+            const LABEL_OFFSET_Y_BOTTOM = 5; // Space below bottom boxes before labels start
+
+            // --- Theme Management ---
+            function applyTheme(isDark) {
+                console.log("Applying theme:", isDark ? "Dark" : "Light");
+                if (isDark) {
+                    document.documentElement.classList.add('dark');
+                    themeIconLight.classList.remove('hidden');
+                    themeIconDark.classList.add('hidden');
+                    localStorage.theme = 'dark';
+                } else {
+                    document.documentElement.classList.remove('dark');
+                    themeIconLight.classList.add('hidden');
+                    themeIconDark.classList.remove('hidden');
+                    localStorage.theme = 'light';
+                }
+                // Re-render legend/notes and visualization for theme changes
+                renderLegendAndNotes();
+                drawVisualization(); // Redraw to apply theme colors to SVG elements if needed & re-typeset MathJax
+            }
+
+            themeToggleButton.addEventListener('click', () => {
+                const isDark = document.documentElement.classList.contains('dark');
+                applyTheme(!isDark);
+            });
+
+            // Set initial icon state based on current theme
+            function setInitialThemeIcon() {
+                if (document.documentElement.classList.contains('dark')) {
+                    themeIconLight.classList.remove('hidden');
+                    themeIconDark.classList.add('hidden');
+                } else {
+                    themeIconLight.classList.add('hidden');
+                    themeIconDark.classList.remove('hidden');
+                }
+            }
+            setInitialThemeIcon(); // Call on load
+
+
+            // --- Color Palette ---
+             function getColor(index, totalNoisy) {
+                 // Generates colors for the noisy-to-clean connections
+                 if (totalNoisy <= 0) return '#6b7280'; // Default gray if no noisy frames
+                 // Distribute hues from blue (240) to magenta (300)
+                 const factor = totalNoisy > 1 ? index / (totalNoisy - 1) : 0.5;
+                 const hue = 240 + factor * 60; // Hue range for coloring
+                 return `hsl(${hue}, 70%, 60%)`; // HSL color format
+             }
+
+
+            // --- Connectivity Logic ---
+            // Renamed kv_frame_idx to k_frame_idx for clarity
+            function are_connected_interpreted(q_frame_idx, k_frame_idx, n_frames) {
+                // Determines if a connection exists based on frame indices and type
+                const q_is_clean = q_frame_idx < n_frames;
+                const k_is_clean = k_frame_idx < n_frames; // Changed from kv_is_clean
+
+                if (q_is_clean && k_is_clean) {
+                    // Clean Query to Clean K: Connect if Q index >= K index (causal)
+                    return q_frame_idx >= k_frame_idx;
+                } else if (!q_is_clean && k_is_clean) {
+                    // Noisy Query to Clean K: Connect if (effective Q index) > K index
+                    // effective Q index = q_frame_idx - n_frames
+                    return (q_frame_idx - n_frames) > k_frame_idx;
+                } else if (!q_is_clean && !k_is_clean) {
+                    // Noisy Query to Noisy K: Connect only if indices match (identity)
+                    // effective Q index = q_frame_idx - n_frames
+                    // effective K index = k_frame_idx - n_frames
+                    // Connect if (q_frame_idx - n_frames) == (k_frame_idx - n_frames) => q_frame_idx === k_frame_idx
+                    return q_frame_idx === k_frame_idx;
+                } else { // q_is_clean && !k_is_clean
+                    // Clean Query to Noisy K: Never connect
+                    return false;
+                }
+            }
+
+            // --- Legend and Notes Rendering ---
+            function renderLegendAndNotes() {
+                console.log("Rendering legend and notes...");
+                const n_frames = parseInt(nFramesInput.value, 10) || 8; // Use current value or default
+                const isDark = document.documentElement.classList.contains('dark');
+                const textColor = isDark ? 'text-gray-300' : 'text-gray-600';
+                const codeBg = isDark ? 'dark:bg-gray-600' : 'bg-gray-200';
+                const codeText = isDark ? 'dark:text-gray-200' : 'text-gray-800';
+                const strongColor = isDark ? 'text-red-400' : 'text-red-600';
+
+                // --- Legend --- (Updated KV to K)
+                legendContent.innerHTML = `
+                    <div class="flex items-center space-x-2">
+                        <svg width="15" height="15" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" rx="1" ry="1" class="box"></rect></svg>
+                        <span class="${textColor}">Clean Query ($Q_i$) or Clean Key ($K_j$) Frame</span>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <svg width="15" height="15" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" rx="1" ry="1" class="box"></rect></svg>
+                        <span class="${textColor}">Noisy Query ($\tilde{Q}_i$) or Noisy Key ($\tilde{K}_j$) Frame</span>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <svg width="15" height="15" viewBox="0 0 20 10"> <line x1="0" y1="5" x2="20" y2="5" class="connection default-gray" stroke-width="1.5"></line> </svg>
+                        <span class="${textColor}">Default Connection ($Q_i \to K_j$ or $\tilde{Q}_i \to \tilde{K}_j$)</span>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <svg width="15" height="15" viewBox="0 0 20 10"> <line x1="0" y1="5" x2="20" y2="5" stroke="${getColor(0, 2)}" stroke-width="1.5"></line> </svg>
+                        <span class="${textColor}">Noisy Query to Clean Key Connection ($\tilde{Q}_i \to K_j$, colored)</span>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                         <svg width="15" height="15" viewBox="0 0 10 10" class="inline-block mr-1">
+                            <line x1="1" y1="1" x2="9" y2="9" stroke-width="1.5" class="legend-x-icon"></line>
+                            <line x1="1" y1="9" x2="9" y2="1" stroke-width="1.5" class="legend-x-icon"></line>
+                        </svg>
+                        <span class="${textColor}">No Connection Case ($Q_i \to \tilde{K}_j$)</span>
+                    </div>
+                `;
+
+                // --- Logic Notes --- (Updated KV to K)
+                // Using $...$ for MathJax inline math
+                logicNotesList.innerHTML = `
+                    <li>Clean Query $Q_i$ attends to Clean Key $K_j$ if $i \ge j$.</li>
+                    <li>Noisy Query $\\tilde{Q}_i$ attends to Clean Key $K_j$ if $(i_{\\text{orig}} - n_{\\text{frames}}) > j$. (Colored lines)</li>
+                    <li>Noisy Query $\\tilde{Q}_i$ attends to Noisy Key $\\tilde{K}_j$ if $i = j$ (i.e., $i_{\\text{orig}} = j_{\\text{orig}}$).</li>
+                    <li>Clean Query $Q_i$ <strong class="${strongColor}">never</strong> attends to Noisy Key $\\tilde{K}_j$.</li>
+                `;
+
+                // --- Explanation Paragraph --- (Updated KV to K)
+                logicNotesExplanation.innerHTML = `
+                The condition for the colored connection $\\tilde{Q}_i \\to K_j$ corresponds to
+                <code class="bg-gray-200 dark:bg-gray-600 px-1 rounded text-gray-800 dark:text-gray-200">(original\\_q\\_idx - n\\_frames) > original\\_k\\_idx</code>.
+                Here, $i$ is the effective index ($original\\_q\\_idx \\pmod{n_{\\text{frames}}}$) and $j$ is $original\\_k\\_idx$.
+                `; // Changed original_kv_idx to original_k_idx
+
+
+                // Typeset the updated legend and notes using MathJax
+                if (window.MathJax && MathJax.typesetPromise) {
+                    console.log("Queueing MathJax typesetting for legend and notes");
+                    MathJax.typesetPromise([legendContent, logicNotesList, logicNotesExplanation])
+                       .catch(err => console.error('MathJax Legend/Notes Typesetting Error:', err));
+                } else {
+                    console.warn("MathJax not ready for legend/notes typesetting yet.");
+                }
+            }
+
+
+            // --- Drawing Function ---
+            function drawVisualization() {
+                console.log("Starting drawVisualization...");
+                const n_frames = parseInt(nFramesInput.value, 10);
+
+                // Basic input validation
+                if (isNaN(n_frames) || n_frames < 1) {
+                    svg.innerHTML = `<text x="50%" y="50%" text-anchor="middle" style="fill: #ef4444;" class="dark:style="fill: #f87171;">Invalid input: n_frames must be >= 1</text>`;
+                    totalFramesDisplay.textContent = 'N/A';
+                    return; // Stop execution if input is invalid
+                }
+
+                const total_frames = n_frames * 2;
+                totalFramesDisplay.textContent = total_frames;
+                svg.innerHTML = ''; // Clear previous SVG content
+
+                // Calculate SVG dimensions based on content
+                const svgWidth = PADDING * 2 + total_frames * BOX_SIZE + (total_frames - 1) * BOX_SPACING;
+                // Calculate height needed: Top padding + Top Label Area + Top Box + Spacing + Bottom Box + Bottom Label Area + Bottom Padding
+                const svgHeight = PADDING + LABEL_OFFSET_Y_TOP + BOX_SIZE + ROW_SPACING + BOX_SIZE + LABEL_OFFSET_Y_BOTTOM + LABEL_FO_HEIGHT + PADDING;
+
+                svg.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`); // Use viewBox for responsive scaling
+
+                // Calculate positions
+                const startX = PADDING;
+                const topRowY = PADDING + LABEL_OFFSET_Y_TOP; // Y position for the top edge of top boxes
+                const bottomRowY = topRowY + BOX_SIZE + ROW_SPACING; // Y position for the top edge of bottom boxes
+
+                const boxes = { top: [], bottom: [] }; // Store box center coordinates for line drawing
+                const noisyQueryIndices = []; // Store original indices of noisy queries for coloring
+
+                // Create groups for organization (lines behind boxes/labels)
+                const linesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g'); linesGroup.id = 'lines-group'; svg.appendChild(linesGroup);
+                const boxesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g'); boxesGroup.id = 'boxes-group'; svg.appendChild(boxesGroup);
+                const labelsGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g'); labelsGroup.id = 'labels-group'; svg.appendChild(labelsGroup);
+
+                console.log("Drawing boxes and labels...");
+                // --- Create Boxes and Labels ---
+                for (let i = 0; i < total_frames; i++) {
+                    const x_center = startX + i * (BOX_SIZE + BOX_SPACING) + BOX_SIZE / 2;
+                    const isClean = i < n_frames;
+                    let label_idx = i; // The index displayed in the label (0 to n_frames-1)
+                    let latexPrefix = ""; // Prefix for LaTeX label (e.g., \tilde)
+
+                    if (isClean) {
+                        label_idx = i; // Clean frames use index 0 to n_frames-1
+                        latexPrefix = "";
+                    } else {
+                        label_idx = i % n_frames; // Noisy frames reuse indices 0 to n_frames-1
+                        latexPrefix = "\\tilde"; // Add tilde for noisy frames
+                        noisyQueryIndices.push(i); // Track original index of noisy query
+                    }
+
+                    // --- Top Box (Query) ---
+                    const topRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                    topRect.setAttribute('id', `q-box-${i}`); topRect.setAttribute('data-index', i); topRect.setAttribute('data-type', 'q'); topRect.setAttribute('class', 'box');
+                    topRect.setAttribute('x', x_center - BOX_SIZE / 2); topRect.setAttribute('y', topRowY); topRect.setAttribute('width', BOX_SIZE); topRect.setAttribute('height', BOX_SIZE); topRect.setAttribute('rx', 4); topRect.setAttribute('ry', 4); // Rounded corners
+                    boxesGroup.appendChild(topRect);
+                    boxes.top.push({ x: x_center, y: topRowY + BOX_SIZE }); // Bottom edge for line connection
+
+                    // --- Top Label (Query) ---
+                    const topFO = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
+                    topFO.setAttribute('x', x_center - LABEL_FO_WIDTH / 2);
+                    topFO.setAttribute('y', topRowY - LABEL_OFFSET_Y_TOP); // Position above the box
+                    topFO.setAttribute('width', LABEL_FO_WIDTH);
+                    topFO.setAttribute('height', LABEL_FO_HEIGHT);
+                    labelsGroup.appendChild(topFO);
+
+                    // Create a span inside foreignObject to hold MathJax content
+                    const topLabelId = `q-label-span-${i}`;
+                    const currentTextClass = document.documentElement.classList.contains('dark') ? 'text-gray-300' : 'text-gray-700';
+                    // Set innerHTML with MathJax delimiters ($...$)
+                    topFO.innerHTML = `<span id="${topLabelId}" class="math-host-span ${currentTextClass}">$${latexPrefix}{Q}_{${label_idx}}$</span>`;
+
+
+                    // --- Bottom Box (Key) --- (Updated KV to K)
+                    const bottomRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                    bottomRect.setAttribute('id', `k-box-${i}`); // Changed id from kv-box
+                    bottomRect.setAttribute('data-index', i);
+                    bottomRect.setAttribute('data-type', 'k'); // Changed type from kv
+                    bottomRect.setAttribute('class', 'box');
+                    bottomRect.setAttribute('x', x_center - BOX_SIZE / 2); bottomRect.setAttribute('y', bottomRowY); bottomRect.setAttribute('width', BOX_SIZE); bottomRect.setAttribute('height', BOX_SIZE); bottomRect.setAttribute('rx', 4); bottomRect.setAttribute('ry', 4);
+                    boxesGroup.appendChild(bottomRect);
+                    boxes.bottom.push({ x: x_center, y: bottomRowY }); // Top edge for line connection
+
+                    // --- Bottom Label (Key) --- (Updated KV to K)
+                    const bottomFO = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
+                    bottomFO.setAttribute('x', x_center - LABEL_FO_WIDTH / 2);
+                    bottomFO.setAttribute('y', bottomRowY + BOX_SIZE + LABEL_OFFSET_Y_BOTTOM); // Position below the box
+                    bottomFO.setAttribute('width', LABEL_FO_WIDTH);
+                    bottomFO.setAttribute('height', LABEL_FO_HEIGHT);
+                    labelsGroup.appendChild(bottomFO);
+
+                    // Create span and set innerHTML for MathJax (Updated KV to K)
+                    const bottomLabelId = `k-label-span-${i}`; // Changed id from kv-label-span
+                    bottomFO.innerHTML = `<span id="${bottomLabelId}" class="math-host-span ${currentTextClass}">$${latexPrefix}{K}_{${label_idx}}$</span>`; // Changed KV to K
+                }
+                console.log("Finished drawing boxes and labels.");
+
+                // --- Draw Connections ---
+                console.log("Drawing connections...");
+                for (let q_idx = 0; q_idx < total_frames; q_idx++) {
+                    for (let k_idx = 0; k_idx < total_frames; k_idx++) { // Renamed kv_idx to k_idx
+                        // Check connectivity logic
+                        if (are_connected_interpreted(q_idx, k_idx, n_frames)) { // Pass k_idx
+                            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                            line.classList.add('connection');
+                            // Add classes to identify lines connected to specific boxes for hover effects
+                            line.classList.add(`line-from-q${q_idx}`);
+                            line.classList.add(`line-to-k${k_idx}`); // Changed class from line-to-kv
+                            // Set line coordinates
+                            line.setAttribute('x1', boxes.top[q_idx].x); line.setAttribute('y1', boxes.top[q_idx].y);
+                            line.setAttribute('x2', boxes.bottom[k_idx].x); line.setAttribute('y2', boxes.bottom[k_idx].y);
+
+                            // Determine line color based on connection type
+                            const q_is_clean = q_idx < n_frames;
+                            const k_is_clean = k_idx < n_frames; // Changed from kv_is_clean
+
+                            if (!q_is_clean && k_is_clean) { // Noisy Query to Clean K
+                                const noisyIndex = noisyQueryIndices.indexOf(q_idx); // Find position in the noisy index list
+                                const color = getColor(noisyIndex, noisyQueryIndices.length);
+                                line.setAttribute('stroke', color); // Apply specific color
+                            } else { // Clean Q -> Clean K OR Noisy Q -> Noisy K
+                                line.classList.add('default-gray'); // Use default theme-aware gray
+                            }
+                            linesGroup.appendChild(line); // Add line to the lines group
+                        }
+                    }
+                }
+                console.log("Finished drawing connections.");
+
+                // --- Typeset MathJax ---
+                // Crucially, call MathJax *after* all elements with LaTeX are added to the SVG DOM.
+                if (window.MathJax && MathJax.typesetPromise) {
+                     console.log("Queueing MathJax typesetting for SVG");
+                     MathJax.typesetPromise([svg]) // Typeset the entire SVG container
+                        .catch(err => console.error('MathJax SVG Typesetting Error:', err));
+                } else {
+                     console.warn("MathJax not ready for SVG typesetting yet.");
+                }
+
+                console.log("drawVisualization finished.");
+            }
+
+
+            // --- Event Handlers for Hover Effects ---
+            function handleMouseOver(event) {
+                const target = event.target;
+                // Check if the hovered element is a box
+                if (target.matches('rect.box')) {
+                    const index = target.getAttribute('data-index');
+                    const type = target.getAttribute('data-type'); // 'q' or 'k'
+                    const allLines = svg.querySelectorAll('line.connection');
+
+                    // Dim all lines first
+                    allLines.forEach(line => line.classList.add('dimmed'));
+
+                    // Determine selector for connected lines based on box type
+                    const selector = type === 'q' ? `.line-from-q${index}` : `.line-to-k${index}`; // Changed line-to-kv to line-to-k
+                    const connectedLines = svg.querySelectorAll(selector);
+
+                    // Highlight connected lines
+                    connectedLines.forEach(line => {
+                        line.classList.remove('dimmed'); // Remove dimming
+                        line.classList.add('highlighted'); // Add highlight style
+                    });
+                }
+            }
+
+            function handleMouseOut(event) {
+                const target = event.target;
+                // Check if the mouse moved out of a box
+                if (target.matches('rect.box')) {
+                    const allLines = svg.querySelectorAll('line.connection');
+                    // Reset all lines to their default state
+                    allLines.forEach(line => {
+                        line.classList.remove('dimmed');
+                        line.classList.remove('highlighted');
+                    });
+                }
+            }
+
+
+            // --- Attach Event Listeners ---
+            svg.addEventListener('mouseover', handleMouseOver);
+            svg.addEventListener('mouseout', handleMouseOut);
+            nFramesInput.addEventListener('input', () => {
+                // Redraw visualization and update legend/notes when input changes
+                drawVisualization();
+                renderLegendAndNotes();
+            });
+
+            // --- Initial Setup ---
+            renderLegendAndNotes(); // Render legend/notes on initial load
+            drawVisualization(); // Draw the visualization on initial load
+            console.log("Initial setup complete.");
+
+        }); // End of DOMContentLoaded listener
+    </script>
+
+</body>
+</html>
