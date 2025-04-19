@@ -13,19 +13,19 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-
-from edm2.gym_dataloader import GymDataGenerator, gym_collate_function
+from edm2.gym_dataloader_acrobot import GymDataGenerator, gym_collate_function
+#from edm2.gym_dataloader import  gym_collate_function
 from edm2.utils import apply_clipped_grads
 from edm2.vae import VAE, MixedDiscriminator, worst_k_percent_loss
 
 if __name__=="__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    original_env = "LunarLander-v3"
+    original_env = "Acrobot-v1"
 
     batch_size = 4
     state_size = 32 
-    total_number_of_steps = 4_000
+    total_number_of_steps = 40_000
     training_steps = total_number_of_steps * batch_size
     
     # Hyperparameters
@@ -59,7 +59,7 @@ if __name__=="__main__":
     scheduler_disc = lr_scheduler.ExponentialLR(optimizer_disc, gamma=gamma)
     losses = []
 
-    resume_training_run = None
+    resume_training_run = False
     pbar = tqdm(enumerate(dataloader), total=total_number_of_steps)
 
     recon_losses, kl_group_losses, kl_losses, disc_losses, adversarial_losses= [], [], [], [], []
@@ -129,7 +129,7 @@ if __name__=="__main__":
         #     adv_multiplier = 5e-2
 
         # Visualization every 100 steps
-        if batch_idx % 100 == 0 and batch_idx > 0:
+        if batch_idx % 500 == 0 and batch_idx > 0:
             # Create a figure with a custom layout: 3 sections (2 rows for frames, 2x2 grid for losses)
             fig = plt.figure(figsize=(15, 12))
 
@@ -213,7 +213,7 @@ if __name__=="__main__":
             plt.close()
         if batch_idx % (total_number_of_steps//10) == 0 and batch_idx != 0:
             os.makedirs("saved_models", exist_ok=True)
-            vae.save_to_state_dict(f'saved_models/vae_{batch_idx}.pt')
+            vae._to_state_dict(f'saved_models/vae_{batch_idx}.pt')
         if batch_idx == total_number_of_steps:
             break
 
