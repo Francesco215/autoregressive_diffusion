@@ -13,7 +13,8 @@ import matplotlib.pyplot as plt
 
 from edm2.plotting import plot_training_dashboard
 from edm2.vae import VAE    
-from edm2.gym_dataloader import GymDataGenerator, gym_collate_function
+from edm2.gym_dataloaders.gym_dataloader_mountaincar import GymDataGenerator, gym_collate_function
+#from edm2.gym_dataloader import GymDataGenerator, gym_collate_function
 from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.phema import PowerFunctionEMA
@@ -25,13 +26,13 @@ torch._dynamo.config.cache_size_limit = 100
 if __name__=="__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    original_env = "LunarLander-v3"
+    original_env = "MountainCar-v0"
     model_id="stabilityai/stable-diffusion-2-1"
 
-    autoencoder = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_lunar_lander.pt").to(device).requires_grad_(False)
-    # autoencoder = VAE.from_pretrained("saved_models/vae_lunar_lander.pt").to(device).requires_grad_(False)
+    #autoencoder = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_lunar_lander.pt").to(device).requires_grad_(False)
+    autoencoder = VAE.from_pretrained("saved_models/vae_mountaincar_10000.pt").to(device).requires_grad_(False)
 
-    resume_training = False
+    resume_training = True
     unet = UNet(img_resolution=256//autoencoder.spatial_compression, # Match your latent resolution
                 img_channels=autoencoder.latent_channels, # Match your latent channels
                 label_dim = 4, #this should be equal to the action space of the gym environment
