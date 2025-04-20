@@ -9,7 +9,7 @@ import einops
 
 from .loss_weight import MultiNoiseLoss
 from .utils import BetterModule, normalize, resample, mp_silu, mp_sum, mp_cat, MPFourier, bmult
-from .conv import MPCausal3DConv, MPConv, MPCausal3DGatedConv, Gating
+from .conv import  MPConv, MPCausal3DGatedConv, Gating
 from .attention import FrameAttention, VideoAttention
 
 
@@ -22,9 +22,9 @@ class Block(torch.nn.Module):
         in_channels,                    # Number of input channels.
         out_channels,                   # Number of output channels.
         emb_channels,                   # Number of embedding channels.
-        flavor              = 'enc',    # Flavor: 'enc' or 'dec'.
+        flavor               = 'enc',    # Flavor: 'enc' or 'dec'.
         resample_mode       = 'keep',   # Resampling: 'keep', 'up', or 'down'.
-        resample_filter     = [1,1],    # Resampling filter.
+        resample_filter      = [1,1],    # Resampling filter.
         attention           = False,    # Include self-attention?
         channels_per_head   = 64,       # Number of channels per attention head.
         dropout             = 0,        # Dropout probability.
@@ -47,9 +47,6 @@ class Block(torch.nn.Module):
         # if attention:
         self.conv_res0 = MPCausal3DGatedConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3,3])
         self.conv_res1 = MPCausal3DGatedConv(out_channels, out_channels, kernel=[3,3,3])
-        # else:
-        # self.conv_res0 = MPConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3])
-        # self.conv_res1 = MPConv(out_channels, out_channels, kernel=[3,3])
 
         self.conv_skip = MPConv(in_channels, out_channels, kernel=[1,1]) if in_channels != out_channels else None
         self.attn = VideoAttention(out_channels, self.num_heads, attn_balance)
