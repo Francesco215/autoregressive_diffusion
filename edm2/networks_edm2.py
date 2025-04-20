@@ -57,7 +57,7 @@ class Block(torch.nn.Module):
         if self.num_heads > 0: 
             assert (out_channels & (out_channels - 1) == 0) and out_channels != 0, f"out_channels must be a power of 2, got {out_channels}"
 
-    def forward(self, x, emb, batch_size, c_noise, cache=None):
+    def forward(self, x, emb, batch_size, c_noise, cache=None, update_cache=False):
         if cache is None: cache = {}
 
         # Main branch.
@@ -68,13 +68,13 @@ class Block(torch.nn.Module):
             x = normalize(x, dim=1) # pixel norm
 
         # Residual branch.
-        y, cache['conv_res0'] = self.conv_res0(mp_silu(x), emb, batch_size, c_noise, cache=cache.get('conv_res0', None)) 
+        y, cache['conv_res0'] = self.conv_res0(mp_silu(x), emb, batch_size, c_noise, cache.get('conv_res0', None), update_cache) 
         c = self.emb_linear(emb, gain=self.emb_gain) + 1
         y = bmult(y, c.to(y.dtype)) 
         y = mp_silu(y)
         if self.training and self.dropout != 0:
             y = torch.nn.functional.dropout(y, p=self.dropout)
-        y, cache['conv_res1'] = self.conv_res1(y, emb, batch_size, c_noise, cache=cache.get('conv_res1', None)) 
+        y, cache['conv_res1'] = self.conv_res1(y, emb, batch_size, c_noise, cache.get('conv_res1', None), update_cache) 
 
         # Connect the branches.
         if self.flavor == 'dec' and self.conv_skip is not None:
@@ -82,7 +82,7 @@ class Block(torch.nn.Module):
         x = mp_sum(x, y, t=self.res_balance)
 
         # Self-attention.
-        x, cache['attn'] = self.attn(x, batch_size, cache.get('attn', None))
+        x, cache['attn'] = self.attn(x, batch_size, cache.get('attn', None), update_cache)
 
         # Clip activations.
         if self.clip_act is not None:
@@ -162,13 +162,14 @@ class UNet(BetterModule):
         args, _, _, values = inspect.getargvalues(frame)
         self.kwargs = {arg: values[arg] for arg in args if arg != "self"}
 
-    def forward(self, x, c_noise, conditioning = None, cache:dict=None):
+    def forward(self, x, c_noise, conditioning = None, cache:dict=None, update_cache=False):
         if cache is None: cache = {}
         batch_size, time_dimention = x.shape[:2]
         n_context_frames = cache.get('n_context_frames', 0)
 
         res = x.clone()
-        out_res, cache['n_context_frames'] = self.out_res(c_noise, n_context_frames)
+        out_res, updated_n_context_frames = self.out_res(c_noise, n_context_frames)
+        if update_cache: cache['n_context_frames']=updated_n_context_frames
 
         # Reshaping
         x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
@@ -194,15 +195,15 @@ class UNet(BetterModule):
         x = torch.cat([x, torch.ones_like(x[:, :1])], dim=1)
         skips = []
         for name, block in self.enc.items():
-            x, cache['enc', name] = block(x, emb, batch_size, c_noise, cache=cache.get(('enc',name), None))
+            x, cache['enc', name] = block(x, emb, batch_size, c_noise, cache=cache.get(('enc',name), None), update_cache=update_cache)
             skips.append(x)
 
         # Decoder.
         for name, block in self.dec.items():
             if 'block' in name:
                 x = mp_cat(x, skips.pop(), t=self.concat_balance)
-            x, cache['dec', name] = block(x, emb, batch_size, c_noise, cache=cache.get(('dec',name), None))
-        x, cache['out_conv'] = self.out_conv(x, emb, batch_size, c_noise, cache=cache.get('out_conv', None))
+            x, cache['dec', name] = block(x, emb, batch_size, c_noise, cache=cache.get(('dec',name), None), update_cache=update_cache)
+        x, cache['out_conv'] = self.out_conv(x, emb, batch_size, c_noise, cache=cache.get('out_conv', None), update_cache=update_cache)
 
         x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
         x = mp_sum(x, res, out_res)
@@ -226,7 +227,7 @@ class Precond(BetterModule):
         self.sigma_data = sigma_data
         self.noise_weight = MultiNoiseLoss()
 
-    def forward(self, x:Tensor, sigma:Tensor, conditioning:Tensor=None, force_fp32:bool=False, cache:dict=None):
+    def forward(self, x:Tensor, sigma:Tensor, conditioning:Tensor=None, force_fp32:bool=False, cache:dict=None, update_cache=False):
         if cache is None: cache = {}
         cache['shape'] = x.shape
         x = x.to(torch.float32)
@@ -243,7 +244,7 @@ class Precond(BetterModule):
  
         # Run the model.
         x_in = (c_in * x).to(dtype)
-        F_x, cache = self.unet(x_in, c_noise, conditioning, cache)
+        F_x, cache = self.unet(x_in, c_noise, conditioning, cache, update_cache)
         D_x = c_skip * x + c_out * F_x.to(torch.float32)
         return D_x, cache
     

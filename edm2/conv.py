@@ -116,16 +116,17 @@ class MPCausal3DGatedConv(torch.nn.Module):
         self.weight = NormalizedWeight(in_channels, out_channels, kernel)
         self.gating = Gating()
 
-    def forward(self, x, emb, batch_size, c_noise, gain=1, cache=None):
+    def forward(self, x, emb, batch_size, c_noise, cache=None, update_cache=False):
         if cache is None: cache = {}
-        w = self.weight(gain).to(x.dtype)
+        w = self.weight().to(x.dtype)
 
         image_padding = (0, w.shape[-2]//2, w.shape[-1]//2)
 
         # however variance preserving concatenatinon doesn't work because it will give different results depending if self.training is true
         causal_pad = torch.ones(batch_size, x.shape[1], w.shape[2], *x.shape[2:], device=x.device, dtype=x.dtype)
         causal_pad = cache.get('activations', causal_pad)
-        gating, cache['n_context_frames'] = self.gating(c_noise, cache.get('n_context_frames', 0)) # Change the context frames for inference
+        gating, updated_n_context_frames = self.gating(c_noise, cache.get('n_context_frames', 0)) # Change the context frames for inference
+        if update_cache: cache['n_context_frames']=updated_n_context_frames
 
         # we do the 2d convolutions over the last frames
         last_frame_conv = self.last_frame_conv(x)
@@ -138,7 +139,7 @@ class MPCausal3DGatedConv(torch.nn.Module):
 
         #pad context along the time dimention to make sure that it's causal
         context = torch.cat((causal_pad, x), dim=-3)
-        cache['activations'] = context[:,:,-w.shape[2]:].clone().detach()
+        if update_cache: cache['activations'] = context[:,:,-w.shape[2]:].clone().detach()
         # now we do the 3d convolutions over the previous frames of the context
         context = F.conv3d(context[:,:,:-1], w, padding=image_padding)
 

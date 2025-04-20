@@ -27,7 +27,7 @@ class VideoAttention(nn.Module):
         self.train_mask = None
     
 
-    def forward(self, x:Tensor, batch_size:int, cache:Tensor=None):
+    def forward(self, x:Tensor, batch_size:int, cache:Tensor=None, update_cache=False):
         if self.num_heads == 0:
             return x, None
 
@@ -47,10 +47,10 @@ class VideoAttention(nn.Module):
         if not self.training:
             if cache is not None:
                 cached_k, cached_v = cache # TODO: check if we need to clone the tensors to avoid modification of the cache
-                k, v = torch.cat((cached_k, k), dim=-3), torch.cat((cached_v, v), dim=-3)
+                k, v = torch.cat((cached_k.clone(), k), dim=-3), torch.cat((cached_v.clone(), v), dim=-3)
             # TODO: this can be optimized because you only need to update the cache only at the last diffusion step
             # but maybe since i'm just updating the pointer it could not be a big deal
-            cache = (k.detach(), v.detach())
+            if update_cache: cache = (k.detach(), v.detach())
 
         q, k = self.rope(q, k)
         # q, k = F.normalize(q, p=2, dim=-1), F.normalize(k, p=2, dim=-1)

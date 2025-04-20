@@ -41,56 +41,49 @@ precond = Precond(unet, use_fp16=True, sigma_data=1.).to(device)
 # batch ={"latents": torch.randn(2, 8, 16, 64, 64)}
 
 # Prepare data
-batch = None
-for i, batch in enumerate(dataloader):
-    if i==100: break
-
+batch = next(iter(dataloader))
 
 with torch.no_grad():
     frames, actions, reward = batch
     frames, actions = torch.tensor(frames, device=device), torch.tensor(actions, device=device)
     latents = autoencoder.frames_to_latents(frames)
-latents = latents[:,:5].to(device)
-actions = None #if i%4==0 else actions.to(device)
-# latents = batch["latents"][start:start+num_samples].to(device)
-# text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
-context = latents[:, :-1]  # First frames (context)
-target = latents[:, -1:]    # Last frame (ground truth)
+context = latents[:,:6].to(device)
 precond.eval()
 sigma = torch.ones(context.shape[:2], device=device) * 0.05
-x, cache = precond(context, sigma)
+x, cache = precond(context, sigma, conditioning = actions[:,:context.shape[1]])
 
-#%%
-# Run sampler with sigma_max=0.5 for initial noise level
-_, mse_steps, mse_pred_values, cache = edm_sampler_with_mse(
-    net=precond,
-    cache=cache,
-    target=target,
-    sigma_max=1,  # Initial noise level matches our test
-    num_steps=32,
-    conditioning=None,
-    # gnet=g_net,
-    rho = 7,
-    guidance = 1,
-    S_churn=0,
-    S_noise=1,
-)
-# Plot results
-import matplotlib.pyplot as plt
-plt.figure(figsize=(10, 6))
-plt.plot(mse_steps, marker='o', linestyle='-', label="MSE")
-plt.plot(mse_pred_values, marker='o', linestyle='-', label="MSE (Predicted)")
-plt.xlabel("Denoising Step")
-plt.ylabel("MSE")
-plt.yscale("log")
-plt.title("Denoising Progress (Lower is Better)")
-plt.grid(True)
-plt.legend()
-plt.show()
-print(mse_steps[-1])
+# #%%
+# # Run sampler with sigma_max=0.5 for initial noise level
+# _, mse_steps, mse_pred_values, cache = edm_sampler_with_mse(
+#     net=precond,
+#     cache=cache,
+#     target=target,
+#     sigma_max=1,  # Initial noise level matches our test
+#     num_steps=32,
+#     conditioning=None,
+#     # gnet=g_net,
+#     rho = 7,
+#     guidance = 1,
+#     S_churn=0,
+#     S_noise=1,
+# )
+# # Plot results
+# import matplotlib.pyplot as plt
+# plt.figure(figsize=(10, 6))
+# plt.plot(mse_steps, marker='o', linestyle='-', label="MSE")
+# plt.plot(mse_pred_values, marker='o', linestyle='-', label="MSE (Predicted)")
+# plt.xlabel("Denoising Step")
+# plt.ylabel("MSE")
+# plt.yscale("log")
+# plt.title("Denoising Progress (Lower is Better)")
+# plt.grid(True)
+# plt.legend()
+# plt.show()
+# print(mse_steps[-1])
 # %%
-for i in tqdm(range(4)):
-    x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, gnet=g_net, sigma_max = 80, num_steps=32, rho=7, guidance=1, S_churn=20)
+for i in tqdm(range(6)):
+    actions = torch.randint(0,3,(latents.shape[0],1), device=latents.device)
+    x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, conditioning = actions, sigma_max = 80, sigma_min=0.4, num_steps=16, rho=2, guidance=1, S_churn=0.)
     context = torch.cat((context,x),dim=1)
 
 
