@@ -1,4 +1,5 @@
 #%%
+from contextlib import nullcontext
 import os
 
 import torch
@@ -28,7 +29,7 @@ torch._dynamo.config.cache_size_limit = 100
 #%%
 if __name__=="__main__":
     dist.init_process_group(backend="nccl")
-    local_rank = int(os.environ["LOCAL_RANK"])
+    local_rank=dist.get_rank()
     torch.cuda.set_device(local_rank)
     device = torch.device("cuda", local_rank)
 
@@ -42,13 +43,14 @@ if __name__=="__main__":
     unet = UNet(img_resolution=256//autoencoder.spatial_compression, # Match your latent resolution
                 img_channels=autoencoder.latent_channels, # Match your latent channels
                 label_dim = 4, #this should be equal to the action space of the gym environment
-                model_channels=16,
+                model_channels=32,
                 channel_mult=[1,2,4,8],
                 channel_mult_noise=None,
                 channel_mult_emb=None,
                 num_blocks=1,
                 attn_resolutions=[8]
                 )
+    n_params = unet.n_params
     unet = DDP(unet.to(device), device_ids=[local_rank], output_device=local_rank)
     
 
@@ -76,6 +78,7 @@ if __name__=="__main__":
 
     #%%
     pbar = tqdm(enumerate(dataloader, start=steps_taken),total=total_number_of_steps)
+    # pbar = enumerate(dataloader, start=steps_taken)
     for i, batch in pbar:
         with torch.no_grad():
             frames, actions, _ = batch
@@ -87,12 +90,8 @@ if __name__=="__main__":
         loss, un_weighted_loss = loss_fn(precond, latents, actions)
         losses.append(un_weighted_loss)
         # Backpropagation and optimization
-        if (i + 1) % accumulation_steps != 0:
-            context = precond.no_sync()       # skip sync in this backward
-        else:
-            context = torch.enable_grad()     # or just default
 
-        with context:
+        with (precond.no_sync() if (i + 1) % accumulation_steps != 0 else nullcontext()):
             loss, _ = loss_fn(precond, latents, actions)
             loss = loss / accumulation_steps  # average your loss
             loss.backward()
@@ -111,36 +110,36 @@ if __name__=="__main__":
                 g['lr'] = current_lr
 
         # Save model checkpoint (optional)
-        if i % 500 * accumulation_steps == 0 and i!=0 and local_rank==0:
+        if i % 500 * accumulation_steps == 0 and i!=0 :
             precond.noise_weight.fit_loss_curve()
-            print(f"\nGenerating dashboard at step {i}...")
-            # Pass the necessary arguments, including the current batch's latents
-            plot_training_dashboard(
-                save_path=f'images_training/dashboard_step_{i}.png', # Dynamic filename
-                precond=precond,
-                autoencoder=autoencoder,
-                losses_history=losses, # Pass the list of scalar losses
-                current_step=i,
-                micro_batch_size=micro_batch_size,
-                unet_params=unet.n_params,
-                latents=latents, # Pass the latents from the current batch
-                actions=actions,
-            )
+            if dist.get_rank()==0:
+                print(f"\nGenerating dashboard at step {i} on rank {local_rank}...")
+                # Pass the necessary arguments, including the current batch's latents
+                plot_training_dashboard(
+                    save_path=f'images_training/dashboard_step_{i}.png', # Dynamic filename
+                    precond=precond,
+                    autoencoder=autoencoder,
+                    losses_history=losses, # Pass the list of scalar losses
+                    current_step=i,
+                    micro_batch_size=micro_batch_size,
+                    unet_params=n_params,
+                    latents=latents, # Pass the latents from the current batch
+                    actions=actions,
+                )
 
         if i % (total_number_of_steps//40) == 0 and i!=0 and local_rank==0:  # save every 10% of epochs
-            unet.save_to_state_dict(f"saved_models/unet_{unet.n_params//1e6}M.pt")
+            os.makedirs("saved_models", exist_ok=True)
+            unet.module.save_to_state_dict(f"saved_models/unet_{n_params//1e6}M.pt")
             torch.save({
                 'steps_taken': i,
                 'optimizer_state_dict': optimizer.state_dict(),
                 'ema_state_dict': ema_tracker.state_dict(),
                 'losses': losses,
                 'ref_lr': ref_lr
-            }, f"saved_models/optimizers_{unet.n_params//1e6}M.pt")
+            }, f"saved_models/optimizers_{n_params//1e6}M.pt")
 
         if i == total_number_of_steps:
             break
-        
-        dist.barrier()
 
 dist.destroy_process_group()
 # %%
