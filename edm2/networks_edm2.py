@@ -217,9 +217,6 @@ class Precond(BetterModule):
     ):
         super().__init__()
         self.unet = unet
-        self.img_resolution = unet.img_resolution
-        self.img_channels = unet.img_channels
-        self.label_dim = unet.label_dim
         self.use_fp16 = use_fp16
         self.sigma_data = sigma_data
         self.noise_weight = MultiNoiseLoss()

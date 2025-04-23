@@ -27,11 +27,11 @@ state_size = 24
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 latent_channels=8
-autoencoder = VAE.from_pretrained("saved_models/vae_lunar_lander.pt").to("cuda")
+autoencoder = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_lunar_lander.pt").to("cuda")
 dataset = GymDataGenerator(state_size, original_env, total_number_of_steps, autoencoder_time_compression = 4, return_anyways=False)
 dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=0)
 
-unet=UNet.from_pretrained('saved_models/unet_8.0M.pt')
+unet=UNet.from_pretrained('s3://autoregressive-diffusion/saved_models/unet_lunar_lander_8M.pt')
 g_net=None
 precond = Precond(unet, use_fp16=True, sigma_data=1.).to(device)
 # Modify the sampler to collect intermediate steps and compute MSE

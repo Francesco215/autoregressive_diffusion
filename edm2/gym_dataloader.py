@@ -70,6 +70,9 @@ class GymDataGenerator(IterableDataset):
                 terminated = True
                 
             step_count += 1
+    
+    def __len__(self):
+        return self.training_examples
 
 
 

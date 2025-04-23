@@ -1,11 +1,15 @@
 #%%
-import numpy as np
+import os
+
 import torch
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from torch.nn.utils import clip_grad_norm_
 import torch._dynamo.config
 
+import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
@@ -23,7 +27,10 @@ torch._dynamo.config.cache_size_limit = 100
 # torch.autograd.set_detect_anomaly(True)
 #%%
 if __name__=="__main__":
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    dist.init_process_group(backend="nccl")
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
+    device = torch.device("cuda", local_rank)
 
     original_env = "LunarLander-v3"
     model_id="stabilityai/stable-diffusion-2-1"
@@ -31,7 +38,7 @@ if __name__=="__main__":
     autoencoder = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_lunar_lander.pt").to(device).requires_grad_(False)
     # autoencoder = VAE.from_pretrained("saved_models/vae_lunar_lander.pt").to(device).requires_grad_(False)
 
-    resume_training = True
+    resume_training = False
     unet = UNet(img_resolution=256//autoencoder.spatial_compression, # Match your latent resolution
                 img_channels=autoencoder.latent_channels, # Match your latent channels
                 label_dim = 4, #this should be equal to the action space of the gym environment
@@ -42,10 +49,8 @@ if __name__=="__main__":
                 num_blocks=1,
                 attn_resolutions=[8]
                 )
-
-    print(f"Number of UNet parameters: {unet.n_params//1e6}M")
-    if resume_training:
-        unet=UNet.from_pretrained(f'saved_models/unet_{unet.n_params//1e6}M.pt')
+    unet = DDP(unet.to(device), device_ids=[local_rank], output_device=local_rank)
+    
 
     micro_batch_size = 8
     batch_size = micro_batch_size
@@ -58,7 +63,7 @@ if __name__=="__main__":
 
     # sigma_data = 0.434
     sigma_data = 1.
-    precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
+    precond = Precond(unet, use_fp16=True, sigma_data=sigma_data)
     loss_fn = EDM2Loss(P_mean=1.2,P_std=1., sigma_data=sigma_data, context_noise_reduction=0.5)
 
     ref_lr = 1e-2
@@ -68,15 +73,6 @@ if __name__=="__main__":
     ema_tracker = PowerFunctionEMA(precond, stds=[0.050, 0.100])
     losses, steps_taken = [], 0
 
-    if resume_training:
-        checkpoint = torch.load(f'saved_models/optimizers_{unet.n_params//1e6}M.pt', weights_only=False, map_location='cuda')
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        ema_tracker.load_state_dict(checkpoint['ema_state_dict'])
-        losses = checkpoint['losses']
-        current_lr = optimizer.param_groups[0]['lr']
-        ref_lr = checkpoint['ref_lr']
-        steps_taken = checkpoint['steps_taken']
-        print(f"Resuming training from batch {checkpoint['steps_taken']} with loss {losses[-1]:.4f}")
 
     #%%
     pbar = tqdm(enumerate(dataloader, start=steps_taken),total=total_number_of_steps)
@@ -91,7 +87,15 @@ if __name__=="__main__":
         loss, un_weighted_loss = loss_fn(precond, latents, actions)
         losses.append(un_weighted_loss)
         # Backpropagation and optimization
-        loss.backward()
+        if (i + 1) % accumulation_steps != 0:
+            context = precond.no_sync()       # skip sync in this backward
+        else:
+            context = torch.enable_grad()     # or just default
+
+        with context:
+            loss, _ = loss_fn(precond, latents, actions)
+            loss = loss / accumulation_steps  # average your loss
+            loss.backward()
         pbar.set_postfix_str(f"Loss: {np.mean(losses[-accumulation_steps:]):.4f}, lr: {current_lr:.6f}")
 
         if i % accumulation_steps == 0 and i!=0:
@@ -107,7 +111,7 @@ if __name__=="__main__":
                 g['lr'] = current_lr
 
         # Save model checkpoint (optional)
-        if i % 500 * accumulation_steps == 0 and i!=0:
+        if i % 500 * accumulation_steps == 0 and i!=0 and local_rank==0:
             precond.noise_weight.fit_loss_curve()
             print(f"\nGenerating dashboard at step {i}...")
             # Pass the necessary arguments, including the current batch's latents
@@ -123,7 +127,7 @@ if __name__=="__main__":
                 actions=actions,
             )
 
-        if i % (total_number_of_steps//40) == 0 and i!=0:  # save every 10% of epochs
+        if i % (total_number_of_steps//40) == 0 and i!=0 and local_rank==0:  # save every 10% of epochs
             unet.save_to_state_dict(f"saved_models/unet_{unet.n_params//1e6}M.pt")
             torch.save({
                 'steps_taken': i,
@@ -135,4 +139,8 @@ if __name__=="__main__":
 
         if i == total_number_of_steps:
             break
+        
+        dist.barrier()
+
+dist.destroy_process_group()
 # %%
