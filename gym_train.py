@@ -92,8 +92,6 @@ if __name__=="__main__":
         # Backpropagation and optimization
 
         with (precond.no_sync() if (i + 1) % accumulation_steps != 0 else nullcontext()):
-            loss, _ = loss_fn(precond, latents, actions)
-            loss = loss / accumulation_steps  # average your loss
             loss.backward()
         pbar.set_postfix_str(f"Loss: {np.mean(losses[-accumulation_steps:]):.4f}, lr: {current_lr:.6f}")
 

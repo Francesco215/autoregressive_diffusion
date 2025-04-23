@@ -219,7 +219,7 @@ class Precond(BetterModule):
         self.unet = unet
         self.use_fp16 = use_fp16
         self.sigma_data = sigma_data
-        self.noise_weight = MultiNoiseLoss()
+        self.noise_weight = MultiNoiseLoss().to(unet.device)
 
     def forward(self, x:Tensor, sigma:Tensor, conditioning:Tensor=None, force_fp32:bool=False, cache:dict=None, update_cache=False):
         if cache is None: cache = {}

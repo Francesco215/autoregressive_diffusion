@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 from torch import Tensor
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
@@ -29,6 +30,8 @@ class MultiNoiseLoss(nn.Module):
     @torch.no_grad()
     def add_data(self, sigmas: Tensor, losses: Tensor):
         # Assuming sigmas and losses are 2D tensors.
+        dist_on = dist.is_available() and dist.is_initialized()
+        if dist_on and dist.get_rank()!=0: return
         positions = torch.arange(sigmas.numel()) % sigmas.shape[1]
         # Flatten and flip the data.
         self.sigmas = torch.cat((self.sigmas, sigmas.flatten().detach().cpu()))[-self.history_size:]
@@ -46,6 +49,9 @@ class MultiNoiseLoss(nn.Module):
 
     @torch.no_grad()
     def plot(self, save_path=None):
+
+        dist_on = dist.is_available() and dist.is_initialized()
+        if dist_on and dist.get_rank()!=0: return
         if self.sigmas.numel() == 0:
             return  # Nothing to plot if no data
         
@@ -114,34 +120,33 @@ class FourierSeriesFit(nn.Module):
         return torch.stack(basis, dim=-1)
 
     @torch.no_grad()
-    def fit_data(self, X: Tensor, Y: Tensor):
+    def fit_data(self, X: torch.Tensor, Y: torch.Tensor):
         """
-        Fit the Fourier coefficients to data by solving a least-squares problem.
-        Only uses data where log10(X) is within the specified interval.
-        
-        Args:
-            X (Tensor): Input tensor of x-values.
-            Y (Tensor): Input tensor of y-values.
+        Solve for the Fourier coefficients in rank 0 and broadcast them to
+        all other ranks when torch.distributed is initialized.
         """
-        # Only consider points where log10(x) is in the desired interval.
-        X_log = torch.log10(X)
-        mask = (X_log >= self.interval_min) & (X_log <= self.interval_max)
-        X_filtered = X[mask].flatten()
-        Y_filtered = Y[mask].flatten()
-        if X_filtered.numel() == 0:
-            print("No data in the specified interval for fitting.")
-            return
-        
-        # Build the Fourier basis for the filtered x values.
-        basis = self.fourier_series(X_filtered)  # shape: (N, num_basis)
-        # We will fit the model in log10 space:
-        target = Y_filtered.log10().unsqueeze(1)  # shape: (N, 1)
-        # Solve the least squares problem.
-        sol = torch.linalg.lstsq(basis, target).solution  # shape: (num_basis, 1)
-        # Update the coefficients in-place.
-        self.coefficients.data.copy_(sol)
-        # Optionally, store a history of the coefficients.
-        self.coefficients_history.append(sol.detach().clone())
+        # ── 1.  Cheap check so the same code works with or without DDP ─────────
+        dist_on = dist.is_available() and dist.is_initialized()
+        rank    = dist.get_rank() if dist_on else 0
+
+        # ── 2.  Rank 0 does the actual least-squares fit ───────────────────────
+        if rank == 0:
+            X_log = torch.log10(X)
+            mask  = (X_log >= self.interval_min) & (X_log <= self.interval_max)
+            X_f   = X[mask].flatten()
+            Y_f   = Y[mask].flatten()
+
+            basis   = self.fourier_series(X_f)            # (N, num_basis)
+            target  = Y_f.log10().unsqueeze(1)            # (N, 1)
+            sol     = torch.linalg.lstsq(basis, target).solution
+            self.coefficients.data.copy_(sol)             # in-place update
+            self.coefficients_history.append(sol.detach().clone())
+
+        # ── 3.  Every rank participates in the broadcast ───────────────────────
+        if dist_on:
+            # The tensor already lives on the correct device, so we can
+            # broadcast in place.  This blocks until all ranks have the data.
+            dist.broadcast(self.coefficients.data, src=0)
 
     def forward(self, x: Tensor) -> Tensor:
         original_shape = x.shape

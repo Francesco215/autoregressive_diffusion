@@ -158,27 +158,6 @@ def bmult(x:Tensor, t:Tensor):
 
     
     
-# Example implementation
-def apply_clipped_grads(model, optimizer, main_loss, adv_loss, max_norm_main, max_norm_adv):
-    # Assign to .grad
-    if max_norm_adv is None:
-        (main_loss + adv_loss).backward()
-        clip_grad_norm_(model.parameters(), max_norm_main)
-        return
-    
-    # Compute gradients
-    main_grads = torch.autograd.grad(main_loss, model.parameters(), retain_graph=True)
-    adv_grads = torch.autograd.grad(adv_loss, model.parameters())
-    
-    # Clip gradients (norm clipping)
-    clip_grad_norm_(main_grads, max_norm_main)
-    clip_grad_norm_(adv_grads, max_norm_adv)
-    
-    for param, main_g, adv_g in zip(model.parameters(), main_grads, adv_grads):
-        param.grad = main_g + adv_g
-
-        
-        
 from torch import nn
 from contextlib import contextmanager
 

@@ -1,8 +1,12 @@
 #%%
+from contextlib import nullcontext
+import os
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -19,8 +23,13 @@ import torch._dynamo.config
 torch._dynamo.config.cache_size_limit = 100
         
 if __name__=="__main__":
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
+    dist.init_process_group(backend="nccl", init_method="env://")
+    device = torch.device("cuda", local_rank)
+
     clean_stale_shared_memory()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
 
     unet = UNet(img_resolution=32, # Match your latent resolution
                 img_channels=8, # Match your latent channels
@@ -37,15 +46,15 @@ if __name__=="__main__":
     print(f"Number of UNet parameters: {unet_params//1e6}M")
     if resume_training:
         unet=UNet.from_pretrained(f'saved_models/unet_{unet_params//1e6}M.pt')
-
+    unet = DDP(unet.to(device), device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
 
     micro_batch_size = 1
     batch_size = 8
     accumulation_steps = batch_size//micro_batch_size
     clip_length = 8
     # training_steps = total_number_of_steps * batch_size
-    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed/', local = '/tmp/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
-    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsVaeCollate(), num_workers=24, shuffle=False)
+    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed/', local = f'/tmp/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False, cache_limit = '5gb')
+    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsVaeCollate(), pin_memory=True, num_workers=24, shuffle=False)
     steps_per_epoch = len(dataset)//micro_batch_size
     n_epochs = 10
     total_number_of_steps = n_epochs * steps_per_epoch
@@ -89,7 +98,8 @@ if __name__=="__main__":
             loss, un_weighted_loss = loss_fn(precond, latents, actions)
             losses.append(un_weighted_loss)
             # Backpropagation and optimization
-            loss.backward()
+            with (precond.no_sync() if (i + 1) % accumulation_steps != 0 else nullcontext()):
+                loss.backward()
             pbar.set_postfix_str(f"Loss: {np.mean(losses[-accumulation_steps:]):.4f}, lr: {current_lr:.6f}, epoch: {epoch+1}")
 
             if i % accumulation_steps == 0 and i!=0:
@@ -103,7 +113,7 @@ if __name__=="__main__":
                     g['lr'] = current_lr
 
             # Save model checkpoint (optional)
-            if i % 50 * accumulation_steps == 0 and i!=0:
+            if i % 50 * accumulation_steps == 0 and i!=0 and local_rank==0:
                 precond.noise_weight.fit_loss_curve()
                 precond.noise_weight.plot('images_training/plot.png')
                 n_clips = np.linspace(0, i * micro_batch_size, len(losses))
@@ -122,13 +132,14 @@ if __name__=="__main__":
                 plt.close()
 
         # if i % (total_number_of_steps//100) == 0 and i!=0:  # save every 10% of epochs
-        unet.save_to_state_dict(f"saved_models/unet_{unet_params//1e6}M.pt")
-        torch.save({
-            'steps_taken': i,
-            'optimizer_state_dict': optimizer.state_dict(),
-            'ema_state_dict': ema_tracker.state_dict(),
-            'losses': losses,
-            'ref_lr': ref_lr
-        }, f"saved_models/optimizers_{unet_params//1e6}M.pt")
+        if local_rank==0:
+            unet.save_to_state_dict(f"saved_models/unet_{unet_params//1e6}M.pt")
+            torch.save({
+                'steps_taken': i,
+                'optimizer_state_dict': optimizer.state_dict(),
+                'ema_state_dict': ema_tracker.state_dict(),
+                'losses': losses,
+                'ref_lr': ref_lr
+            }, f"saved_models/optimizers_{unet_params//1e6}M.pt")
 
 # %%
