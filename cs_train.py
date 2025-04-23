@@ -23,9 +23,14 @@ import torch._dynamo.config
 torch._dynamo.config.cache_size_limit = 100
         
 if __name__=="__main__":
-    local_rank = int(os.environ["LOCAL_RANK"])
+    # local_rank = int(os.environ["LOCAL_RANK"])
+    # torch.cuda.set_device(local_rank)
+    # dist.init_process_group(backend="nccl", init_method="env://")
+    # device = torch.device("cuda", local_rank)
+
+    dist.init_process_group(backend="nccl")
+    local_rank=dist.get_rank()
     torch.cuda.set_device(local_rank)
-    dist.init_process_group(backend="nccl", init_method="env://")
     device = torch.device("cuda", local_rank)
 
     clean_stale_shared_memory()
@@ -98,7 +103,7 @@ if __name__=="__main__":
             loss, un_weighted_loss = loss_fn(precond, latents, actions)
             losses.append(un_weighted_loss)
             # Backpropagation and optimization
-            with (precond.no_sync() if (i + 1) % accumulation_steps != 0 else nullcontext()):
+            with (nullcontext() if i % accumulation_steps == 0 else unet.no_sync()):
                 loss.backward()
             pbar.set_postfix_str(f"Loss: {np.mean(losses[-accumulation_steps:]):.4f}, lr: {current_lr:.6f}, epoch: {epoch+1}")
 
