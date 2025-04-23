@@ -91,7 +91,7 @@ if __name__=="__main__":
         losses.append(un_weighted_loss)
         # Backpropagation and optimization
 
-        with (nullcontext() if i % accumulation_steps == 0 else precond.no_sync()):
+        with (nullcontext() if i % accumulation_steps == 0 else unet.no_sync()):
             loss.backward()
         pbar.set_postfix_str(f"Loss: {np.mean(losses[-accumulation_steps:]):.4f}, lr: {current_lr:.6f}")
 
