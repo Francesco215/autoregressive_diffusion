@@ -112,7 +112,7 @@ class TestUNet(unittest.TestCase):
             channel_mult_noise=None,
             channel_mult_emb=None,
             num_blocks=3,
-            attn_resolutions=[16,8]
+            video_attn_resolutions=[16,8]
         ).to("cuda").to(dtype)
         print(f"Number of UNet parameters: {sum(p.numel() for p in cls.unet.parameters()) // 1e6}M")
 

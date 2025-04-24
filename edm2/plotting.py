@@ -117,7 +117,7 @@ def plot_training_dashboard(
     target = latents[:, -1:]    # Last frame (ground truth)
     precond.eval()
     sigma = torch.ones(context.shape[:2], device=latents.device) * 0.05
-    _, cache = precond.forward(context, sigma, conditioning=actions[:,:context.shape[1]])
+    _, cache = precond.forward(context, sigma, conditioning=actions[:,:context.shape[1]], update_cache=True)
 
     # Run sampler with sigma_max=0.5 for initial noise level
     _, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(net=precond, cache=cache, target=target, sigma_max=3, sigma_min=0.4, num_steps=32, conditioning=actions[:,context.shape[1]:context.shape[1]+1], rho = 2, guidance = 1, S_churn=20, S_noise=1,

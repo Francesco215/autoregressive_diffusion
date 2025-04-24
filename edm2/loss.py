@@ -32,8 +32,8 @@ class EDM2Loss:
         out, _ = net(cat_images + noise, sigma, conditioning)
         denoised = out[:,n_frames:]
         errors = (denoised - images) ** 2
-        losses = errors.mean(dim=(-1,-2,-3))
-        # losses = top_losses(errors, fraction=3e-3)
+        # losses = errors.mean(dim=(-1,-2,-3))
+        losses = top_losses(errors, fraction=3e-3)
 
         sigma = sigma[:,n_frames:]
         weight = (sigma ** 2 + self.sigma_data ** 2) / (sigma * self.sigma_data) ** 2 # the 0.5 factor is because the Karras paper is wrong
@@ -56,7 +56,7 @@ def top_losses(errors:torch.Tensor, fraction:float):
     k = int(errors.shape[-1]*errors.shape[-2]*fraction)
 
     top_k = torch.topk(errors, k, dim =-1, sorted = False)
-    return (top_k.values).mean(dim=-1)
+    return (top_k.values).mean(dim=-1) + errors.mean(dim=-1)
 
 
 

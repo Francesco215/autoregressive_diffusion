@@ -49,7 +49,10 @@ class Block(torch.nn.Module):
         self.conv_res1 = MPCausal3DGatedConv(out_channels, out_channels, kernel=[3,3,3])
 
         self.conv_skip = MPConv(in_channels, out_channels, kernel=[1,1]) if in_channels != out_channels else None
-        self.attn = VideoAttention(out_channels, self.num_heads, attn_balance)
+        if attention == 'video':
+            self.attn = VideoAttention(out_channels, self.num_heads, attn_balance)
+        else:
+            self.attn = FrameAttention(out_channels, self.num_heads, attn_balance)
 
         if self.num_heads > 0: 
             assert (out_channels & (out_channels - 1) == 0) and out_channels != 0, f"out_channels must be a power of 2, got {out_channels}"
@@ -94,14 +97,15 @@ class UNet(BetterModule):
         img_resolution,                     # Image resolution.
         img_channels,                       # Image channels.
         label_dim,                          # Class label dimensionality. 0 = unconditional.
-        model_channels      = 192,          # Base multiplier for the number of channels.
-        channel_mult        = [1,2,2,4],    # Per-resolution multipliers for the number of channels.
-        channel_mult_noise  = None,         # Multiplier for noise embedding dimensionality. None = select based on channel_mult.
-        channel_mult_emb    = None,         # Multiplier for final embedding dimensionality. None = select based on channel_mult.
-        num_blocks          = 3,            # Number of residual blocks per resolution.
-        attn_resolutions    = [16,8],       # List of resolutions with self-attention.
-        label_balance       = 0.5,          # Balance between noise embedding (0) and class embedding (1).
-        concat_balance      = 0.5,          # Balance between skip connections (0) and main path (1).
+        model_channels         = 192,       # Base multiplier for the number of channels.
+        channel_mult           = [1,2,2,4], # Per-resolution multipliers for the number of channels.
+        channel_mult_noise     = None,      # Multiplier for noise embedding dimensionality. None = select based on channel_mult.
+        channel_mult_emb       = None,      # Multiplier for final embedding dimensionality. None = select based on channel_mult.
+        num_blocks             = 3,         # Number of residual blocks per resolution.
+        video_attn_resolutions = [8],       # List of resolutions with VideoAttention.
+        frame_attn_resolutions = [16],      # List of resulutions with FrameAttention.
+        label_balance          = 0.5,       # Balance between noise embedding (0) and class embedding (1).
+        concat_balance         = 0.5,       # Balance between skip connections (0) and main path (1).
         **block_kwargs,                     # Arguments for Block.
     ):
         super().__init__()
@@ -136,7 +140,8 @@ class UNet(BetterModule):
             for idx in range(num_blocks):
                 cin = cout
                 cout = channels
-                self.enc[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='enc', attention=(res in attn_resolutions), **block_kwargs)
+                attention = 'video' if res in video_attn_resolutions else 'frame' if res in frame_attn_resolutions else False
+                self.enc[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='enc', attention=attention, **block_kwargs)
 
         # Decoder.
         self.dec = torch.nn.ModuleDict()
@@ -151,7 +156,8 @@ class UNet(BetterModule):
             for idx in range(num_blocks + 1):
                 cin = cout + skips.pop()
                 cout = channels
-                self.dec[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=(res in attn_resolutions), **block_kwargs)
+                attention = 'video' if res in video_attn_resolutions else 'frame' if res in frame_attn_resolutions else False
+                self.dec[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=attention, **block_kwargs)
         self.out_conv = MPCausal3DGatedConv(cout, img_channels, kernel=[3,3,3])
 
         # Saves the kwargs
@@ -219,7 +225,7 @@ class Precond(BetterModule):
         self.unet = unet
         self.use_fp16 = use_fp16
         self.sigma_data = sigma_data
-        self.noise_weight = MultiNoiseLoss().to(unet.device)
+        self.noise_weight = MultiNoiseLoss()
 
     def forward(self, x:Tensor, sigma:Tensor, conditioning:Tensor=None, force_fp32:bool=False, cache:dict=None, update_cache=False):
         if cache is None: cache = {}

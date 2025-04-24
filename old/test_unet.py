@@ -29,7 +29,7 @@ unet = UNet(img_resolution=64, # Match your latent resolution
             channel_mult_noise=None,
             channel_mult_emb=None,
             num_blocks=2,
-            attn_resolutions=[16,8]
+            video_attn_resolutions=[16,8]
             )
 print(f"Number of UNet parameters: {sum(p.numel() for p in unet.parameters())//1e6}M")
 precond = Precond(unet, use_fp16=True, sigma_data=1.).to("cuda")

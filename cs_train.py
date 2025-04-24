@@ -44,7 +44,7 @@ if __name__=="__main__":
                 channel_mult_noise=None,
                 channel_mult_emb=None,
                 num_blocks=2,
-                attn_resolutions=[8,4]
+                video_attn_resolutions=[8,4]
                 )
     resume_training=False
     unet_params = sum(p.numel() for p in unet.parameters())

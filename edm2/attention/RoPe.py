@@ -31,6 +31,15 @@ class RotaryEmbedding(nn.Module):
 
         return freqs, scale
 
+    def get_rotary_embedding(self,n):
+        if (self.pos_emb is not None) and self.pos_emb.shape[0] >= n:
+            return self.pos_emb[:n], self.pos_emb_scale[:n]
+
+        pos_emb, scale = self.make_rotary_embedding(n)
+        self.register_buffer("pos_emb", pos_emb.to(torch.float16), persistent=False)
+        self.register_buffer("pos_emb_scale", scale.to(torch.float16), persistent=False)
+        return pos_emb, scale
+
     def forward(self, q:Tensor, k:Tensor):
         # q,k shape = b m t (h w) c
         

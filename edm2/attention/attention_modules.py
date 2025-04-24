@@ -95,7 +95,7 @@ class FrameAttention(nn.Module):
         self.attn_qkv = MPConv(channels, channels * 3, kernel=[1,1]) 
         self.attn_proj = MPConv(channels, channels, kernel=[1,1]) 
 
-    def forward(self, x, batch_size, cache=None):
+    def forward(self, x, batch_size, cache=None, update_cache=False):
         if self.num_heads==0:
             return x, None
         # x.shape = bt c h w
