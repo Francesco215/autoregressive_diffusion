@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from streaming.base.util import clean_stale_shared_memory
 
 
+from edm2.plotting import plot_training_dashboard
 from edm2.vae import VAE
 from edm2.cs_dataloading import CsCollate, CsDataset, CsVaeCollate, CsVaeDataset
 from edm2.networks_edm2 import UNet, Precond
@@ -36,30 +37,34 @@ if __name__=="__main__":
     clean_stale_shared_memory()
     
 
-    unet = UNet(img_resolution=32, # Match your latent resolution
+    unet = UNet(img_resolution=64, # Match your latent resolution
                 img_channels=8, # Match your latent channels
                 label_dim = 4,
                 model_channels=128,
-                channel_mult=[1,2,4,4],
+                channel_mult=[1,2,4,8],
                 channel_mult_noise=None,
                 channel_mult_emb=None,
-                num_blocks=2,
-                video_attn_resolutions=[8,4]
+                num_blocks=4,
+                video_attn_resolutions=[8],
+                frame_attn_resolutions=[16],
                 )
     resume_training=False
     unet_params = sum(p.numel() for p in unet.parameters())
-    print(f"Number of UNet parameters: {unet_params//1e6}M")
     if resume_training:
         unet=UNet.from_pretrained(f'saved_models/unet_{unet_params//1e6}M.pt')
     unet = DDP(unet.to(device), device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
 
+    if local_rank==0:
+        autoencoder = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_cs.pt").to(device)
+        print(f"Number of UNet parameters: {unet_params//1e6}M")
+
     micro_batch_size = 1
-    batch_size = 8
+    batch_size = 1
     accumulation_steps = batch_size//micro_batch_size
-    clip_length = 8
+    clip_length = 12
     # training_steps = total_number_of_steps * batch_size
-    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed/', local = f'/tmp/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False, cache_limit = '5gb')
-    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsVaeCollate(), pin_memory=True, num_workers=24, shuffle=False)
+    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed/', local = f'/data/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False, cache_limit = '200gb')
+    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsVaeCollate(), pin_memory=True, num_workers=6, shuffle=False)
     steps_per_epoch = len(dataset)//micro_batch_size
     n_epochs = 10
     total_number_of_steps = n_epochs * steps_per_epoch
@@ -91,11 +96,11 @@ if __name__=="__main__":
 
     #%%
     for epoch in range (n_epochs):
-        pbar = tqdm(enumerate(dataloader, start=steps_taken),total=steps_per_epoch)
+        pbar = tqdm(enumerate(dataloader, start=steps_taken),total=steps_per_epoch) if local_rank==0 else enumerate(dataloader)
         for i, batch in pbar:
             with torch.no_grad():
                 latents, _, _ = batch
-                latents = latents.to(device)/1.3
+                latents = latents.to(device)/1.6
                 actions = None
                 
                     
@@ -105,7 +110,8 @@ if __name__=="__main__":
             # Backpropagation and optimization
             with (nullcontext() if i % accumulation_steps == 0 else unet.no_sync()):
                 loss.backward()
-            pbar.set_postfix_str(f"Loss: {np.mean(losses[-accumulation_steps:]):.4f}, lr: {current_lr:.6f}, epoch: {epoch+1}")
+            if local_rank==0:
+                pbar.set_postfix_str(f"Loss: {np.mean(losses[-accumulation_steps:]):.4f}, lr: {current_lr:.6f}, epoch: {epoch+1}")
 
             if i % accumulation_steps == 0 and i!=0:
                 #microbatching
@@ -118,26 +124,24 @@ if __name__=="__main__":
                     g['lr'] = current_lr
 
             # Save model checkpoint (optional)
-            if i % 50 * accumulation_steps == 0 and i!=0 and local_rank==0:
+            if i % 500 * accumulation_steps == 0 and i!=0:
                 precond.noise_weight.fit_loss_curve()
-                precond.noise_weight.plot('images_training/plot.png')
-                n_clips = np.linspace(0, i * micro_batch_size, len(losses))
-                plt.plot(n_clips, losses, label='Loss', color='blue', alpha=0.5)
-                if len(losses) >= 100:
-                    moving_avg = np.convolve(losses, np.ones(100) / 100, mode='valid')
-                    n_images_avg = np.linspace(0, i * micro_batch_size, len(moving_avg))
-                    plt.plot(n_images_avg, moving_avg, label='Moving Average', color='blue', alpha=1)
-                plt.xscale('log')
-                plt.xlabel('n images')
-                plt.ylabel('loss')
-                plt.yscale('log')
-                plt.title(f'Losses with {unet_params} parameters')
-                plt.savefig('images_training/losses.png')
-                plt.show()
-                plt.close()
+                if local_rank==0:
+                    plot_training_dashboard(
+                        save_path=f'images_training/dashboard_step_{i}.png', # Dynamic filename
+                        precond=precond,
+                        autoencoder=autoencoder,
+                        losses_history=losses, # Pass the list of scalar losses
+                        current_step=i,
+                        micro_batch_size=micro_batch_size,
+                        unet_params=unet_params,
+                        latents=latents, # Pass the latents from the current batch
+                        actions=actions,
+                    )
 
         # if i % (total_number_of_steps//100) == 0 and i!=0:  # save every 10% of epochs
         if local_rank==0:
+            os.makedirs("saved_models", exist_ok=True)
             unet.save_to_state_dict(f"saved_models/unet_{unet_params//1e6}M.pt")
             torch.save({
                 'steps_taken': i,

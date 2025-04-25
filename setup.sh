@@ -1,9 +1,9 @@
 apt update
-apt install btop tmux unzip ffmpeg  -y
+apt install btop tmux unzip ffmpeg pip -y
 
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
 unzip awscliv2.zip
-sudo ./aws/install
+. ./aws/install
 rm -rf awscliv2.zip aws/
 
 # i want to get rid of this two lines
