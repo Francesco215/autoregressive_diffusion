@@ -122,7 +122,7 @@ def plot_training_dashboard(
 
     # Run sampler with sigma_max=0.5 for initial noise level
     conditioning = None if actions is None else actions[:,context.shape[1]:context.shape[1]+1]
-    _, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(net=precond, cache=cache, target=target, sigma_max=3, sigma_min=0.4, num_steps=32, conditioning=conditioning, rho = 2, guidance = 1, S_churn=20, S_noise=1,
+    _, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(net=precond, cache=cache, target=target, sigma_max=3, sigma_min=0.2, num_steps=32, conditioning=conditioning, rho = 2, guidance = 1, S_churn=20, S_noise=1,
     )
 
     # Plot results
@@ -141,7 +141,7 @@ def plot_training_dashboard(
     ax4 = axes[1, 1]
     for _ in tqdm(range(6)):
         actions = None if actions is None else torch.randint(0,3,(latents.shape[0],1), device=latents.device)
-        x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, conditioning = actions, sigma_max = 80, sigma_min=0.4, num_steps=16, rho=2, guidance=1, S_churn=0.)
+        x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, conditioning = actions, sigma_max = 80, sigma_min=0.2, num_steps=16, rho=2, guidance=1, S_churn=0.)
         context = torch.cat((context,x),dim=1)
 
     frames = autoencoder.latents_to_frames(context)
