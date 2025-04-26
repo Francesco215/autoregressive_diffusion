@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ssh-pod
+spec:
+  containers:
+  - name: cuda
+    # --- This line is changed ---
+    image: nvidia/cuda:12.6.0-runtime-ubuntu22.04
+    # --------------------------
+    command:
+    - /bin/sh
+    - -c
+    - |
+      apt-get update && apt-get install -y openssh-server && \
+      passwd -d root && \
+      echo 'PermitRootLogin yes\nPasswordAuthentication yes\nPermitEmptyPasswords yes' > /etc/ssh/sshd_config && \
+      mkdir -p /var/run/sshd && \
+      /usr/sbin/sshd -D
+    ports:
+    - containerPort: 22
+    resources:
+      requests:
+        nvidia.com/gpu: 8
+        nvidia.com/hostdev: 8 # Assuming this is specific to your platform (SF Compute)
+        memory: "512Gi"
+        cpu: "32"
+      limits:
+        nvidia.com/gpu: 8
+        nvidia.com/hostdev: 8 # Assuming this is specific to your platform (SF Compute)
+        memory: "512Gi"
+        cpu: "32"
+    volumeMounts:
+    - name: data-volume
+      mountPath: /data
+  volumes:
+  - name: data-volume
+    emptyDir: {}

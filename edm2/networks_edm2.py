@@ -9,7 +9,7 @@ import einops
 
 from .loss_weight import MultiNoiseLoss
 from .utils import BetterModule, normalize, resample, mp_silu, mp_sum, mp_cat, MPFourier, bmult
-from .conv import MPCausal3DConv, MPConv, MPCausal3DGatedConv, Gating
+from .conv import  MPConv, MPCausal3DGatedConv, Gating
 from .attention import FrameAttention, VideoAttention
 
 
@@ -22,9 +22,9 @@ class Block(torch.nn.Module):
         in_channels,                    # Number of input channels.
         out_channels,                   # Number of output channels.
         emb_channels,                   # Number of embedding channels.
-        flavor              = 'enc',    # Flavor: 'enc' or 'dec'.
+        flavor               = 'enc',    # Flavor: 'enc' or 'dec'.
         resample_mode       = 'keep',   # Resampling: 'keep', 'up', or 'down'.
-        resample_filter     = [1,1],    # Resampling filter.
+        resample_filter      = [1,1],    # Resampling filter.
         attention           = False,    # Include self-attention?
         channels_per_head   = 64,       # Number of channels per attention head.
         dropout             = 0,        # Dropout probability.
@@ -47,17 +47,17 @@ class Block(torch.nn.Module):
         # if attention:
         self.conv_res0 = MPCausal3DGatedConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3,3])
         self.conv_res1 = MPCausal3DGatedConv(out_channels, out_channels, kernel=[3,3,3])
-        # else:
-        # self.conv_res0 = MPConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3])
-        # self.conv_res1 = MPConv(out_channels, out_channels, kernel=[3,3])
 
         self.conv_skip = MPConv(in_channels, out_channels, kernel=[1,1]) if in_channels != out_channels else None
-        self.attn = VideoAttention(out_channels, self.num_heads, attn_balance)
+        if attention == 'video':
+            self.attn = VideoAttention(out_channels, self.num_heads, attn_balance)
+        else:
+            self.attn = FrameAttention(out_channels, self.num_heads, attn_balance)
 
         if self.num_heads > 0: 
             assert (out_channels & (out_channels - 1) == 0) and out_channels != 0, f"out_channels must be a power of 2, got {out_channels}"
 
-    def forward(self, x, emb, batch_size, c_noise, cache=None):
+    def forward(self, x, emb, batch_size, c_noise, cache=None, update_cache=False):
         if cache is None: cache = {}
 
         # Main branch.
@@ -68,13 +68,13 @@ class Block(torch.nn.Module):
             x = normalize(x, dim=1) # pixel norm
 
         # Residual branch.
-        y, cache['conv_res0'] = self.conv_res0(mp_silu(x), emb, batch_size, c_noise, cache=cache.get('conv_res0', None)) 
+        y, cache['conv_res0'] = self.conv_res0(mp_silu(x), emb, batch_size, c_noise, cache.get('conv_res0', None), update_cache) 
         c = self.emb_linear(emb, gain=self.emb_gain) + 1
         y = bmult(y, c.to(y.dtype)) 
         y = mp_silu(y)
         if self.training and self.dropout != 0:
             y = torch.nn.functional.dropout(y, p=self.dropout)
-        y, cache['conv_res1'] = self.conv_res1(y, emb, batch_size, c_noise, cache=cache.get('conv_res1', None)) 
+        y, cache['conv_res1'] = self.conv_res1(y, emb, batch_size, c_noise, cache.get('conv_res1', None), update_cache) 
 
         # Connect the branches.
         if self.flavor == 'dec' and self.conv_skip is not None:
@@ -82,7 +82,7 @@ class Block(torch.nn.Module):
         x = mp_sum(x, y, t=self.res_balance)
 
         # Self-attention.
-        x, cache['attn'] = self.attn(x, batch_size, cache.get('attn', None))
+        x, cache['attn'] = self.attn(x, batch_size, cache.get('attn', None), update_cache)
 
         # Clip activations.
         if self.clip_act is not None:
@@ -97,14 +97,15 @@ class UNet(BetterModule):
         img_resolution,                     # Image resolution.
         img_channels,                       # Image channels.
         label_dim,                          # Class label dimensionality. 0 = unconditional.
-        model_channels      = 192,          # Base multiplier for the number of channels.
-        channel_mult        = [1,2,2,4],    # Per-resolution multipliers for the number of channels.
-        channel_mult_noise  = None,         # Multiplier for noise embedding dimensionality. None = select based on channel_mult.
-        channel_mult_emb    = None,         # Multiplier for final embedding dimensionality. None = select based on channel_mult.
-        num_blocks          = 3,            # Number of residual blocks per resolution.
-        attn_resolutions    = [16,8],       # List of resolutions with self-attention.
-        label_balance       = 0.5,          # Balance between noise embedding (0) and class embedding (1).
-        concat_balance      = 0.5,          # Balance between skip connections (0) and main path (1).
+        model_channels         = 192,       # Base multiplier for the number of channels.
+        channel_mult           = [1,2,2,4], # Per-resolution multipliers for the number of channels.
+        channel_mult_noise     = None,      # Multiplier for noise embedding dimensionality. None = select based on channel_mult.
+        channel_mult_emb       = None,      # Multiplier for final embedding dimensionality. None = select based on channel_mult.
+        num_blocks             = 3,         # Number of residual blocks per resolution.
+        video_attn_resolutions = [8],       # List of resolutions with VideoAttention.
+        frame_attn_resolutions = [16],      # List of resulutions with FrameAttention.
+        label_balance          = 0.5,       # Balance between noise embedding (0) and class embedding (1).
+        concat_balance         = 0.5,       # Balance between skip connections (0) and main path (1).
         **block_kwargs,                     # Arguments for Block.
     ):
         super().__init__()
@@ -139,7 +140,8 @@ class UNet(BetterModule):
             for idx in range(num_blocks):
                 cin = cout
                 cout = channels
-                self.enc[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='enc', attention=(res in attn_resolutions), **block_kwargs)
+                attention = 'video' if res in video_attn_resolutions else 'frame' if res in frame_attn_resolutions else False
+                self.enc[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='enc', attention=attention, **block_kwargs)
 
         # Decoder.
         self.dec = torch.nn.ModuleDict()
@@ -154,7 +156,8 @@ class UNet(BetterModule):
             for idx in range(num_blocks + 1):
                 cin = cout + skips.pop()
                 cout = channels
-                self.dec[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=(res in attn_resolutions), **block_kwargs)
+                attention = 'video' if res in video_attn_resolutions else 'frame' if res in frame_attn_resolutions else False
+                self.dec[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=attention, **block_kwargs)
         self.out_conv = MPCausal3DGatedConv(cout, img_channels, kernel=[3,3,3])
 
         # Saves the kwargs
@@ -162,13 +165,14 @@ class UNet(BetterModule):
         args, _, _, values = inspect.getargvalues(frame)
         self.kwargs = {arg: values[arg] for arg in args if arg != "self"}
 
-    def forward(self, x, c_noise, conditioning = None, cache:dict=None):
+    def forward(self, x, c_noise, conditioning = None, cache:dict=None, update_cache=False):
         if cache is None: cache = {}
         batch_size, time_dimention = x.shape[:2]
         n_context_frames = cache.get('n_context_frames', 0)
 
         res = x.clone()
-        out_res, cache['n_context_frames'] = self.out_res(c_noise, n_context_frames)
+        out_res, updated_n_context_frames = self.out_res(c_noise, n_context_frames)
+        if update_cache: cache['n_context_frames']=updated_n_context_frames
 
         # Reshaping
         x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
@@ -194,15 +198,15 @@ class UNet(BetterModule):
         x = torch.cat([x, torch.ones_like(x[:, :1])], dim=1)
         skips = []
         for name, block in self.enc.items():
-            x, cache['enc', name] = block(x, emb, batch_size, c_noise, cache=cache.get(('enc',name), None))
+            x, cache['enc', name] = block(x, emb, batch_size, c_noise, cache=cache.get(('enc',name), None), update_cache=update_cache)
             skips.append(x)
 
         # Decoder.
         for name, block in self.dec.items():
             if 'block' in name:
                 x = mp_cat(x, skips.pop(), t=self.concat_balance)
-            x, cache['dec', name] = block(x, emb, batch_size, c_noise, cache=cache.get(('dec',name), None))
-        x, cache['out_conv'] = self.out_conv(x, emb, batch_size, c_noise, cache=cache.get('out_conv', None))
+            x, cache['dec', name] = block(x, emb, batch_size, c_noise, cache=cache.get(('dec',name), None), update_cache=update_cache)
+        x, cache['out_conv'] = self.out_conv(x, emb, batch_size, c_noise, cache=cache.get('out_conv', None), update_cache=update_cache)
 
         x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
         x = mp_sum(x, res, out_res)
@@ -219,14 +223,11 @@ class Precond(BetterModule):
     ):
         super().__init__()
         self.unet = unet
-        self.img_resolution = unet.img_resolution
-        self.img_channels = unet.img_channels
-        self.label_dim = unet.label_dim
         self.use_fp16 = use_fp16
         self.sigma_data = sigma_data
         self.noise_weight = MultiNoiseLoss()
 
-    def forward(self, x:Tensor, sigma:Tensor, conditioning:Tensor=None, force_fp32:bool=False, cache:dict=None):
+    def forward(self, x:Tensor, sigma:Tensor, conditioning:Tensor=None, force_fp32:bool=False, cache:dict=None, update_cache=False):
         if cache is None: cache = {}
         cache['shape'] = x.shape
         x = x.to(torch.float32)
@@ -243,7 +244,7 @@ class Precond(BetterModule):
  
         # Run the model.
         x_in = (c_in * x).to(dtype)
-        F_x, cache = self.unet(x_in, c_noise, conditioning, cache)
+        F_x, cache = self.unet(x_in, c_noise, conditioning, cache, update_cache)
         D_x = c_skip * x + c_out * F_x.to(torch.float32)
         return D_x, cache
     

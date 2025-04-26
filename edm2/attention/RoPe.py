@@ -48,7 +48,8 @@ class RotaryEmbedding(nn.Module):
             q = einops.rearrange(q, 'b m (a t) hw c -> b m a t hw c', a=2)
             k = einops.rearrange(k, 'b m (a t) hw c -> b m a t hw c', a=2)
 
-        pos, scale=self.get_rotary_embedding(k.shape[-3])
+        # pos, scale=self.get_rotary_embedding(k.shape[-3])
+        pos, scale=self.make_rotary_embedding(k.shape[-3])
 
         k = (k * pos.cos() + rotate_half(k) * pos.sin())/scale
         if not self.training:

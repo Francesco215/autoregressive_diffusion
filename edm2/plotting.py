@@ -1,3 +1,4 @@
+from torch import distributed as dist
 from edm2.networks_edm2 import Precond
 from .sampler import edm_sampler_with_mse
 import matplotlib.pyplot as plt
@@ -6,6 +7,7 @@ import torch
 import einops
 from matplotlib.colors import LogNorm # Make sure LogNorm is imported
 from tqdm import tqdm # If not already imported where this function is defined
+import os
 
 # Assuming edm_sampler_with_mse and latents_to_frames are defined/imported
 # from edm2.sampler import edm_sampler_with_mse # Or wherever it is
@@ -39,9 +41,6 @@ def plot_training_dashboard(
     ax1 = axes[0, 0]
     noise_weight_module = precond.noise_weight # Get the MultiNoiseLoss module
     if hasattr(noise_weight_module, 'sigmas') and hasattr(noise_weight_module, 'losses') and noise_weight_module.sigmas.numel() > 0:
-        if hasattr(noise_weight_module, 'fit_loss_curve'):
-             print("Fitting loss curve for plotting...")
-             noise_weight_module.fit_loss_curve()
         sigmas_cpu = noise_weight_module.sigmas.cpu()
         losses_cpu = noise_weight_module.losses.cpu()
         positions_cpu = noise_weight_module.positions.cpu()
@@ -118,10 +117,12 @@ def plot_training_dashboard(
     target = latents[:, -1:]    # Last frame (ground truth)
     precond.eval()
     sigma = torch.ones(context.shape[:2], device=latents.device) * 0.05
-    _, cache = precond.forward(context, sigma, conditioning=actions[:,:context.shape[1]])
+    conditioning = None if actions is None else actions[:,:context.shape[1]] 
+    _, cache = precond.forward(context, sigma, conditioning, update_cache=True)
 
     # Run sampler with sigma_max=0.5 for initial noise level
-    _, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(net=precond, cache=cache, target=target, sigma_max=3,   num_steps=32, conditioning=actions[:,context.shape[1]:context.shape[1]+1], rho = 7, guidance = 1, S_churn=20, S_noise=1,
+    conditioning = None if actions is None else actions[:,context.shape[1]:context.shape[1]+1]
+    _, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(net=precond, cache=cache, target=target, sigma_max=3, sigma_min=0.4, num_steps=32, conditioning=conditioning, rho = 2, guidance = 1, S_churn=20, S_noise=1,
     )
 
     # Plot results
@@ -139,7 +140,7 @@ def plot_training_dashboard(
     # Replicate the *exact* logic from sampler_training_callback
     ax4 = axes[1, 1]
     for _ in tqdm(range(6)):
-        actions = torch.randint(0,3,(latents.shape[0],1), device=latents.device)
+        actions = None if actions is None else torch.randint(0,3,(latents.shape[0],1), device=latents.device)
         x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, conditioning = actions, sigma_max = 80, sigma_min=0.4, num_steps=16, rho=2, guidance=1, S_churn=0.)
         context = torch.cat((context,x),dim=1)
 
@@ -156,6 +157,7 @@ def plot_training_dashboard(
     precond.train() # Set model back to training mode
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust layout
+    os.makedirs("images_training", exist_ok=True)
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     print(f"Dashboard saved to {save_path}")
     plt.close(fig) # Close the figure to free memory

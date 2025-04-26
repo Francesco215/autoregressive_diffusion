@@ -83,8 +83,8 @@ class TestAttention(unittest.TestCase):
         last_frame = einops.rearrange(last_frame, 'b t ... -> (b t) ...')
 
         y_non_cached, _ =  self.attention(x, b)
-        y_cached, cache = self.attention(context, b)
-        out1, cache = self.attention(second_last, b, cache)
+        y_cached, cache = self.attention(context, b, update_cache=True)
+        out1, cache = self.attention(second_last, b, cache, update_cache=True)
         out2, _ = self.attention(last_frame, b, cache)
 
         y_non_cached = einops.rearrange(y_non_cached, '(b t) ... -> b t ...', b=b)
@@ -112,7 +112,7 @@ class TestUNet(unittest.TestCase):
             channel_mult_noise=None,
             channel_mult_emb=None,
             num_blocks=3,
-            attn_resolutions=[16,8]
+            video_attn_resolutions=[16,8]
         ).to("cuda").to(dtype)
         print(f"Number of UNet parameters: {sum(p.numel() for p in cls.unet.parameters()) // 1e6}M")
 
@@ -268,7 +268,7 @@ class TestMPCausal3DGatedConv(unittest.TestCase):
         y_non_cached, _ = self.conv3d(x, None, BATCH_SIZE, c_noise)
         y_non_cached = einops.rearrange(y_non_cached, '(b t) ... -> b t ...', b=BATCH_SIZE)
         
-        y_cached, cache = self.conv3d(context, None, BATCH_SIZE, c_noise[:,:-1])
+        y_cached, cache = self.conv3d(context, None, BATCH_SIZE, c_noise[:,:-1], update_cache=True)
         out, _ = self.conv3d(last_frame, None, BATCH_SIZE, c_noise[:,-1:], cache=cache)
         y_cached = einops.rearrange(y_cached, '(b t) ... -> b t ...', b=BATCH_SIZE)
         out = einops.rearrange(out, '(b t) ... -> b t ...', b=BATCH_SIZE)
@@ -291,8 +291,8 @@ class TestMPCausal3DGatedConv(unittest.TestCase):
         last_frame = einops.rearrange(last_frame, 'b t ... -> (b t) ...')
         
         y_non_cached, _ = self.conv3d(x, None, b, c_noise)
-        y_cached, cache = self.conv3d(context, None, b, c_noise[:,:-2])
-        out1, cache = self.conv3d(second_last, None, b, c_noise[:,-2:-1], cache=cache)
+        y_cached, cache = self.conv3d(context, None, b, c_noise[:,:-2], update_cache=True)
+        out1, cache = self.conv3d(second_last, None, b, c_noise[:,-2:-1], cache=cache, update_cache=True)
         out2, _ = self.conv3d(last_frame, None, b, c_noise[:,-1:], cache=cache)
         
         y_non_cached = einops.rearrange(y_non_cached, '(b t) ... -> b t ...', b=b)

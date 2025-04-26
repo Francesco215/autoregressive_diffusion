@@ -56,7 +56,7 @@ def top_losses(errors:torch.Tensor, fraction:float):
     k = int(errors.shape[-1]*errors.shape[-2]*fraction)
 
     top_k = torch.topk(errors, k, dim =-1, sorted = False)
-    return (top_k.values).mean(dim=-1)
+    return (top_k.values).mean(dim=-1) + errors.mean(dim=-1)
 
 
 

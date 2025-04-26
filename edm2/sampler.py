@@ -1,10 +1,13 @@
 #%%
+from torch import distributed as dist
 import einops
 from tqdm import tqdm
 import torch
 import numpy as np
 import copy
 import matplotlib.pyplot as plt
+
+# my_random_tensor = torch.randn([4, 1, 8, 64, 64], device = "cuda")
 
 @torch.no_grad()
 def edm_sampler_with_mse(
@@ -19,13 +22,12 @@ def edm_sampler_with_mse(
     device = net.device
     
     # Guided denoiser (same as original)
-    def denoise(x, t, cache):
-        cache = copy.deepcopy(cache)
+    def denoise(x, t, cache, update_cache):
         t = torch.ones(batch_size, 1, device=device, dtype=dtype) * t
         
-        Dx, cache = net(x, t, conditioning, cache=cache)
-        if guidance == 1:
-            return Dx, cache
+        Dx, cache = net(x, t, conditioning, cache=cache, update_cache=update_cache)
+        if guidance == 1: return Dx, cache
+
         ref_Dx, _ = net(x, t, conditioning, cache = {}) # TODO: play with the cache
         return ref_Dx.lerp(Dx, guidance), cache
 
@@ -36,6 +38,7 @@ def edm_sampler_with_mse(
     t_steps = torch.cat([t_steps, torch.zeros_like(t_steps[:1])])
     
     # Main sampling loop with MSE tracking
+    # x_next = my_random_tensor.clone() * t_steps[0]
     x_next = torch.randn(batch_size, 1, channels, height, width, device=device) * t_steps[0]
     mse_values = []
     mse_pred_values = []
@@ -60,20 +63,18 @@ def edm_sampler_with_mse(
             x_hat = x_cur
 
         # Euler step
-        if i == num_steps-1:
-            x_pred, cache=denoise(x_hat, t_hat, cache)
-        else:
-            x_pred, _ = denoise(x_hat, t_hat, cache)
+        x_pred, cache = denoise(x_hat, t_hat, cache, update_cache = (i==num_steps-1 and target is None))
+        # x_pred, cache = denoise(x_hat, t_hat, cache, update_cache = (i==num_steps-1))
         d_cur = (x_hat - x_pred) / t_hat
         x_next = x_hat + (t_next - t_hat) * d_cur
 
         # 2nd order correction
         if i < num_steps-1:
-            x_pred, _ = denoise(x_next, t_next, cache)
+            x_pred, _ = denoise(x_next, t_next, cache, update_cache = False)
             d_prime = (x_next - x_pred) / t_next
             x_next = x_hat + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)
 
-        # Calculate MSE after each step
+        # # Calculate MSE after each step
         if target is not None:
             mse_pred = torch.mean((x_pred - target) ** 2).item()
             mse = torch.mean((x_next - target) ** 2).item()
