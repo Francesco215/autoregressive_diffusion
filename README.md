@@ -14,7 +14,7 @@ Oniris is an universal and novel way of training diffusion models for video gene
 > [!IMPORTANT]
 > Working on training it on Counter-Strike. Stay tuned, for now here are the results with the lunar lander
 
-This are the results of a ~1 hour training run with a Nvidia RTX 4090. The model was trained on the Lunar-Lander gymnasium environment. 
+This are the results of a ~4 hours training run with a Nvidia RTX 4090. The model was trained on the Lunar-Lander gymnasium environment. 
 <p align="center">
     <img src="readme_images/output.png" width="80%">
 </p>
