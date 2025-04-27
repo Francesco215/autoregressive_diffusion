@@ -45,8 +45,10 @@ class Block(torch.nn.Module):
         self.emb_gain = torch.nn.Parameter(torch.zeros([]))
         self.emb_linear = MPConv(emb_channels, out_channels, kernel=[])
         # if attention:
-        self.conv_res0 = MPCausal3DGatedConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3,3])
-        self.conv_res1 = MPCausal3DGatedConv(out_channels, out_channels, kernel=[3,3,3])
+        # self.conv_res0 = MPCausal3DGatedConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3,3])
+        # self.conv_res1 = MPCausal3DGatedConv(out_channels, out_channels, kernel=[3,3,3])
+        self.conv_res0 = MPConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3])
+        self.conv_res1 = MPConv(out_channels, out_channels, kernel=[3,3])
 
         self.conv_skip = MPConv(in_channels, out_channels, kernel=[1,1]) if in_channels != out_channels else None
         if attention == 'video':
@@ -68,13 +70,15 @@ class Block(torch.nn.Module):
             x = normalize(x, dim=1) # pixel norm
 
         # Residual branch.
-        y, cache['conv_res0'] = self.conv_res0(mp_silu(x), emb, batch_size, c_noise, cache.get('conv_res0', None), update_cache) 
+        # y, cache['conv_res0'] = self.conv_res0(mp_silu(x), emb, batch_size, c_noise, cache.get('conv_res0', None), update_cache) 
+        y = self.conv_res0(mp_silu(x), emb, batch_size, c_noise, cache.get('conv_res0', None), update_cache) 
         c = self.emb_linear(emb, gain=self.emb_gain) + 1
         y = bmult(y, c.to(y.dtype)) 
         y = mp_silu(y)
         if self.training and self.dropout != 0:
             y = torch.nn.functional.dropout(y, p=self.dropout)
-        y, cache['conv_res1'] = self.conv_res1(y, emb, batch_size, c_noise, cache.get('conv_res1', None), update_cache) 
+        # y, cache['conv_res1'] = self.conv_res1(y, emb, batch_size, c_noise, cache.get('conv_res1', None), update_cache) 
+        y = self.conv_res1(y, emb, batch_size, c_noise, cache.get('conv_res1', None), update_cache) 
 
         # Connect the branches.
         if self.flavor == 'dec' and self.conv_skip is not None:
@@ -158,7 +162,7 @@ class UNet(BetterModule):
                 cout = channels
                 attention = 'video' if res in video_attn_resolutions else 'frame' if res in frame_attn_resolutions else False
                 self.dec[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=attention, **block_kwargs)
-        self.out_conv = MPCausal3DGatedConv(cout, img_channels, kernel=[3,3,3])
+        self.out_conv = MPConv(cout, img_channels, kernel=[3,3])
 
         # Saves the kwargs
         frame = inspect.currentframe()
@@ -206,7 +210,7 @@ class UNet(BetterModule):
             if 'block' in name:
                 x = mp_cat(x, skips.pop(), t=self.concat_balance)
             x, cache['dec', name] = block(x, emb, batch_size, c_noise, cache=cache.get(('dec',name), None), update_cache=update_cache)
-        x, cache['out_conv'] = self.out_conv(x, emb, batch_size, c_noise, cache=cache.get('out_conv', None), update_cache=update_cache)
+        x = self.out_conv(x, emb, batch_size, c_noise, cache=cache.get('out_conv', None), update_cache=update_cache)
 
         x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
         x = mp_sum(x, res, out_res)

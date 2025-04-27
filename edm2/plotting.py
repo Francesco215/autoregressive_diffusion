@@ -92,6 +92,7 @@ def plot_training_dashboard(
         ax2.set_xlabel('N Frames Seen')
         ax2.set_ylabel('Loss')
         ax2.set_yscale('log')
+        ax2.set_xlim(left=1e3)
         ax2.set_title(f'Training Loss ({unet_params // 1e6:.1f}M params)')
         ax2.legend()
         ax2.grid(True, which="both", ls="--", alpha=0.5)
