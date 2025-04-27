@@ -32,7 +32,7 @@ if __name__=="__main__":
     channels = [3, 32, 32, latent_channels]
 
     # Initialize models
-    vae = VAE(channels = channels, n_res_blocks=n_res_blocks).to(device)
+    vae = VAE(channels = channels, n_res_blocks=n_res_blocks, spatial_compressions=[1,4,4]).to(device)
     # vae = VAE.load_from_pretrained('saved_models/vae_cs_4264.pt').to(device)
     # Example instantiation
     discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(32,)).to(device)
