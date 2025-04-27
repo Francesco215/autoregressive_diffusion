@@ -148,9 +148,9 @@ class EncoderDecoder(nn.Module):
 
         if type=='encoder':
             group_sizes = group_sizes[::-1]
-        if logvar_mode == 'learned':
-            channels[-1] = channels[-1] * 2  
-        self.logvar_multiplier = nn.Parameter(torch.tensor(0.))
+            if logvar_mode == 'learned':
+                channels[-1] = channels[-1] * 2  
+            self.logvar_multiplier = nn.Parameter(torch.tensor(0.))
 
         elif type=='decoder':
             channels = channels[::-1]
