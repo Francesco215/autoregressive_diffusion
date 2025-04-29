@@ -32,7 +32,7 @@ if __name__=="__main__":
 
     autoencoder = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_lunar_lander.pt").to(device).requires_grad_(False)
 
-    resume_training = True
+    resume_training = False
     unet = UNet(img_resolution=256//autoencoder.spatial_compression, # Match your latent resolution
                 img_channels=autoencoder.latent_channels, # Match your latent channels
                 label_dim = 4, #this should be equal to the action space of the gym environment
@@ -58,7 +58,7 @@ if __name__=="__main__":
     total_number_of_steps = 80_000
     training_steps = total_number_of_steps * batch_size
     dataset = GymDataGenerator(state_size, original_env, total_number_of_steps, autoencoder_time_compression = autoencoder.time_compression, return_anyways=False)
-    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=micro_batch_size, prefetch_factor=4)
+    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=micro_batch_size, prefetch_factor=1)
 
     # sigma_data = 0.434
     sigma_data = 1.

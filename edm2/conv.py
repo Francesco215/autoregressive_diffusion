@@ -33,8 +33,8 @@ class MPConv(torch.nn.Module):
         self.dilation = dilation
         self.padding = [dilation*(kernel[-1]//2)]*4 if len(kernel)!=0 else None
 
-    def forward(self, x, gain=1, batch_size=None):
-        w = self.weight(gain).to(x.dtype)
+    def forward(self, x, *args, **kwargs):
+        w = self.weight().to(x.dtype)
         if w.ndim == 2:
             return x @ w.t()
         assert w.ndim == 4
@@ -99,6 +99,7 @@ class MPCausal3DAttentionConv(torch.nn.Module):
         self.last_frame_conv = MPConv(in_channels, out_channels+2*self.qk_size, kernel[1:])
         kernel = (kernel[0]-1,kernel[1],kernel[2])
         self.weight = NormalizedWeight(in_channels, out_channels+self.qk_size, kernel)
+        self.temperature = nn.Parameter(torch.tensor(0.1))
     
     def forward(self, x, emb, batch_size, c_noise, cache=None, update_cache=False):
         if cache is None: cache = {}
@@ -138,11 +139,11 @@ class MPCausal3DAttentionConv(torch.nn.Module):
 
         K, V = torch.stack((Kx, Kc), dim=-1), torch.stack((Vx, Vc), dim=-1)
 
-        attn= F.softmax(einops.einsum(Q,K,'bt c h w, bt c h w p -> bt h w p'),dim=-1)
+        attn= F.softmax(einops.einsum(Q,K,'bt c h w, bt c h w p -> bt h w p')/self.temperature,dim=-1)
 
         x = einops.einsum(attn, V, 'bt h w p, bt c h w p-> bt c h w')
 
-        return x
+        return x, None
 
         
 
