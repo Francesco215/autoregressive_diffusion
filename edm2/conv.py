@@ -89,6 +89,64 @@ class MPCausal3DGatedConv(torch.nn.Module):
         return mp_sum(context, last_frame_conv, gating.flatten()), cache
 
 
+class MPCausal3DAttentionConv(torch.nn.Module):
+
+    def __init__(self, in_channels, out_channels, kernel):
+        super().__init__()
+        self.out_channels = out_channels
+        assert len(kernel)==3
+        self.qk_size = 3
+        self.last_frame_conv = MPConv(in_channels, out_channels+2*self.qk_size, kernel[1:])
+        kernel = (kernel[0]-1,kernel[1],kernel[2])
+        self.weight = NormalizedWeight(in_channels, out_channels+self.qk_size, kernel)
+    
+    def forward(self, x, emb, batch_size, c_noise, cache=None, update_cache=False):
+        if cache is None: cache = {}
+        w = self.weight().to(x.dtype)
+
+        image_padding = (0, w.shape[-2]//2, w.shape[-1]//2)
+
+        # however variance preserving concatenatinon doesn't work because it will give different results depending if self.training is true
+        causal_pad = torch.zeros(batch_size, x.shape[1], w.shape[2], *x.shape[2:], device=x.device, dtype=x.dtype)
+        causal_pad = cache.get('activations', causal_pad).clone()
+
+        # we do the 2d convolutions over the last frames
+        last_frame_conv = self.last_frame_conv(x)
+        Q, Kx, Vx =last_frame_conv[:,:self.qk_size],last_frame_conv[:,self.qk_size:2*self.qk_size],last_frame_conv[:,2*self.qk_size:]
+
+        if self.training:
+            # we just take the context frames
+            x, _ = einops.rearrange(x, '(b s t) c h w -> s b c t h w', b=batch_size, s=2).unbind(0)
+        else: 
+            x = einops.rearrange(x, '(b t) c h w -> b c t h w', b=batch_size)
+        
+
+        #pad context along the time dimention to make sure that it's causal
+        context = torch.cat((causal_pad, x), dim=-3)
+        if update_cache: cache['activations'] = context[:,:,-w.shape[2]:].clone().detach()
+        # now we do the 3d convolutions over the previous frames of the context
+        context = F.conv3d(context[:,:,:-1], w, padding=image_padding)
+
+        if self.training:
+            # we concatenate the results and reshape them to sum them back to the 2d convolutions
+            context = torch.stack((context, context), dim=0)
+            context = einops.rearrange(context, 's b c t h w -> (b s t) c h w')
+        else:
+            context = einops.rearrange(context, 'b c t h w -> (b t) c h w')
+
+        Kc, Vc = context[:,:self.qk_size], context[:,self.qk_size:]
+
+        K, V = torch.stack((Kx, Kc), dim=-1), torch.stack((Vx, Vc), dim=-1)
+
+        attn= F.softmax(einops.einsum(Q,K,'bt c h w, bt c h w p -> bt h w p'),dim=-1)
+
+        x = einops.einsum(attn, V, 'bt h w p, bt c h w p-> bt c h w')
+
+        return x
+
+        
+
+
 
 class Gating(nn.Module):
     def __init__(self):
