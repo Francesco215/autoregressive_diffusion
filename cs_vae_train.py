@@ -6,6 +6,7 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.optim import AdamW
+from torch.amp import autocast, GradScaler
 
 import os
 from tqdm import tqdm
@@ -24,23 +25,27 @@ if __name__=="__main__":
 
     batch_size = 8
     micro_batch_size = 2
-    clip_length = 32 
+    clip_length = 48 
     
     # Hyperparameters
     latent_channels = 8
     n_res_blocks = 2
-    channels = [3, 32, 32, latent_channels]
+    channels = [3, 32, 64, 64, latent_channels]
+    time_compressions = [1, 2, 2, 1]
+    spatial_compressions = [1, 2, 2, 2]
+
+    dtype=torch.bfloat16
 
     # Initialize models
-    vae = VAE(channels = channels, n_res_blocks=n_res_blocks).to(device)
-    # vae = VAE.load_from_pretrained('saved_models/vae_cs_4264.pt').to(device)
+    vae = VAE(channels, n_res_blocks, time_compressions, spatial_compressions, logvar_mode='learned').to(device)
+    # vae = VAE.from_pretrained('saved_models/vae_cs_46904.pt').to(device)
     # Example instantiation
     discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(32,)).to(device)
     
-    dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False)
+    dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(clip_length), num_workers=8, shuffle=False)
     total_number_of_steps = len(dataloader)//micro_batch_size
-
+    scaler = GradScaler('cuda')
 
     vae_params = sum(p.numel() for p in vae.parameters())
     discriminator_params = sum(p.numel() for p in discriminator.parameters())
@@ -50,7 +55,7 @@ if __name__=="__main__":
     sigma_data = 1.
 
     # Define optimizers
-    base_lr = 1e-4
+    base_lr = 5e-5
     optimizer_vae = AdamW(vae.parameters(), lr=base_lr, eps=1e-8)
     optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr, eps=1e-8)
     optimizer_vae.zero_grad()
@@ -72,51 +77,67 @@ if __name__=="__main__":
         for batch_idx, micro_batch in pbar:
             with torch.no_grad():
                 frames, _ = micro_batch  # Ignore actions and reward for this VggAE training
-                frames = frames.float() / 127.5 - 1  # Normalize to [-1, 1]
                 frames = einops.rearrange(frames, 'b t h w c-> b c t h w').to(device)
+                frames = frames.to(dtype) / 127.5 - 1  # Normalize to [-1, 1]
 
             # VAE forward pass
-            recon, mean, logvar, _ = vae(frames)
+            with autocast("cuda", dtype):
+                recon, mean, logvar, _ = vae(frames)
 
-            # in theory the mean should be only with respect to the batch size
-            individual_var = logvar.exp().mean(dim=(0, 2, 3, 4))  # Average of individual variances
-            mean_var = mean.var(dim=(0, 2, 3, 4))  # Variance of means
-            group_var = individual_var + mean_var  # Total mixture variance
-            group_mean = mean.mean(dim=(0, 2, 3, 4))
-            kl_group = -0.5 * (1 + group_var.log() - group_mean.pow(2) - group_var).sum(dim=0)
-            kl_loss  = -0.5 * (1 + logvar - logvar.exp()).sum(dim=1).mean()
-            # kl_loss = -0.5 * (1 + logvar - mean.pow(2) - logvar.exp()).sum(dim=1).mean()
+                # in theory the mean should be only with respect to the batch size
+                individual_var = logvar.exp().mean(dim=(0, 2, 3, 4))  # Average of individual variances
+                mean_var = mean.var(dim=(0, 2, 3, 4))  # Variance of means
+                group_var = individual_var + mean_var  # Total mixture variance
+                group_mean = mean.mean(dim=(0, 2, 3, 4))
+                kl_group = -0.5 * (1 + group_var.log() - group_mean.pow(2) - group_var).sum(dim=0)
+                kl_loss  = -0.5 * (1 + logvar - logvar.exp()).sum(dim=1).mean()
+                # kl_loss = -0.5 * (1 + logvar - mean.pow(2) - logvar.exp()).sum(dim=1).mean()
 
-            logits = discriminator(recon)
-            targets = torch.ones(logits.shape[0], *logits.shape[2:], device=device, dtype=torch.long)
+                logits = discriminator(recon)# this needs to be fp32
+                targets = torch.ones(logits.shape[0], *logits.shape[2:], device=device, dtype=torch.long)
 
-            adversarial_loss = F.cross_entropy(logits, targets)/np.log(2)
+                adversarial_loss = F.cross_entropy(logits, targets)/np.log(2)
 
-            # VAE losses
-            recon_loss = F.l1_loss(recon, frames)
+                # VAE losses
+                recon_loss = F.l1_loss(recon, frames)
 
-            # Define the loss components
-            main_loss = recon_loss + kl_group*1e-3 + kl_loss*1e-3 + adversarial_loss*1e-2
-            main_loss.backward()
+                # Define the loss components
+                main_loss = recon_loss + kl_group*1e-3 + kl_loss*1e-3 + adversarial_loss*1e-2
+            scaler.scale(main_loss).backward()
 
             if batch_idx % (batch_size//micro_batch_size) == 0:
+                scaler.unscale_(optimizer_vae)
                 nn.utils.clip_grad_norm_(vae.parameters(), 1)
-                optimizer_vae.step()
+
+                # Use scaler to step the optimizer
+                scaler.step(optimizer_vae)
+                scaler.update()
+
                 scheduler_vae.step()
                 optimizer_vae.zero_grad()
 
 
-            logits_real = discriminator(frames.detach())
-            logits_fake = discriminator(recon.detach())
-            loss_disc_real = F.cross_entropy(logits_real, torch.ones_like (targets))/np.log(2)
-            loss_disc_fake = F.cross_entropy(logits_fake, torch.zeros_like(targets))/np.log(2)
-            loss_disc = (loss_disc_real + loss_disc_fake)/2
+            frames = frames.detach()
+            recon = recon.detach()
+            with autocast("cuda", dtype):
+                logits_real = discriminator(frames)
+                logits_fake = discriminator(recon)
+                loss_disc_real = F.cross_entropy(logits_real, torch.ones_like (targets))/np.log(2)
+                loss_disc_fake = F.cross_entropy(logits_fake, torch.zeros_like(targets))/np.log(2)
+                loss_disc = (loss_disc_real + loss_disc_fake)/2
 
-            loss_disc.backward()
+            scaler.scale(loss_disc).backward()
+
+                
+
             # Update discriminator
             if batch_idx % (batch_size//micro_batch_size) == 0:
+                scaler.unscale_(optimizer_disc)
                 nn.utils.clip_grad_norm_(discriminator.parameters(), 1)
-                optimizer_disc.step()
+
+                scaler.step(optimizer_disc)
+                scaler.update()
+
                 scheduler_disc.step()
                 optimizer_disc.zero_grad()
             
