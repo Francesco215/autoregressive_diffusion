@@ -21,16 +21,15 @@ torch.autograd.set_detect_anomaly(True)
 if __name__=="__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    original_env = "LunarLander-v3"
-
+    model_path = None
     batch_size = 8
-    micro_batch_size = 2
-    clip_length = 48 
+    micro_batch_size = 8
+    clip_length = 16 
     
     # Hyperparameters
     latent_channels = 8
     n_res_blocks = 2
-    channels = [3, 32, 64, 64, latent_channels]
+    channels = [3, 64, 32, 32, latent_channels]
     time_compressions = [1, 2, 2, 1]
     spatial_compressions = [1, 2, 2, 2]
 
@@ -55,7 +54,7 @@ if __name__=="__main__":
     sigma_data = 1.
 
     # Define optimizers
-    base_lr = 5e-5
+    base_lr = 1e-4
     optimizer_vae = AdamW(vae.parameters(), lr=base_lr, eps=1e-8)
     optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr, eps=1e-8)
     optimizer_vae.zero_grad()
@@ -65,10 +64,26 @@ if __name__=="__main__":
     gamma = 0.1 ** (1 / total_number_of_steps)  # Decay factor so lr becomes 0.1 * initial_lr after 40,000 steps
     scheduler_vae = lr_scheduler.ExponentialLR(optimizer_vae, gamma=gamma)
     scheduler_disc = lr_scheduler.ExponentialLR(optimizer_disc, gamma=gamma)
-    losses = []
-
-
     recon_losses, kl_group_losses, kl_losses, disc_losses, adversarial_losses= [], [], [], [], []
+
+    if model_path is not None and os.path.exists(model_path):
+        print(f"Loading checkpoint from {model_path}")
+        checkpoint = torch.load(model_path, map_location=device)
+
+        vae = VAE.from_pretrained(checkpoint['vae_path'])
+        discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
+        optimizer_vae.load_state_dict(checkpoint['optimizer_vae_state_dict'])
+        optimizer_disc.load_state_dict(checkpoint['optimizer_disc_state_dict'])
+        scaler.load_state_dict(checkpoint['scaler_state_dict'])
+        scheduler_vae.load_state_dict(checkpoint['scheduler_vae_state_dict'])
+        scheduler_disc.load_state_dict(checkpoint['scheduler_disc_state_dict'])
+
+        recon_losses = checkpoint.get('recon_losses', [])
+        kl_group_losses = checkpoint.get('kl_group_losses', [])
+        kl_losses = checkpoint.get('kl_losses', [])
+        disc_losses = checkpoint.get('disc_losses', [])
+        adversarial_losses = checkpoint.get('adversarial_losses', [])
+
 
     #%%
     # Training loop
@@ -76,8 +91,8 @@ if __name__=="__main__":
         pbar = tqdm(enumerate(dataloader), total=total_number_of_steps)
         for batch_idx, micro_batch in pbar:
             with torch.no_grad():
-                frames, _ = micro_batch  # Ignore actions and reward for this VggAE training
-                frames = einops.rearrange(frames, 'b t h w c-> b c t h w').to(device)
+                frames, _ = micro_batch  # Ignore actions and reward for this VAE training
+                frames = einops.rearrange(frames.to(device), 'b t h w c-> b c t h w')
                 frames = frames.to(dtype) / 127.5 - 1  # Normalize to [-1, 1]
 
             # VAE forward pass
@@ -173,8 +188,8 @@ if __name__=="__main__":
                 # --- Video Frames (Top: Original and Reconstructed) ---
                 with torch.no_grad():
                     # Detach and denormalize frames and reconstructions
-                    frames_denorm = (frames.cpu() + 1) / 2  # Shape: (batch, channels, time, height, width)
-                    recon_denorm = (recon.cpu() + 1) / 2    # Shape: (batch, channels, time, height, width)
+                    frames_denorm = (frames.float().cpu() + 1) / 2  # Shape: (batch, channels, time, height, width)
+                    recon_denorm = (recon.float().cpu() + 1) / 2    # Shape: (batch, channels, time, height, width)
 
                     # Select the first sequence in the batch
                     frames_denorm = frames_denorm[0]  # Shape: (channels, time, height, width)
@@ -236,7 +251,29 @@ if __name__=="__main__":
                 plt.close()
             if batch_idx % (total_number_of_steps//10) == 0 and batch_idx != 0:
                 os.makedirs("saved_models", exist_ok=True)
-                vae.save_to_state_dict(f'saved_models/vae_cs_{batch_idx}.pt')
+                vae.save_to_state_dict(f'saved_models/vae_cs_{vae_params}.pt')
+
+                checkpoint = {
+                    'step': batch_idx,
+                    'vae_path':f'saved_models/vae_cs_{vae_params}.pt' ,
+
+                    'discriminator_state_dict': discriminator.state_dict(),
+                    'optimizer_vae_state_dict': optimizer_vae.state_dict(),
+                    'optimizer_disc_state_dict': optimizer_disc.state_dict(),
+                    'scaler_state_dict': scaler.state_dict(),
+                    'scheduler_vae_state_dict': scheduler_vae.state_dict(),
+                    'scheduler_disc_state_dict': scheduler_disc.state_dict(),
+
+                    'recon_losses': recon_losses,
+                    'kl_group_losses': kl_group_losses,
+                    'kl_losses': kl_losses,
+                    'disc_losses': disc_losses,
+                    'adversarial_losses': adversarial_losses,
+                }
+
+                torch.save(checkpoint, f"saved_models/checkpoint_step_{vae_params}.pt")
+                print(f"Saved checkpoint at step {vae_params}")
+
 
     print("Finished Training")
     # %%
