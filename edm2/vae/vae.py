@@ -44,10 +44,27 @@ class GroupCausal3DConvVAE(torch.nn.Module):
 
         x = self.conv3d(x)
 
-        x = einops.rearrange(x, 'b (c g) t h w -> b c (t g) h w', g=self.group_size)
+        x = einops.rearrange(x, 'b (g c) t h w -> b c (t g) h w', g=self.group_size)
 
         return x, cache
 
+    @torch.no_grad()
+    def load_from_2D(self, w2d: torch.Tensor, b2d: torch.Tensor | None):
+        w = torch.zeros_like(self.conv3d.weight)
+        b = torch.zeros_like(self.conv3d.bias)
+
+        kt = w.shape[2]                    # temporal kernel length
+
+        for g in range(self.group_size):
+            # copy the 2‑D weights into the correct time‑slice
+            w[self.out_channels*g : self.out_channels*(g+1), :, kt-self.group_size+g] = w2d.clone()
+
+            if b2d is not None:
+                # bias is 1‑D, no time dimension → copy once per output slice
+                b[self.out_channels*g : self.out_channels*(g+1)] = b2d
+
+        self.conv3d.weight.copy_(w)
+        self.conv3d.bias.copy_(b)
 
 
 
