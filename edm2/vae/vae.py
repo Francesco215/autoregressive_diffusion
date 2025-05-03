@@ -15,13 +15,16 @@ from ..utils import BetterModule
 
 
 class GroupCausal3DConvVAE(torch.nn.Module):
-    def __init__(self, in_channels, out_channels, kernel, group_size, dilation = (1,1,1)):
+    def __init__(self, in_channels, out_channels, kernel, group_size, dilation = (1,1,1), stride = [1,1,1]):
         super().__init__()
         self.out_channels = out_channels
         self.group_size = group_size
         self.dilation = dilation
-        # self.weight = NormalizedWeight(in_channels, out_channels*group_size, kernel, bias = True)
-        self.conv3d = nn.Conv3d(in_channels, out_channels*group_size, kernel, dilation=dilation, stride=(group_size, 1, 1), bias=True)
+
+        stride = stride.copy()
+        stride[0]*=group_size
+
+        self.conv3d = nn.Conv3d(in_channels, out_channels*group_size, kernel, stride, dilation=dilation, bias=True)
         with torch.no_grad():
             w = self.conv3d.weight
             w[:,:,:-group_size] = 0
@@ -101,7 +104,12 @@ class ResBlock(nn.Module):
 
         return x, cache
 
+    def load_from_2D(self, state_dict_2D):
+        self.norm0._load_from_state_dict(state_dict_2D['norm0'])
+        self.norm1._load_from_state_dict(state_dict_2D['norm1'])
 
+        self.conv3d0.load_from_2D(state_dict_2D['conv0'])
+        self.conv3d1.load_from_2D(state_dict_2D['conv1'])
 
 
 class EncoderDecoderBlock(nn.Module):
@@ -133,20 +141,15 @@ class UpDownBlock(nn.Module):
         self.total_compression = time_compression*spatial_compression**2
 
         if direction=='down':
-            self.block = GroupCausal3DConvVAE(in_channels*self.total_compression, out_channels, kernel, group_size) 
+            self.block = GroupCausal3DConvVAE(in_channels, out_channels, kernel, group_size, stride = [time_compression, spatial_compression, spatial_compression]) 
         if direction=='up':
-            self.block = GroupCausal3DConvVAE(in_channels, out_channels*self.total_compression, kernel, group_size//time_compression) 
+            self.block = GroupCausal3DConvVAE(in_channels, out_channels, kernel, group_size//time_compression) 
 
     def __call__(self, x, cache=None):
-        if self.total_compression==1: return self.block(x,cache)
-        
-        if self.direction=='down':
-            x = einops.rearrange(x, 'b c (tc t) (hc h) (wc w) -> b (tc hc wc c) t h w', tc=self.time_compression, hc=self.spatial_compression, wc=self.spatial_compression)
-
         x, cache = self.block(x, cache)
 
-        if self.direction=='up':
-            x = einops.rearrange(x, 'b (tc hc wc c) t h w -> b c (tc t) (hc h) (wc w)', tc=self.time_compression, hc=self.spatial_compression, wc=self.spatial_compression)
+        if self.direction=='up' and self.total_compression !=1:
+            x = F.interpolate(x, scale_factor=[self.time_compression, self.spatial_compression, self.spatial_compression], mode='nearest')
 
         return x, cache
 
