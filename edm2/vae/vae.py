@@ -1,6 +1,5 @@
 
 import inspect
-from urllib.parse import urlparse # To parse the S3 URI
 
 import torch
 from torch import nn, Tensor
@@ -10,7 +9,7 @@ from torch.nn import functional as F
 import einops
 import numpy as np
 
-from ..utils import BetterModule, mp_silu
+from ..utils import BetterModule
 
 
 
@@ -79,21 +78,23 @@ class GroupNorm3D(nn.GroupNorm):
 class ResBlock(nn.Module):
     def __init__(self, channels: int, kernel=(8,3,3), group_size=1):
         super().__init__()
-        self.norm_0 = GroupNorm3D(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
-        self.norm_1 = GroupNorm3D(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
-
+        self.norm0 = GroupNorm3D(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
         self.conv3d0 = GroupCausal3DConvVAE(channels, channels,  kernel, group_size, dilation = (1,1,1))
+
+        self.norm1 = GroupNorm3D(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
         self.conv3d1 = GroupCausal3DConvVAE(channels, channels, kernel, group_size, dilation = (1,1,1))
+
+        self.nonlinearity = nn.SiLU()
 
     def forward(self, x, cache = None):
         if cache is None: cache = {}
 
-        y = self.norm_0(x)
-        y = mp_silu(y)
+        y = self.norm0(x)
+        y = self.nonlinearity(y)
         y, cache['conv3d_res0'] = self.conv3d0(y, cache=cache.get('conv3d_res0', None))
 
-        y = self.norm_1(y)
-        y = mp_silu(y)
+        y = self.norm1(y)
+        y = self.nonlinearity(y)
         y, cache['conv3d_res1'] = self.conv3d1(y, cache=cache.get('conv3d_res1', None))
 
         x = x + y
@@ -101,27 +102,19 @@ class ResBlock(nn.Module):
         return x, cache
 
 
+
+
 class EncoderDecoderBlock(nn.Module):
     def __init__(self, in_channels, out_channels, time_compression, spatial_compression, kernel, group_size, n_res_blocks, type='encoder'):
         super().__init__()
-        self.updown_block = UpDownBlock(time_compression, spatial_compression, 'up' if type=='decoder' else 'down')
-        total_compression = self.updown_block.total_compression
-
-        self.decompression_block = GroupCausal3DConvVAE(in_channels, out_channels*total_compression, kernel, group_size//time_compression) if type=='decoder' else None
-        self.compression_block  =  GroupCausal3DConvVAE(in_channels*total_compression, out_channels, kernel, group_size) if type in ['encoder', 'discriminator'] else None
+        self.updown_block = UpDownBlock(in_channels, out_channels, kernel, group_size, time_compression, spatial_compression, 'up' if type=='decoder' else 'down')
 
         self.res_blocks = nn.ModuleList([ResBlock(out_channels, kernel, group_size) for _ in range(n_res_blocks)])
 
     def forward(self,x, cache=None):
         if cache is None: cache = {}
 
-        if self.decompression_block is not None:
-            x, cache['decompression_block'] = self.decompression_block(x, cache = cache.get('decompression_block', None))
-
-        x = self.updown_block(x)
-
-        if self.compression_block is not None:
-            x, cache['compression_block'] = self.compression_block(x, cache = cache.get('compression_block', None))
+        x, cache['updown_block'] = self.updown_block(x, cache.get('updown_block', None))
 
         for i, res_block in enumerate(self.res_blocks):
             x, cache[f'res_block_{i}'] = res_block(x, cache.get(f'res_block_{i}', None))
@@ -129,8 +122,9 @@ class EncoderDecoderBlock(nn.Module):
         return x, cache
 
 
-class UpDownBlock:
-    def __init__(self, time_compression, spatial_compression, direction):
+class UpDownBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel, group_size, time_compression, spatial_compression, direction):
+        super().__init__()
         assert direction in ['up', 'down'], 'Invalid direction, expected up or down'
 
         self.direction = direction
@@ -138,14 +132,23 @@ class UpDownBlock:
         self.spatial_compression = spatial_compression
         self.total_compression = time_compression*spatial_compression**2
 
-    def __call__(self, x):
-        if self.total_compression==1: return x
+        if direction=='down':
+            self.block = GroupCausal3DConvVAE(in_channels*self.total_compression, out_channels, kernel, group_size) 
+        if direction=='up':
+            self.block = GroupCausal3DConvVAE(in_channels, out_channels*self.total_compression, kernel, group_size//time_compression) 
 
+    def __call__(self, x, cache=None):
+        if self.total_compression==1: return self.block(x,cache)
+        
         if self.direction=='down':
-            return einops.rearrange(x, 'b c (t tc) (h hc) (w wc) -> b (c tc hc wc) t h w', tc=self.time_compression, hc=self.spatial_compression, wc=self.spatial_compression)
+            x = einops.rearrange(x, 'b c (tc t) (hc h) (wc w) -> b (tc hc wc c) t h w', tc=self.time_compression, hc=self.spatial_compression, wc=self.spatial_compression)
 
-        return einops.rearrange(x, 'b (c tc hc wc) t h w -> b c (t tc) (h hc) (w wc)', tc=self.time_compression, hc=self.spatial_compression, wc=self.spatial_compression)
+        x, cache = self.block(x, cache)
 
+        if self.direction=='up':
+            x = einops.rearrange(x, 'b (tc hc wc c) t h w -> b c (tc t) (hc h) (wc w)', tc=self.time_compression, hc=self.spatial_compression, wc=self.spatial_compression)
+
+        return x, cache
 
 
 class EncoderDecoder(nn.Module):
