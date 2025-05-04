@@ -35,6 +35,8 @@ class GroupCausal3DConvVAE(torch.nn.Module):
         self.image_padding = (dh * (kh//2), dh * (kh//2), dw * (kw//2), dw * (kw//2))
         self.time_padding_size = kt+(kt-1)*(dt-1)-self.group_size
 
+        assert kt/group_size==2
+        
     def forward(self, x, gain=1, cache=None):
         x = F.pad(x, pad = self.image_padding, mode="constant", value = 0)
 
@@ -51,7 +53,10 @@ class GroupCausal3DConvVAE(torch.nn.Module):
         return x, cache
 
     @torch.no_grad()
-    def load_from_2D(self, w2d: torch.Tensor, b2d: torch.Tensor | None):
+    def _load_from_2D_state_dict(self, state_dict_2d: dict):
+        w2d = state_dict_2d.get("weight", None)
+        b2d = state_dict_2d.get("bias", None)
+
         w = torch.zeros_like(self.conv3d.weight)
         b = torch.zeros_like(self.conv3d.bias)
 
@@ -82,10 +87,10 @@ class ResBlock(nn.Module):
     def __init__(self, channels: int, kernel=(8,3,3), group_size=1):
         super().__init__()
         self.norm0 = GroupNorm3D(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
-        self.conv3d0 = GroupCausal3DConvVAE(channels, channels,  kernel, group_size, dilation = (1,1,1))
+        self.conv0 = GroupCausal3DConvVAE(channels, channels,  kernel, group_size, dilation = (1,1,1))
 
         self.norm1 = GroupNorm3D(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
-        self.conv3d1 = GroupCausal3DConvVAE(channels, channels, kernel, group_size, dilation = (1,1,1))
+        self.conv1 = GroupCausal3DConvVAE(channels, channels, kernel, group_size, dilation = (1,1,1))
 
         self.nonlinearity = nn.SiLU()
 
@@ -94,22 +99,22 @@ class ResBlock(nn.Module):
 
         y = self.norm0(x)
         y = self.nonlinearity(y)
-        y, cache['conv3d_res0'] = self.conv3d0(y, cache=cache.get('conv3d_res0', None))
+        y, cache['conv3d_res0'] = self.conv0(y, cache=cache.get('conv3d_res0', None))
 
         y = self.norm1(y)
         y = self.nonlinearity(y)
-        y, cache['conv3d_res1'] = self.conv3d1(y, cache=cache.get('conv3d_res1', None))
+        y, cache['conv3d_res1'] = self.conv1(y, cache=cache.get('conv3d_res1', None))
 
         x = x + y
 
         return x, cache
 
-    def load_from_2D(self, state_dict_2D):
+    def _load_from_2D_state_dict(self, state_dict_2D):
         self.norm0._load_from_state_dict(state_dict_2D['norm0'])
         self.norm1._load_from_state_dict(state_dict_2D['norm1'])
 
-        self.conv3d0.load_from_2D(state_dict_2D['conv0'])
-        self.conv3d1.load_from_2D(state_dict_2D['conv1'])
+        self.conv0._load_from_2D_state_dict(state_dict_2D['conv0'])
+        self.conv1._load_from_2D_state_dict(state_dict_2D['conv1'])
 
 
 class EncoderDecoderBlock(nn.Module):
@@ -140,15 +145,25 @@ class UpDownBlock(nn.Module):
         self.spatial_compression = spatial_compression
         self.total_compression = time_compression*spatial_compression**2
 
-        self.block = GroupCausal3DConvVAE(in_channels, out_channels, kernel, group_size, stride = [time_compression, spatial_compression, spatial_compression]) 
+        if direction=='up':
+            group_size = group_size//time_compression
+            kernel = (kernel[0]//time_compression, kernel[1], kernel[2])
+            stride = [1,1,1]
+        if direction=='down':
+            stride = [time_compression, spatial_compression, spatial_compression]
+
+        self.conv = GroupCausal3DConvVAE(in_channels, out_channels, kernel, group_size, stride = stride) 
 
     def __call__(self, x, cache=None):
-        x, cache = self.block(x, cache)
+        x, cache = self.conv(x, cache)
 
         if self.direction=='up' and self.total_compression !=1:
             x = F.interpolate(x, scale_factor=[self.time_compression, self.spatial_compression, self.spatial_compression], mode='nearest')
 
         return x, cache
+    
+    def _load_from_2D_state_dict(self,state_dict_2d):
+        self.conv._load_from_2D_state_dict(state_dict_2d)
 
 
 class EncoderDecoder(nn.Module):
