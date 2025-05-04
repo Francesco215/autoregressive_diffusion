@@ -23,13 +23,13 @@ if __name__=="__main__":
 
     model_path = None
     batch_size = 8
-    micro_batch_size = 8
-    clip_length = 16 
+    micro_batch_size = 2
+    clip_length = 32 
     
     # Hyperparameters
     latent_channels = 8
     n_res_blocks = 2
-    channels = [3, 64, 32, 32, latent_channels]
+    channels = [3, 64, 64, 64, latent_channels]
     time_compressions = [1, 2, 2, 1]
     spatial_compressions = [1, 2, 2, 2]
 
@@ -117,7 +117,7 @@ if __name__=="__main__":
                 recon_loss = F.l1_loss(recon, frames)
 
                 # Define the loss components
-                main_loss = recon_loss + kl_group*1e-3 + kl_loss*1e-3 + adversarial_loss*1e-2
+                main_loss = recon_loss + kl_group*1e-3 + kl_loss*1e-3 + adversarial_loss*1e-3
             scaler.scale(main_loss).backward()
 
             if batch_idx % (batch_size//micro_batch_size) == 0:
@@ -251,11 +251,11 @@ if __name__=="__main__":
                 plt.close()
             if batch_idx % (total_number_of_steps//10) == 0 and batch_idx != 0:
                 os.makedirs("saved_models", exist_ok=True)
-                vae.save_to_state_dict(f'saved_models/vae_cs_{vae_params}.pt')
+                vae.save_to_state_dict(f'saved_models/vae_cs_{vae_params//1e6}M.pt')
 
                 checkpoint = {
                     'step': batch_idx,
-                    'vae_path':f'saved_models/vae_cs_{vae_params}.pt' ,
+                    'vae_path':f'saved_models/vae_cs_{vae_params//1e6}M.pt' ,
 
                     'discriminator_state_dict': discriminator.state_dict(),
                     'optimizer_vae_state_dict': optimizer_vae.state_dict(),
@@ -271,8 +271,8 @@ if __name__=="__main__":
                     'adversarial_losses': adversarial_losses,
                 }
 
-                torch.save(checkpoint, f"saved_models/checkpoint_step_{vae_params}.pt")
-                print(f"Saved checkpoint at step {vae_params}")
+                torch.save(checkpoint, f"saved_models/checkpoint_step_{vae_params//1e6}M.pt")
+                print(f"Saved checkpoint at step {vae_params//1e6}M")
 
 
     print("Finished Training")

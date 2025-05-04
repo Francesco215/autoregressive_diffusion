@@ -43,7 +43,7 @@ class BetterModule(nn.Module):
                 key = parsed.path.lstrip("/")
 
                 # Create /cache directory if not exists
-                cache_dir = "/cache/autoregressive_diffusion_models/"
+                cache_dir = "../cache/autoregressive_diffusion_models/"
                 os.makedirs(cache_dir, exist_ok=True)
 
                 # Local cache file path

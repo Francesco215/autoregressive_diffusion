@@ -84,15 +84,20 @@ class GroupNorm3D(nn.GroupNorm):
         return output
 
 class ResBlock(nn.Module):
-    def __init__(self, channels: int, kernel=(8,3,3), group_size=1):
+    def __init__(self, in_channels: int, out_channels:int=None , kernel=(8,3,3), group_size=1, use_skip_conv=False):
         super().__init__()
-        self.norm0 = GroupNorm3D(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
-        self.conv0 = GroupCausal3DConvVAE(channels, channels,  kernel, group_size, dilation = (1,1,1))
+        out_channels = in_channels if out_channels is None else out_channels
 
-        self.norm1 = GroupNorm3D(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
-        self.conv1 = GroupCausal3DConvVAE(channels, channels, kernel, group_size, dilation = (1,1,1))
+        self.norm0 = GroupNorm3D(num_groups=32,num_channels=in_channels)
+        self.conv0 = GroupCausal3DConvVAE(in_channels, out_channels,  kernel, group_size, dilation = (1,1,1))
+
+        self.norm1 = GroupNorm3D(num_groups=32,num_channels=out_channels,eps=1e-6,affine=True)
+        self.conv1 = GroupCausal3DConvVAE(out_channels, out_channels, kernel, group_size, dilation = (1,1,1))
 
         self.nonlinearity = nn.SiLU()
+
+        if in_channels != out_channels:
+            self.conv_shortcut = GroupCausal3DConvVAE(in_channels, out_channels, kernel, group_size, dilation = (1,1,1)) if use_skip_conv else nn.Identity()
 
     def forward(self, x, cache = None):
         if cache is None: cache = {}
@@ -105,6 +110,7 @@ class ResBlock(nn.Module):
         y = self.nonlinearity(y)
         y, cache['conv3d_res1'] = self.conv1(y, cache=cache.get('conv3d_res1', None))
 
+        x = self.conv_shortcut(x)
         x = x + y
 
         return x, cache
@@ -115,6 +121,8 @@ class ResBlock(nn.Module):
 
         self.conv0._load_from_2D_state_dict(state_dict_2D['conv0'])
         self.conv1._load_from_2D_state_dict(state_dict_2D['conv1'])
+
+        self.conv_shortcut._load_from_2D_state_dict(state_dict_2D['conv_shortcut'])
 
 
 class EncoderDecoderBlock(nn.Module):

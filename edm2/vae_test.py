@@ -56,5 +56,7 @@ class TestGroupCausal3DConvVAE(unittest.TestCase):
             y[:, :, max_index_affected:].std().item(), self.error_bound,
             f"Test failed: std deviation {y[:, :, max_index_affected:].std()} is greater {self.error_bound}"
         )
+
+
 if __name__ == "__main__":
     unittest.main()
