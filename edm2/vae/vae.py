@@ -140,10 +140,7 @@ class UpDownBlock(nn.Module):
         self.spatial_compression = spatial_compression
         self.total_compression = time_compression*spatial_compression**2
 
-        if direction=='down':
-            self.block = GroupCausal3DConvVAE(in_channels, out_channels, kernel, group_size, stride = [time_compression, spatial_compression, spatial_compression]) 
-        if direction=='up':
-            self.block = GroupCausal3DConvVAE(in_channels, out_channels, kernel, group_size//time_compression) 
+        self.block = GroupCausal3DConvVAE(in_channels, out_channels, kernel, group_size, stride = [time_compression, spatial_compression, spatial_compression]) 
 
     def __call__(self, x, cache=None):
         x, cache = self.block(x, cache)
@@ -167,7 +164,7 @@ class EncoderDecoder(nn.Module):
         self.logvar_mode = logvar_mode
 
         channels = channels.copy()
-        group_sizes = np.cumprod(time_compressions)
+        group_sizes = np.cumprod(time_compressions).copy()
 
         if type=='encoder':
             group_sizes = group_sizes[::-1]
