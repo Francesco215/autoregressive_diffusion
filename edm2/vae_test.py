@@ -93,7 +93,7 @@ class TestUpDownBlockDownCausality(unittest.TestCase):
 
         # choose a frame that is *not* in the very first causal group
         # self.cut_frame = self.group_size * self.time_compression + 1    # e.g. 9 when G=4, T=2
-        self.cut_frame = 6
+        self.cut_frame = 4
 
     def test_group_causality_down(self):
         x = torch.zeros(

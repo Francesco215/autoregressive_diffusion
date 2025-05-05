@@ -1,17 +1,13 @@
-
 import inspect
 
 import torch
 from torch import nn, Tensor
 from torch.nn import functional as F
 
-
 import einops
 import numpy as np
 
 from ..utils import BetterModule
-
-
 
 
 class GroupCausal3DConvVAE(torch.nn.Module):
@@ -27,15 +23,16 @@ class GroupCausal3DConvVAE(torch.nn.Module):
         self.conv3d = nn.Conv3d(in_channels, out_channels*group_size, kernel, stride, dilation=dilation, bias=True)
         with torch.no_grad():
             w = self.conv3d.weight
-            w[:,:,:-group_size] = 0
+            # w[:,:,:-group_size] = 0
             self.conv3d.weight.copy_(w)
 
+        assert not (group_size==1 and stride[0]!=1)
         kt, kw, kh = kernel
         dt, dw, dh = dilation
         self.image_padding = (dh * (kh//2), dh * (kh//2), dw * (kw//2), dw * (kw//2))
         self.time_padding_size = kt+(kt-1)*(dt-1)-self.group_size
 
-        assert kt/group_size==2
+        # assert kt/group_size==2
         
     def forward(self, x, gain=1, cache=None):
         x = F.pad(x, pad = self.image_padding, mode="constant", value = 0)
@@ -84,7 +81,7 @@ class GroupNorm3D(nn.GroupNorm):
         return output
 
 class ResBlock(nn.Module):
-    def __init__(self, in_channels: int, out_channels:int=None , kernel=(8,3,3), group_size=1, use_skip_conv=False):
+    def __init__(self, in_channels: int, out_channels:int=None , kernel=(8,3,3), group_size=1):
         super().__init__()
         out_channels = in_channels if out_channels is None else out_channels
 
@@ -96,8 +93,7 @@ class ResBlock(nn.Module):
 
         self.nonlinearity = nn.SiLU()
 
-        if in_channels != out_channels:
-            self.conv_shortcut = GroupCausal3DConvVAE(in_channels, out_channels, kernel, group_size, dilation = (1,1,1)) if use_skip_conv else nn.Identity()
+        self.conv_shortcut = GroupCausal3DConvVAE(in_channels, out_channels, kernel, group_size, dilation = (1,1,1)) if in_channels!=out_channels else nn.Identity()
 
     def forward(self, x, cache = None):
         if cache is None: cache = {}
@@ -158,6 +154,7 @@ class UpDownBlock(nn.Module):
             kernel = (kernel[0]//time_compression, kernel[1], kernel[2])
             stride = [1,1,1]
         if direction=='down':
+            kernel = (kernel[0]//time_compression, kernel[1], kernel[2])
             stride = [time_compression, spatial_compression, spatial_compression]
 
         self.conv = GroupCausal3DConvVAE(in_channels, out_channels, kernel, group_size, stride = stride) 
@@ -206,8 +203,10 @@ class EncoderDecoder(nn.Module):
 
         in_channels, out_channels = channels[:-1], channels[1:]
         kernels = [(int(group_size)*2,3,3) for group_size in group_sizes]
-        
+
+        # self.conv_in =  #entrambi ce l'hanno
         self.encoder_blocks = nn.ModuleList([EncoderDecoderBlock(in_channels[i], out_channels[i], time_compressions[i], spatial_compressions[i], kernels[i], group_sizes[i], n_res_blocks, type) for i in range(len(group_sizes))])
+        # self.mid_block = #entrambi ce l'hanno
 
     def forward(self, x:Tensor, cache = None):
         if cache is None: cache = {}
