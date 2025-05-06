@@ -24,19 +24,16 @@ if __name__=="__main__":
     model_path = None
     batch_size = 8
     micro_batch_size = 2
-    clip_length = 32 
+    clip_length = 48 
     
     # Hyperparameters
     latent_channels = 8
     n_res_blocks = 2
-    channels = [3, 64, 64, 64, latent_channels]
-    time_compressions = [1, 2, 2, 1]
-    spatial_compressions = [1, 2, 2, 2]
 
     dtype=torch.bfloat16
 
     # Initialize models
-    vae = VAE(channels, n_res_blocks, time_compressions, spatial_compressions, logvar_mode='learned').to(device)
+    vae = VAE(latent_channels, logvar_mode='learned').to(device)
     # vae = VAE.from_pretrained('saved_models/vae_cs_46904.pt').to(device)
     # Example instantiation
     discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(32,)).to(device)
@@ -117,7 +114,7 @@ if __name__=="__main__":
                 recon_loss = F.l1_loss(recon, frames)
 
                 # Define the loss components
-                main_loss = recon_loss + kl_group*1e-3 + kl_loss*1e-3 + adversarial_loss*1e-3
+                main_loss = recon_loss + kl_group*1e-3 + kl_loss*1e-3 + adversarial_loss*1e-2
             scaler.scale(main_loss).backward()
 
             if batch_idx % (batch_size//micro_batch_size) == 0:

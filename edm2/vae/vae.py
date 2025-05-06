@@ -34,7 +34,7 @@ class GroupCausal3DConvVAE(torch.nn.Module):
 
         # assert kt/group_size==2
         
-    def forward(self, x, gain=1, cache=None):
+    def forward(self, x, cache=None):
         x = F.pad(x, pad = self.image_padding, mode="constant", value = 0)
 
         if cache is None:
@@ -85,15 +85,15 @@ class ResBlock(nn.Module):
         super().__init__()
         out_channels = in_channels if out_channels is None else out_channels
 
-        self.norm0 = GroupNorm3D(num_groups=32,num_channels=in_channels)
+        self.norm0 = GroupNorm3D(num_groups=8,num_channels=in_channels)
         self.conv0 = GroupCausal3DConvVAE(in_channels, out_channels,  kernel, group_size, dilation = (1,1,1))
 
-        self.norm1 = GroupNorm3D(num_groups=32,num_channels=out_channels,eps=1e-6,affine=True)
+        self.norm1 = GroupNorm3D(num_groups=8,num_channels=out_channels,eps=1e-6,affine=True)
         self.conv1 = GroupCausal3DConvVAE(out_channels, out_channels, kernel, group_size, dilation = (1,1,1))
 
         self.nonlinearity = nn.SiLU()
 
-        self.conv_shortcut = GroupCausal3DConvVAE(in_channels, out_channels, kernel, group_size, dilation = (1,1,1)) if in_channels!=out_channels else nn.Identity()
+        self.conv_shortcut = GroupCausal3DConvVAE(in_channels, out_channels, kernel, group_size, dilation = (1,1,1)) if in_channels!=out_channels else None
 
     def forward(self, x, cache = None):
         if cache is None: cache = {}
@@ -106,7 +106,8 @@ class ResBlock(nn.Module):
         y = self.nonlinearity(y)
         y, cache['conv3d_res1'] = self.conv1(y, cache=cache.get('conv3d_res1', None))
 
-        x = self.conv_shortcut(x)
+        if self.conv_shortcut is not None:
+            x, cache['shortcut'] = self.conv_shortcut(x, cache = cache.get('conv_shortcut', None))
         x = x + y
 
         return x, cache
@@ -124,14 +125,17 @@ class ResBlock(nn.Module):
 class EncoderDecoderBlock(nn.Module):
     def __init__(self, in_channels, out_channels, time_compression, spatial_compression, kernel, group_size, n_res_blocks, type='encoder'):
         super().__init__()
-        self.updown_block = UpDownBlock(in_channels, out_channels, kernel, group_size, time_compression, spatial_compression, 'up' if type=='decoder' else 'down')
+        self.total_compression = time_compression*spatial_compression**2
+        if self.total_compression!=1:
+            self.updown_block = UpDownBlock(in_channels, in_channels, kernel, group_size, time_compression, spatial_compression, 'up' if type=='decoder' else 'down')
 
-        self.res_blocks = nn.ModuleList([ResBlock(out_channels, kernel, group_size) for _ in range(n_res_blocks)])
+        self.res_blocks = nn.ModuleList([ResBlock(in_channels if i==0 else out_channels, out_channels, kernel, group_size) for i in range(n_res_blocks)])
 
     def forward(self,x, cache=None):
         if cache is None: cache = {}
 
-        x, cache['updown_block'] = self.updown_block(x, cache.get('updown_block', None))
+        if self.total_compression !=1:
+            x, cache['updown_block'] = self.updown_block(x, cache.get('updown_block', None))
 
         for i, res_block in enumerate(self.res_blocks):
             x, cache[f'res_block_{i}'] = res_block(x, cache.get(f'res_block_{i}', None))
@@ -149,12 +153,11 @@ class UpDownBlock(nn.Module):
         self.spatial_compression = spatial_compression
         self.total_compression = time_compression*spatial_compression**2
 
+        kernel = (kernel[0]//time_compression, kernel[1], kernel[2])
         if direction=='up':
             group_size = group_size//time_compression
-            kernel = (kernel[0]//time_compression, kernel[1], kernel[2])
             stride = [1,1,1]
         if direction=='down':
-            kernel = (kernel[0]//time_compression, kernel[1], kernel[2])
             stride = [time_compression, spatial_compression, spatial_compression]
 
         self.conv = GroupCausal3DConvVAE(in_channels, out_channels, kernel, group_size, stride = stride) 
@@ -172,49 +175,51 @@ class UpDownBlock(nn.Module):
 
 
 class EncoderDecoder(nn.Module):
-    def __init__(self, channels = [3, 32, 32, 8], n_res_blocks = 2, time_compressions = [1,2,2], spatial_compressions = [1,2,2], type='encoder', logvar_mode='learned_constant'):
+    def __init__(self, in_channels, out_channels, block_channels = [128, 512, 1024, 1024, 1024], n_res_blocks = [3,3,3,3,2], time_compressions = [2,2,1,1,1], spatial_compressions = [1,2,2,2,1], type='encoder', logvar_mode='learned_constant'):
         super().__init__()
-        assert type in ['encoder', 'decoder', 'discriminator'], 'Invalid type, expected encoder, decoder or discriminator'
+        assert type in ['encoder', 'decoder'], 'Invalid type, expected encoder or decoder'
         assert logvar_mode in ['learned_constant', 'learned'] or isinstance(logvar_mode, float), 'Invalid logvar_mode, expected learned_constant or learned of a float'
-        assert len(channels) -1 == len(time_compressions) == len(spatial_compressions)
+        assert len(block_channels) == len(time_compressions) == len(spatial_compressions)
 
-        self.time_compressions = time_compressions
-        self.spatial_compressions = spatial_compressions
         self.encoding_type = type
         self.logvar_mode = logvar_mode
 
-        channels = channels.copy()
+        block_channels = [block_channels[0]]+block_channels
         group_sizes = np.cumprod(time_compressions).copy()
 
         if type=='encoder':
             group_sizes = group_sizes[::-1]
             self.logvar_multiplier = nn.Parameter(torch.tensor(0.5))
             if logvar_mode == 'learned':
-                channels[-1] = channels[-1] * 2  
+                out_channels = out_channels * 2
             elif isinstance(logvar_mode, float):
                 self.logvar_multiplier = nn.Parameter(torch.tensor(logvar_mode), requires_grad=False)
 
-        elif type=='decoder':
-            channels = channels[::-1]
-        elif type=='discriminator':
-            raise NotImplementedError
-            group_sizes = group_sizes[::-1]
-            assert latent_channels == 2, 'Discriminator should have 2 latent channels, one for each logit'
-
-        in_channels, out_channels = channels[:-1], channels[1:]
+        in_block_channels, out_block_channels = block_channels[:-1], block_channels[1:]
         kernels = [(int(group_size)*2,3,3) for group_size in group_sizes]
 
-        # self.conv_in =  #entrambi ce l'hanno
-        self.encoder_blocks = nn.ModuleList([EncoderDecoderBlock(in_channels[i], out_channels[i], time_compressions[i], spatial_compressions[i], kernels[i], group_sizes[i], n_res_blocks, type) for i in range(len(group_sizes))])
-        # self.mid_block = #entrambi ce l'hanno
+
+        self.conv_in = GroupCausal3DConvVAE(in_channels, block_channels[0], kernels[0], group_sizes[0])
+        self.encoder_blocks = nn.ModuleList([EncoderDecoderBlock(in_block_channels[i], out_block_channels[i], time_compressions[i], spatial_compressions[i], kernels[i], group_sizes[i], n_res_blocks[i], type) for i in range(len(group_sizes))])
+        self.conv_norm_out = nn.GroupNorm(num_groups=8, num_channels=block_channels[-1])
+        self.conv_act = nn.SiLU()
+        self.conv_out = GroupCausal3DConvVAE(block_channels[-1], out_channels, kernels[-1], group_sizes[-1])
 
     def forward(self, x:Tensor, cache = None):
         if cache is None: cache = {}
 
+        x, cache['conv_in'] = self.conv_in.forward(x, cache = cache.get('conv_in', None))
+
         for i, block in enumerate(self.encoder_blocks):
             x, cache[f'encoder_block_{i}'] = block(x, cache.get(f'encoder_block_{i}', None))
 
-        if self.encoding_type in ['decoder','discriminator']:
+        x = self.conv_norm_out(x)        
+        x = self.conv_act(x)
+        x, cache['conv_out'] = self.conv_out(x, cache=cache.get('conv_in', None))
+
+
+
+        if self.encoding_type == 'decoder':
             return x, cache
 
         # Different logvar calculation methods
@@ -229,15 +234,15 @@ class EncoderDecoder(nn.Module):
 
 
 class VAE(BetterModule):
-    def __init__(self, channels, n_res_blocks, time_compressions=[1, 2, 2], spatial_compressions=[1, 2, 2], logvar_mode='learned', std=None):
+    def __init__(self, latent_channels, logvar_mode='learned', std=None):
         super().__init__()
         
-        self.latent_channels = channels[-1]
-        self.encoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='encoder', logvar_mode=logvar_mode)
-        self.decoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='decoder')
-
-        self.time_compression = np.prod(time_compressions)
-        self.spatial_compression = np.prod(spatial_compressions)
+        # self.encoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='encoder', logvar_mode=logvar_mode)
+        # self.decoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='decoder')
+        # self.encoder = EncoderDecoder(in_channels=3, out_channels=latent_channels, block_channels = [128, 512, 1024, 1024, 1024], n_res_blocks = [3,3,3,3,2], spatial_compressions = [1,2,2,2,1], type='encoder', logvar_mode=logvar_mode)
+        # self.decoder = EncoderDecoder(in_channels=latent_channels, out_channels=3, block_channels = [1024, 1024, 1024, 512, 128], n_res_blocks = [2,4,4,4,4], spatial_compressions = [1,1,2,2,2], type='decoder')
+        self.encoder = EncoderDecoder(in_channels=3, out_channels=latent_channels, block_channels = [16, 32, 64, 64, 64], n_res_blocks = [2,2,2,2,1], spatial_compressions = [1,2,2,2,1], type='encoder', logvar_mode=logvar_mode)
+        self.decoder = EncoderDecoder(in_channels=latent_channels, out_channels=3, block_channels = [64, 64, 64, 32, 16], n_res_blocks = [1,2,2,2,2], spatial_compressions = [1,1,2,2,2], type='decoder')
 
         self.std=std
         # is it possible to put this inside of the super() class and avoid having it here?
