@@ -1,15 +1,3 @@
-#%%
-from diffusers import AutoencoderKL
-import torch
-
-
-vae2d = AutoencoderKL.from_pretrained("THUDM/CogView4-6B", subfolder="vae")
-x = torch.randn(2,1024,16,16)                       # (B, C, T, H, W)
-downsampler =vae2d.decoder.up_blocks[1].upsamplers[0]
-
-# downsampler(x)
-vae2d.encoder
-
 # %%
 from edm2.vae import VAE
 latent_channels = 8
@@ -18,7 +6,10 @@ channels = [3, 64, 64, 64, latent_channels]
 time_compressions = [1, 2, 2, 1]
 spatial_compressions = [1, 2, 2, 2]
 
-VAE(channels, n_res_blocks, time_compressions, spatial_compressions, logvar_mode='learned').encoder
+vae=VAE(latent_channels=16, logvar_mode='learned')
+#%%
+for name, sub_module in vae.named_parameters():
+    print(name)
 
 # %%
 import torch

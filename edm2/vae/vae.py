@@ -162,9 +162,14 @@ class UpDownBlock(nn.Module):
         if direction=='down':
             stride = [time_compression, spatial_compression, spatial_compression]
 
+        #TODO: change the stide
         self.conv = GroupCausal3DConvVAE(in_channels, out_channels, kernel, group_size, stride = stride) 
 
     def __call__(self, x, cache=None):
+        #TODO
+        # do einops only for the time dimention
+        # x = einops.rearrange(x, 'b c (tc t) h w -> b (tc c) h w')
+        # do stride only on the spatial dimentions
         x, cache = self.conv(x, cache)
 
         if self.direction=='up' and self.total_compression !=1:
@@ -241,10 +246,10 @@ class VAE(BetterModule):
         
         # self.encoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='encoder', logvar_mode=logvar_mode)
         # self.decoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='decoder')
-        # self.encoder = EncoderDecoder(in_channels=3, out_channels=latent_channels, block_channels = [128, 512, 1024, 1024, 1024], n_res_blocks = [3,3,3,3,2], spatial_compressions = [1,2,2,2,1], type='encoder', logvar_mode=logvar_mode)
-        # self.decoder = EncoderDecoder(in_channels=latent_channels, out_channels=3, block_channels = [1024, 1024, 1024, 512, 128], n_res_blocks = [2,4,4,4,4], spatial_compressions = [1,1,2,2,2], type='decoder')
-        self.encoder = EncoderDecoder(in_channels=3, out_channels=latent_channels, block_channels = [16, 32, 64, 64, 64], n_res_blocks = [2,2,2,2,1], spatial_compressions = [1,2,2,2,1], type='encoder', logvar_mode=logvar_mode)
-        self.decoder = EncoderDecoder(in_channels=latent_channels, out_channels=3, block_channels = [64, 64, 64, 32, 16], n_res_blocks = [1,2,2,2,2], spatial_compressions = [1,1,2,2,2], type='decoder')
+        self.encoder = EncoderDecoder(in_channels=3, out_channels=latent_channels, block_channels = [128, 512, 1024, 1024, 1024], n_res_blocks = [3,3,3,3,2], spatial_compressions = [1,2,2,2,1], type='encoder', logvar_mode=logvar_mode)
+        self.decoder = EncoderDecoder(in_channels=latent_channels, out_channels=3, block_channels = [1024, 1024, 1024, 512, 128], n_res_blocks = [2,4,4,4,4], spatial_compressions = [1,1,2,2,2], type='decoder')
+        # self.encoder = EncoderDecoder(in_channels=3, out_channels=latent_channels, block_channels = [16, 32, 64, 64, 64], n_res_blocks = [2,2,2,2,1], spatial_compressions = [1,2,2,2,1], type='encoder', logvar_mode=logvar_mode)
+        # self.decoder = EncoderDecoder(in_channels=latent_channels, out_channels=3, block_channels = [64, 64, 64, 32, 16], n_res_blocks = [1,2,2,2,2], spatial_compressions = [1,1,2,2,2], type='decoder')
 
         self.std=std
         # is it possible to put this inside of the super() class and avoid having it here?
