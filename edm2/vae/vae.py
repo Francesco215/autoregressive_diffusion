@@ -13,9 +13,11 @@ from ..utils import BetterModule
 class GroupCausal3DConvVAE(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel, group_size, dilation = (1,1,1), stride = [1,1,1]):
         super().__init__()
+        self.in_channels = in_channels
         self.out_channels = out_channels
         self.group_size = group_size
-        self.dilation = dilation
+        self.kernel = kernel
+        self.stride = stride
 
         stride = stride.copy()
         stride[0]*=group_size
@@ -26,7 +28,7 @@ class GroupCausal3DConvVAE(torch.nn.Module):
             # w[:,:,:-group_size] = 0
             self.conv3d.weight.copy_(w)
 
-        assert not (group_size==1 and stride[0]!=1)
+        # assert not (group_size==1 and stride[0]!=1)
         kt, kw, kh = kernel
         dt, dw, dh = dilation
         self.image_padding = (dh * (kh//2), dh * (kh//2), dw * (kw//2), dw * (kw//2))
@@ -49,6 +51,9 @@ class GroupCausal3DConvVAE(torch.nn.Module):
 
         return x, cache
 
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self.in_channels}, {self.out_channels}, kernel={self.kernel}, group_size={self.group_size}, stride={self.stride})"
+
     @torch.no_grad()
     def _load_from_2D_state_dict(self, state_dict_2d: dict):
         w2d = state_dict_2d.get("weight", None)
@@ -57,14 +62,11 @@ class GroupCausal3DConvVAE(torch.nn.Module):
         w = torch.zeros_like(self.conv3d.weight)
         b = torch.zeros_like(self.conv3d.bias)
 
-        kt = w.shape[2]                    # temporal kernel length
+        kt = w.shape[2]              
 
         for g in range(self.group_size):
-            # copy the 2‑D weights into the correct time‑slice
             w[self.out_channels*g : self.out_channels*(g+1), :, kt-self.group_size+g] = w2d.clone()
-
             if b2d is not None:
-                # bias is 1‑D, no time dimension → copy once per output slice
                 b[self.out_channels*g : self.out_channels*(g+1)] = b2d
 
         self.conv3d.weight.copy_(w)
@@ -85,11 +87,11 @@ class ResBlock(nn.Module):
         super().__init__()
         out_channels = in_channels if out_channels is None else out_channels
 
-        self.norm0 = GroupNorm3D(num_groups=8,num_channels=in_channels)
-        self.conv0 = GroupCausal3DConvVAE(in_channels, out_channels,  kernel, group_size, dilation = (1,1,1))
+        self.norm1 = GroupNorm3D(num_groups=8,num_channels=in_channels)
+        self.conv1 = GroupCausal3DConvVAE(in_channels, out_channels,  kernel, group_size, dilation = (1,1,1))
 
-        self.norm1 = GroupNorm3D(num_groups=8,num_channels=out_channels,eps=1e-6,affine=True)
-        self.conv1 = GroupCausal3DConvVAE(out_channels, out_channels, kernel, group_size, dilation = (1,1,1))
+        self.norm2 = GroupNorm3D(num_groups=8,num_channels=out_channels,eps=1e-6,affine=True)
+        self.conv2 = GroupCausal3DConvVAE(out_channels, out_channels, kernel, group_size, dilation = (1,1,1))
 
         self.nonlinearity = nn.SiLU()
 
@@ -98,13 +100,13 @@ class ResBlock(nn.Module):
     def forward(self, x, cache = None):
         if cache is None: cache = {}
 
-        y = self.norm0(x)
+        y = self.norm1(x)
         y = self.nonlinearity(y)
-        y, cache['conv3d_res0'] = self.conv0(y, cache=cache.get('conv3d_res0', None))
+        y, cache['conv3d_res0'] = self.conv1(y, cache=cache.get('conv3d_res0', None))
 
-        y = self.norm1(y)
+        y = self.norm2(y)
         y = self.nonlinearity(y)
-        y, cache['conv3d_res1'] = self.conv1(y, cache=cache.get('conv3d_res1', None))
+        y, cache['conv3d_res1'] = self.conv2(y, cache=cache.get('conv3d_res1', None))
 
         if self.conv_shortcut is not None:
             x, cache['shortcut'] = self.conv_shortcut(x, cache = cache.get('conv_shortcut', None))
@@ -113,11 +115,11 @@ class ResBlock(nn.Module):
         return x, cache
 
     def _load_from_2D_state_dict(self, state_dict_2D):
-        self.norm0._load_from_state_dict(state_dict_2D['norm0'])
         self.norm1._load_from_state_dict(state_dict_2D['norm1'])
+        self.norm2._load_from_state_dict(state_dict_2D['norm2'])
 
-        self.conv0._load_from_2D_state_dict(state_dict_2D['conv0'])
         self.conv1._load_from_2D_state_dict(state_dict_2D['conv1'])
+        self.conv2._load_from_2D_state_dict(state_dict_2D['conv2'])
 
         self.conv_shortcut._load_from_2D_state_dict(state_dict_2D['conv_shortcut'])
 
@@ -175,7 +177,7 @@ class UpDownBlock(nn.Module):
 
 
 class EncoderDecoder(nn.Module):
-    def __init__(self, in_channels, out_channels, block_channels = [128, 512, 1024, 1024, 1024], n_res_blocks = [3,3,3,3,2], time_compressions = [2,2,1,1,1], spatial_compressions = [1,2,2,2,1], type='encoder', logvar_mode='learned_constant'):
+    def __init__(self, in_channels, out_channels, block_channels = [128, 512, 1024, 1024, 1024], n_res_blocks = [3,3,3,3,2], time_compressions = [1,2,2,1,1], spatial_compressions = [1,2,2,2,1], type='encoder', logvar_mode='learned_constant'):
         super().__init__()
         assert type in ['encoder', 'decoder'], 'Invalid type, expected encoder or decoder'
         assert logvar_mode in ['learned_constant', 'learned'] or isinstance(logvar_mode, float), 'Invalid logvar_mode, expected learned_constant or learned of a float'
@@ -188,7 +190,7 @@ class EncoderDecoder(nn.Module):
         group_sizes = np.cumprod(time_compressions).copy()
 
         if type=='encoder':
-            group_sizes = group_sizes[::-1]
+            group_sizes = group_sizes[-1]//group_sizes
             self.logvar_multiplier = nn.Parameter(torch.tensor(0.5))
             if logvar_mode == 'learned':
                 out_channels = out_channels * 2
@@ -199,7 +201,7 @@ class EncoderDecoder(nn.Module):
         kernels = [(int(group_size)*2,3,3) for group_size in group_sizes]
 
 
-        self.conv_in = GroupCausal3DConvVAE(in_channels, block_channels[0], kernels[0], group_sizes[0])
+        self.conv_in = GroupCausal3DConvVAE(in_channels, in_block_channels[0], kernels[0], group_sizes[0])
         self.encoder_blocks = nn.ModuleList([EncoderDecoderBlock(in_block_channels[i], out_block_channels[i], time_compressions[i], spatial_compressions[i], kernels[i], group_sizes[i], n_res_blocks[i], type) for i in range(len(group_sizes))])
         self.conv_norm_out = nn.GroupNorm(num_groups=8, num_channels=block_channels[-1])
         self.conv_act = nn.SiLU()
