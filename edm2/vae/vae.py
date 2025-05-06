@@ -150,6 +150,7 @@ class UpDownBlock(nn.Module):
         super().__init__()
         assert direction in ['up', 'down'], 'Invalid direction, expected up or down'
 
+        self.in_channels, self.out_channels, self.kernel, self.group_size = in_channels, out_channels, kernel, group_size
         self.direction = direction
         self.time_compression = time_compression
         self.spatial_compression = spatial_compression
@@ -158,24 +159,22 @@ class UpDownBlock(nn.Module):
         kernel = (kernel[0]//time_compression, kernel[1], kernel[2])
         if direction=='up':
             group_size = group_size//time_compression
-            stride = [1,1,1]
+            self.stride = [1,1,1]
         if direction=='down':
-            stride = [time_compression, spatial_compression, spatial_compression]
+            self.stride = [time_compression, spatial_compression, spatial_compression]
 
-        #TODO: change the stide
-        self.conv = GroupCausal3DConvVAE(in_channels, out_channels, kernel, group_size, stride = stride) 
+        self.conv = GroupCausal3DConvVAE(in_channels, out_channels, kernel, group_size, stride = self.stride) 
 
     def __call__(self, x, cache=None):
-        #TODO
-        # do einops only for the time dimention
-        # x = einops.rearrange(x, 'b c (tc t) h w -> b (tc c) h w')
-        # do stride only on the spatial dimentions
         x, cache = self.conv(x, cache)
 
         if self.direction=='up' and self.total_compression !=1:
             x = F.interpolate(x, scale_factor=[self.time_compression, self.spatial_compression, self.spatial_compression], mode='nearest')
 
         return x, cache
+    
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self.in_channels}, {self.out_channels}, time_compression={self.time_compression}, space_compression={self.spatial_compression}, kernel={self.kernel}, group_size={self.group_size}, stride={self.stride})"
     
     def _load_from_2D_state_dict(self,state_dict_2d):
         self.conv._load_from_2D_state_dict(state_dict_2d)
@@ -244,12 +243,10 @@ class VAE(BetterModule):
     def __init__(self, latent_channels, logvar_mode='learned', std=None):
         super().__init__()
         
-        # self.encoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='encoder', logvar_mode=logvar_mode)
-        # self.decoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='decoder')
-        self.encoder = EncoderDecoder(in_channels=3, out_channels=latent_channels, block_channels = [128, 512, 1024, 1024, 1024], n_res_blocks = [3,3,3,3,2], spatial_compressions = [1,2,2,2,1], type='encoder', logvar_mode=logvar_mode)
-        self.decoder = EncoderDecoder(in_channels=latent_channels, out_channels=3, block_channels = [1024, 1024, 1024, 512, 128], n_res_blocks = [2,4,4,4,4], spatial_compressions = [1,1,2,2,2], type='decoder')
-        # self.encoder = EncoderDecoder(in_channels=3, out_channels=latent_channels, block_channels = [16, 32, 64, 64, 64], n_res_blocks = [2,2,2,2,1], spatial_compressions = [1,2,2,2,1], type='encoder', logvar_mode=logvar_mode)
-        # self.decoder = EncoderDecoder(in_channels=latent_channels, out_channels=3, block_channels = [64, 64, 64, 32, 16], n_res_blocks = [1,2,2,2,2], spatial_compressions = [1,1,2,2,2], type='decoder')
+        self.encoder = EncoderDecoder(in_channels=3, out_channels=latent_channels, block_channels = [128, 512, 1024, 1024, 1024], n_res_blocks = [3,3,3,3,2], spatial_compressions = [1,2,2,2,1], time_compressions=[1,2,2,1,1], type='encoder', logvar_mode=logvar_mode)
+        self.decoder = EncoderDecoder(in_channels=latent_channels, out_channels=3, block_channels = [1024, 1024, 512, 128], n_res_blocks = [6,4,4,4], spatial_compressions = [1,2,2,2], time_compressions=[1,1,2,2], type='decoder')
+        # self.encoder = EncoderDecoder(in_channels=3, out_channels=latent_channels, block_channels = [16, 32, 64, 64, 64], n_res_blocks = [2,2,2,2,1], spatial_compressions = [1,2,2,2,1], time_compressions=[1,2,2,1,1], type='encoder', logvar_mode=logvar_mode)
+        # self.decoder = EncoderDecoder(in_channels=latent_channels, out_channels=3, block_channels = [64, 64, 64, 32, 16], n_res_blocks = [1,2,2,2,2], spatial_compressions = [1,1,2,2,2], time_compressions=[1,2,2,1,1], type='decoder')
 
         self.std=std
         # is it possible to put this inside of the super() class and avoid having it here?
