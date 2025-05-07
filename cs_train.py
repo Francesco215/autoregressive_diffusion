@@ -1,6 +1,7 @@
 #%%
 from contextlib import nullcontext
 import os
+import einops
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -23,47 +24,39 @@ import torch._dynamo.config
 
 torch._dynamo.config.cache_size_limit = 100
         
-if __name__=="__main__":
-    # local_rank = int(os.environ["LOCAL_RANK"])
-    # torch.cuda.set_device(local_rank)
-    # dist.init_process_group(backend="nccl", init_method="env://")
-    # device = torch.device("cuda", local_rank)
 
-    dist.init_process_group(backend="nccl")
-    local_rank=dist.get_rank()
-    torch.cuda.set_device(local_rank)
-    device = torch.device("cuda", local_rank)
-
-    clean_stale_shared_memory()
-    
-
-    unet = UNet(img_resolution=64, # Match your latent resolution
-                img_channels=8, # Match your latent channels
+        
+def train(device, local_rank=0):
+    unet = UNet(img_resolution=32, # Match your latent resolution
+                img_channels=32, # Match your latent channels
                 label_dim = 4,
                 model_channels=128,
-                channel_mult=[1,2,4,8],
+                channel_mult=[1,2,4,4],
                 channel_mult_noise=None,
                 channel_mult_emb=None,
-                num_blocks=4,
-                video_attn_resolutions=[8],
-                frame_attn_resolutions=[16],
+                num_blocks=3,
+                video_attn_resolutions=[2],
+                frame_attn_resolutions=[8,4],
                 )
     resume_training=False
     unet_params = sum(p.numel() for p in unet.parameters())
     if resume_training:
         unet=UNet.from_pretrained(f'saved_models/unet_{unet_params//1e6}M.pt')
-    unet = DDP(unet.to(device), device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
+
+    unet=unet.to(device)
+    if dist.is_available() and dist.is_initialized():
+        unet = DDP(unet, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
 
     if local_rank==0:
-        autoencoder = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_cs.pt").to(device)
+        vae = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_cs.pt").to(device)
         print(f"Number of UNet parameters: {unet_params//1e6}M")
 
     micro_batch_size = 1
-    batch_size = 1
+    batch_size = 8
     accumulation_steps = batch_size//micro_batch_size
-    clip_length = 12
+    clip_length = 48
     # training_steps = total_number_of_steps * batch_size
-    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed/', local = f'/data/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False, cache_limit = '200gb')
+    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed/', local = f'/data/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsVaeCollate(), pin_memory=True, num_workers=6, shuffle=False)
     steps_per_epoch = len(dataset)//micro_batch_size
     n_epochs = 10
@@ -99,11 +92,13 @@ if __name__=="__main__":
         pbar = tqdm(enumerate(dataloader, start=steps_taken),total=steps_per_epoch) if local_rank==0 else enumerate(dataloader)
         for i, batch in pbar:
             with torch.no_grad():
-                latents, _, _ = batch
-                latents = latents.to(device)/1.6
+                means, logvars, _ = batch
+                latents = means + torch.randn_like(means)*torch.exp(logvars*.5)
+                latents = latents.to(device)#/vae.std
+                latents = einops.rearrange(latents, 'b t c (h hs) (w ws) -> b t (c hs ws) h w', hs=2, ws=2)
                 actions = None
                 
-                    
+
             # Calculate loss    
             loss, un_weighted_loss = loss_fn(precond, latents, actions)
             losses.append(un_weighted_loss)
@@ -130,7 +125,7 @@ if __name__=="__main__":
                     plot_training_dashboard(
                         save_path=f'images_training/dashboard_step_{i}.png', # Dynamic filename
                         precond=precond,
-                        autoencoder=autoencoder,
+                        autoencoder=vae,
                         losses_history=losses, # Pass the list of scalar losses
                         current_step=i,
                         micro_batch_size=micro_batch_size,
@@ -152,3 +147,14 @@ if __name__=="__main__":
             }, f"saved_models/optimizers_{unet_params//1e6}M.pt")
 
 # %%
+        
+        
+if __name__=="__main__":
+    # local_rank = int(os.environ["LOCAL_RANK"])
+    # torch.cuda.set_device(local_rank)
+    # dist.init_process_group(backend="nccl", init_method="env://")
+    # device = torch.device("cuda", local_rank)
+
+
+    clean_stale_shared_memory()
+    train("cuda")
