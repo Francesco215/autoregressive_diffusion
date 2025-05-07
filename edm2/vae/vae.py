@@ -192,21 +192,26 @@ class UpDownBlock(nn.Module):
 
     def forward(self, x, cache=None):
         # x shape: (b, c, t, h, w)
+
         if self.direction == 'down':
             if self.time_compression > 1:
                 # (b, c, t*tc, h, w) -> (b, c*tc, t, h, w)
                 x = einops.rearrange(x, 'b c (t tc) h w -> b (c tc) t h w', tc=self.time_compression)
-            #(b, in_c*tc, t, h, w)
-            #(b, out_c, t, h/sc, w/sc) if conv changes channels from in_c*tc to out_c
+            # (b, in_c*tc, t, h, w)
+            # (b, out_c, t, h/sc, w/sc)
             x, cache = self.conv(x, cache)
 
         elif self.direction == 'up':
-            #(b, in_c, t, h, w)
-            # (b, out_c*tc, t, h, w)
-            x, cache = self.conv(x, cache)
+            # Original x shape: (b, in_c, t, h, w)
+
             if self.spatial_compression > 1:
-                # (b, out_c*tc, t, h, w) -> (b, out_c*tc, t, h*sc, w*sc)
-                x = F.interpolate(x, scale_factor=[1, self.spatial_compression, self.spatial_compression], mode='nearest')
+                # (b, in_c, t, h, w) -> (b, in_c, t, h*sc, w*sc)
+                x = F.interpolate(x,scale_factor=[1, self.spatial_compression, self.spatial_compression], mode='nearest')
+            
+            # (b, in_c, t, h*sc, w*sc)
+            # (b, out_c*tc, t, h*sc, w*sc)
+            x, cache = self.conv(x, cache)
+
             if self.time_compression > 1:
                 # (b, out_c*tc, t, h*sc, w*sc) -> (b, out_c, t*tc, h*sc, w*sc)
                 x = einops.rearrange(x, 'b (c tc) t h w -> b c (t tc) h w', tc=self.time_compression)
