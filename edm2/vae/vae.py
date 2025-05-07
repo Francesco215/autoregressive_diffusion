@@ -74,7 +74,36 @@ class GroupCausal3DConvVAE(torch.nn.Module):
         self.conv3d.weight.copy_(w)
         self.conv3d.bias.copy_(b)
 
+class Lora3D(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel, group_size, dilation = (1,1,1), stride = [1,1,1]):
+        super().__init__()
+        self.conv3d_lora = GroupCausal3DConvVAE(in_channels, 16, kernel, group_size, dilation, stride)
+        self.conv2d_lora = nn.Conv2d(16, out_channels, kernel_size=kernel[1:], padding=0 if kernel[-1]==1 else 1)
+        nn.init.zeros_(self.conv3d_lora.conv3d.weight)
+        nn.init.zeros_(self.conv3d_lora.conv3d.bias)
+        nn.init.zeros_(self.conv2d_lora.weight)
+        nn.init.zeros_(self.conv2d_lora.bias)
 
+        self.conv2d = nn.Conv2d(in_channels, out_channels, kernel_size=kernel[1:], padding = 0 if kernel[-1]==1 else 1, stride=stride[1:])
+
+    def forward(self, x, cache=None):
+        if cache is None: cache = {}
+        y, cache['conv1'] = self.conv3d_lora(x, cache.get('conv1', None))
+        # y, cache['conv2'] = self.conv2d_lora(y, cache.get('conv2', None))
+
+        batch_size = x.shape[0]
+        x = einops.rearrange(x, "b c t h w -> (b t) c h w")
+        y = einops.rearrange(y, "b c t h w -> (b t) c h w")
+        y = self.conv2d_lora(y)
+        x = self.conv2d(x)
+        x=x+y
+        x = einops.rearrange(x, "(b t) c h w -> b c t h w", b=batch_size)
+
+        return x, cache
+
+    @torch.no_grad()
+    def _load_from_2D_module(self, module: Conv2d):
+        self.conv2d.load_state_dict(module.state_dict())
 
 class GroupNorm3D(nn.GroupNorm):
     def forward(self, input):
@@ -89,15 +118,15 @@ class ResBlock(nn.Module):
         super().__init__()
         out_channels = in_channels if out_channels is None else out_channels
 
-        self.norm1 = GroupNorm3D(num_groups=8,num_channels=in_channels)
-        self.conv1 = GroupCausal3DConvVAE(in_channels, out_channels,  kernel, group_size, dilation = (1,1,1))
+        self.norm1 = GroupNorm3D(num_groups=32,num_channels=in_channels)
+        self.conv1 = Lora3D(in_channels, out_channels,  kernel, group_size)
 
-        self.norm2 = GroupNorm3D(num_groups=8,num_channels=out_channels,eps=1e-6,affine=True)
-        self.conv2 = GroupCausal3DConvVAE(out_channels, out_channels, kernel, group_size, dilation = (1,1,1))
+        self.norm2 = GroupNorm3D(num_groups=32,num_channels=out_channels,eps=1e-6,affine=True)
+        self.conv2 = Lora3D(out_channels, out_channels, kernel, group_size)
 
         self.nonlinearity = nn.SiLU()
 
-        self.conv_shortcut = GroupCausal3DConvVAE(in_channels, out_channels, kernel, group_size, dilation = (1,1,1)) if in_channels!=out_channels else None
+        self.conv_shortcut = Lora3D(in_channels, out_channels, kernel= (1,1,1), group_size= 1) if in_channels!=out_channels else None
 
     def forward(self, x, cache = None):
         if cache is None: cache = {}
@@ -169,11 +198,11 @@ class UpDownBlock(nn.Module):
         self.conv = GroupCausal3DConvVAE(in_channels, out_channels, kernel, group_size, stride = self.stride) 
 
     def __call__(self, x, cache=None):
-        x, cache = self.conv(x, cache)
 
         if self.direction=='up' and self.total_compression !=1:
             x = F.interpolate(x, scale_factor=[self.time_compression, self.spatial_compression, self.spatial_compression], mode='nearest')
 
+        x, cache = self.conv(x, cache)
         return x, cache
     
     def __repr__(self):

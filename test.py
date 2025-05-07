@@ -1,14 +1,19 @@
 # %%
 from edm2.vae import VAE
-latent_channels = 8
-n_res_blocks = 2
-channels = [3, 64, 64, 64, latent_channels]
-time_compressions = [1, 2, 2, 1]
-spatial_compressions = [1, 2, 2, 2]
+from diffusers import AutoencoderKL
+import torch
 
+
+vae2d = AutoencoderKL.from_pretrained("THUDM/CogView4-6B", subfolder="vae")
 vae=VAE(latent_channels=16, logvar_mode='learned')
+
+#%%
+vae._load_from_2D_model(vae2d)
+
 #%%
 for name, sub_module in vae.named_parameters():
+    if "ResBlock" in name:
+        print(sub_module)
     print(name)
 
 # %%
@@ -36,7 +41,7 @@ conv2d = nn.Conv2d(in_ch, out_ch,
 
 # our 3‑D causal conv
 conv3d = GroupCausal3DConvVAE(in_ch, out_ch, k3d, group_size).to(device)
-conv3d._load_from_2D_state_dict(conv2d.weight.data, None)
+conv3d._load_from_2D_module(conv2d.weight.data, None)
 
 conv2d.eval();   conv3d.eval()
 
