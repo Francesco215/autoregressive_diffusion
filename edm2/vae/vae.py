@@ -3,6 +3,7 @@ import inspect
 import torch
 from torch import nn, Tensor
 from torch.nn import functional as F
+from torch.nn import Conv2d
 
 import einops
 import numpy as np
@@ -55,7 +56,8 @@ class GroupCausal3DConvVAE(torch.nn.Module):
         return f"{self.__class__.__name__}({self.in_channels}, {self.out_channels}, kernel={self.kernel}, group_size={self.group_size}, stride={self.stride})"
 
     @torch.no_grad()
-    def _load_from_2D_state_dict(self, state_dict_2d: dict):
+    def _load_from_2D_module(self, module: Conv2d):
+        state_dict_2d = module.state_dict()
         w2d = state_dict_2d.get("weight", None)
         b2d = state_dict_2d.get("bias", None)
 
@@ -114,14 +116,15 @@ class ResBlock(nn.Module):
 
         return x, cache
 
-    def _load_from_2D_state_dict(self, state_dict_2D):
-        self.norm1._load_from_state_dict(state_dict_2D['norm1'])
-        self.norm2._load_from_state_dict(state_dict_2D['norm2'])
+    def _load_from_2D_module(self, module):
+        self.norm1.load_state_dict(module.norm1.state_dict())
+        self.norm2.load_state_dict(module.norm2.state_dict())
 
-        self.conv1._load_from_2D_state_dict(state_dict_2D['conv1'])
-        self.conv2._load_from_2D_state_dict(state_dict_2D['conv2'])
+        self.conv1._load_from_2D_module(module.conv1)
+        self.conv2._load_from_2D_module(module.conv2)
 
-        self.conv_shortcut._load_from_2D_state_dict(state_dict_2D['conv_shortcut'])
+        if self.conv_shortcut is not None:
+            self.conv_shortcut._load_from_2D_module(module.conv_shortcut)
 
 
 class EncoderDecoderBlock(nn.Module):
@@ -176,8 +179,9 @@ class UpDownBlock(nn.Module):
     def __repr__(self):
         return f"{self.__class__.__name__}({self.in_channels}, {self.out_channels}, time_compression={self.time_compression}, space_compression={self.spatial_compression}, kernel={self.kernel}, group_size={self.group_size}, stride={self.stride})"
     
-    def _load_from_2D_state_dict(self,state_dict_2d):
-        self.conv._load_from_2D_state_dict(state_dict_2d)
+    def _load_from_2D_module(self, UpDownSampler):
+        self.conv._load_from_2D_module(UpDownSampler.conv)
+
 
 
 class EncoderDecoder(nn.Module):
@@ -237,7 +241,27 @@ class EncoderDecoder(nn.Module):
         logvar = logvar*torch.exp(self.logvar_multiplier)
         return mean, logvar, cache
 
+    def _load_from_2D_state_dict(self, module:nn.Module):
+        # i put this import inside of the function because most of the time is not needed
+        from diffusers.models.resnet import ResnetBlock2D 
+        from diffusers.models.downsampling import Downsample2D
+        from diffusers.models.upsampling import Upsample2D
 
+        self.conv_in._load_from_2D_module(module.conv_in)
+        self.conv_out._load_from_2D_module(module.conv_out)
+        self.conv_norm_out.load_state_dict(module.conv_norm_out.state_dict())
+
+        ResBlocks3D = [sub_module for _, sub_module in self.named_modules()   if isinstance(sub_module, ResBlock)]
+        ResBlocks2D = [sub_module for _, sub_module in module.named_modules() if isinstance(sub_module, ResnetBlock2D)]
+        assert len(ResBlocks2D)==len(ResBlocks3D),   f"ResBlock count mismatch: {len(ResBlocks3D)} (3D) vs {len(ResBlocks2D)} (2D)"
+        for res3D, res2D in zip(ResBlocks3D, ResBlocks2D):
+            res3D._load_from_2D_module(res2D)
+
+        ordered_3D_UpDown_blocks = [sub_module for _, sub_module in self.named_modules()   if isinstance(sub_module, UpDownBlock)]
+        ordered_2D_UpDown_blocks = [sub_module for _, sub_module in module.named_modules() if isinstance(sub_module, (Downsample2D, Upsample2D))]
+        assert len(ordered_2D_UpDown_blocks)==len(ordered_3D_UpDown_blocks), f"UpDown blocks mismatch: {len(ordered_3D_UpDown_blocks)} (3D), {len(ordered_2D_UpDown_blocks)} (2D)"
+        for updown3D, updown2D in zip(ordered_3D_UpDown_blocks, ordered_2D_UpDown_blocks):
+            updown3D._load_from_2D_module(updown2D)
 
 class VAE(BetterModule):
     def __init__(self, latent_channels, logvar_mode='learned', std=None):
