@@ -24,7 +24,7 @@ if __name__=="__main__":
     model_path = None
     batch_size = 8
     micro_batch_size = 2
-    clip_length = 48 
+    clip_length = 24 
     
     # Hyperparameters
     latent_channels = 8
