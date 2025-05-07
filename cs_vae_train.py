@@ -12,6 +12,7 @@ import os
 from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
+from diffusers import AutoencoderKL
 
 
 from edm2.cs_dataloading import CsCollate, CsDataset
@@ -23,17 +24,19 @@ if __name__=="__main__":
 
     model_path = None
     batch_size = 8
-    micro_batch_size = 2
-    clip_length = 48 
+    micro_batch_size = 1
+    clip_length = 4 
     
     # Hyperparameters
-    latent_channels = 8
-    n_res_blocks = 2
+    latent_channels = 16
 
     dtype=torch.bfloat16
 
     # Initialize models
-    vae = VAE(latent_channels, logvar_mode='learned').to(device)
+    vae2d = AutoencoderKL.from_pretrained("THUDM/CogView4-6B", subfolder="vae")
+    vae = VAE(latent_channels, logvar_mode='learned')
+    vae._load_from_2D_model(vae2d)
+    vae = vae.to(device)
     # vae = VAE.from_pretrained('saved_models/vae_cs_46904.pt').to(device)
     # Example instantiation
     discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(32,)).to(device)

@@ -199,7 +199,7 @@ class EncoderDecoder(nn.Module):
 
         if type=='encoder':
             group_sizes = group_sizes[-1]//group_sizes
-            self.logvar_multiplier = nn.Parameter(torch.tensor(0.5))
+            self.logvar_multiplier = nn.Parameter(torch.tensor(0.0))
             if logvar_mode == 'learned':
                 out_channels = out_channels * 2
             elif isinstance(logvar_mode, float):
@@ -241,7 +241,7 @@ class EncoderDecoder(nn.Module):
         logvar = logvar*torch.exp(self.logvar_multiplier)
         return mean, logvar, cache
 
-    def _load_from_2D_state_dict(self, module:nn.Module):
+    def _load_from_2D_model(self, module:nn.Module):
         # i put this import inside of the function because most of the time is not needed
         from diffusers.models.resnet import ResnetBlock2D 
         from diffusers.models.downsampling import Downsample2D
@@ -252,7 +252,11 @@ class EncoderDecoder(nn.Module):
         self.conv_norm_out.load_state_dict(module.conv_norm_out.state_dict())
 
         ResBlocks3D = [sub_module for _, sub_module in self.named_modules()   if isinstance(sub_module, ResBlock)]
-        ResBlocks2D = [sub_module for _, sub_module in module.named_modules() if isinstance(sub_module, ResnetBlock2D)]
+        if self.encoding_type == 'encoder':
+            ResBlocks2D = [sub_module for _, sub_module in module.named_modules() if isinstance(sub_module, ResnetBlock2D)]
+        if self.encoding_type == 'decoder':
+            ResBlocks2D = [sub_module for name, sub_module in module.named_modules() if isinstance(sub_module, ResnetBlock2D) and 'mid_block' in name]
+            ResBlocks2D += [sub_module for name, sub_module in module.named_modules() if isinstance(sub_module, ResnetBlock2D) and not 'mid_block' in name]
         assert len(ResBlocks2D)==len(ResBlocks3D),   f"ResBlock count mismatch: {len(ResBlocks3D)} (3D) vs {len(ResBlocks2D)} (2D)"
         for res3D, res2D in zip(ResBlocks3D, ResBlocks2D):
             res3D._load_from_2D_module(res2D)
@@ -381,3 +385,6 @@ class VAE(BetterModule):
         return frames
 
         
+    def _load_from_2D_model(self, model2D):
+        self.encoder._load_from_2D_model(model2D.encoder)
+        self.decoder._load_from_2D_model(model2D.decoder)
