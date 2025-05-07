@@ -176,41 +176,89 @@ class EncoderDecoderBlock(nn.Module):
 
         return x, cache
 
-
 class UpDownBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel, group_size, time_compression, spatial_compression, direction):
+    def __init__(self, in_channels, out_channels, kernel, group_size, 
+                 time_compression, spatial_compression, direction):
         super().__init__()
         assert direction in ['up', 'down'], 'Invalid direction, expected up or down'
 
-        self.in_channels, self.out_channels, self.kernel, self.group_size = in_channels, out_channels, kernel, group_size
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_orig = kernel 
+        self.group_size_orig = group_size 
         self.direction = direction
         self.time_compression = time_compression
         self.spatial_compression = spatial_compression
-        self.total_compression = time_compression*spatial_compression**2
 
-        kernel = (kernel[0]//time_compression, kernel[1], kernel[2])
-        if direction=='up':
-            group_size = group_size//time_compression
-            self.stride = [1,1,1]
-        if direction=='down':
-            self.stride = [time_compression, spatial_compression, spatial_compression]
+        # Effective channels and stride for the convolutional layer
+        conv_in_channels = in_channels
+        conv_out_channels = out_channels
+        conv_stride = [1, 1, 1] # temporal stride is always 1 for conv
+                                # because einops handles temporal compression
 
-        self.conv = GroupCausal3DConvVAE(in_channels, out_channels, kernel, group_size, stride = self.stride) 
+        if direction == 'down':
 
-    def __call__(self, x, cache=None):
+            conv_in_channels = in_channels * time_compression
+            conv_stride = [1, spatial_compression, spatial_compression]
+            conv_kernel_config = kernel 
+            conv_group_config = group_size
 
-        if self.direction=='up' and self.total_compression !=1:
-            x = F.interpolate(x, scale_factor=[self.time_compression, self.spatial_compression, self.spatial_compression], mode='nearest')
+        elif direction == 'up':
+            conv_out_channels = out_channels * time_compression
+            conv_stride = [1, 1, 1]
+            conv_kernel_config = kernel
+            conv_group_config = group_size
+        
+        self.conv_stride_config = conv_stride # For __repr__
 
-        x, cache = self.conv(x, cache)
+        self.conv = GroupCausal3DConvVAE(
+            conv_in_channels, 
+            conv_out_channels, 
+            conv_kernel_config, 
+            conv_group_config, 
+            stride=conv_stride
+        )
+
+    def forward(self, x, cache=None):
+        # x shape: (b, c, t, h, w)
+
+        if self.direction == 'down':
+            if self.time_compression > 1:
+                # (b, c, t*tc, h, w) -> (b, c*tc, t, h, w)
+                x = einops.rearrange(x, 'b c (t tc) h w -> b (c tc) t h w', tc=self.time_compression)
+            # (b, in_c*tc, t, h, w)
+            # (b, out_c, t, h/sc, w/sc)
+            x, cache = self.conv(x, cache)
+
+        elif self.direction == 'up':
+            # Original x shape: (b, in_c, t, h, w)
+
+            if self.spatial_compression > 1:
+                # (b, in_c, t, h, w) -> (b, in_c, t, h*sc, w*sc)
+                x = F.interpolate(x,scale_factor=[1, self.spatial_compression, self.spatial_compression], mode='nearest')
+            
+            # (b, in_c, t, h*sc, w*sc)
+            # (b, out_c*tc, t, h*sc, w*sc)
+            x, cache = self.conv(x, cache)
+
+            if self.time_compression > 1:
+                # (b, out_c*tc, t, h*sc, w*sc) -> (b, out_c, t*tc, h*sc, w*sc)
+                x = einops.rearrange(x, 'b (c tc) t h w -> b c (t tc) h w', tc=self.time_compression)
+        
         return x, cache
     
     def __repr__(self):
-        return f"{self.__class__.__name__}({self.in_channels}, {self.out_channels}, time_compression={self.time_compression}, space_compression={self.spatial_compression}, kernel={self.kernel}, group_size={self.group_size}, stride={self.stride})"
+        return (f"{self.__class__.__name__}("
+                f"in_channels={self.in_channels}, out_channels={self.out_channels}, "
+                f"time_compression={self.time_compression}, spatial_compression={self.spatial_compression}, "
+                f"kernel={self.kernel_orig}, group_size={self.group_size_orig}, direction='{self.direction}', "
+                f"conv_stride={self.conv_stride_config})") # Show actual conv stride
     
-    def _load_from_2D_module(self, UpDownSampler):
-        self.conv._load_from_2D_module(UpDownSampler.conv)
-
+    def _load_from_2D_module(self, UpDownSampler_2D):
+        if hasattr(UpDownSampler_2D, 'conv'):
+            self.conv._load_from_2D_module(UpDownSampler_2D.conv)
+        else:
+            print(f"Warning: UpDownSampler_2D of type {type(UpDownSampler_2D)} does not have a 'conv' attribute.")
 
 
 class EncoderDecoder(nn.Module):
