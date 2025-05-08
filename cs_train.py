@@ -27,10 +27,12 @@ torch._dynamo.config.cache_size_limit = 100
 
         
 def train(device, local_rank=0):
+    vae = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_cs.pt").requires_grad_(False).to(device)
+
     unet = UNet(img_resolution=32, # Match your latent resolution
                 img_channels=32, # Match your latent channels
                 label_dim = 4,
-                model_channels=128,
+                model_channels=256,
                 channel_mult=[1,2,4,4],
                 channel_mult_noise=None,
                 channel_mult_emb=None,
@@ -46,17 +48,15 @@ def train(device, local_rank=0):
     unet=unet.to(device)
     if dist.is_available() and dist.is_initialized():
         unet = DDP(unet, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
-
     if local_rank==0:
-        vae = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_cs.pt").to(device)
         print(f"Number of UNet parameters: {unet_params//1e6}M")
 
     micro_batch_size = 1
-    batch_size = 8
+    batch_size = 1
     accumulation_steps = batch_size//micro_batch_size
     clip_length = 48
     # training_steps = total_number_of_steps * batch_size
-    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed/', local = f'/data/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
+    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed/', local = f'/data/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False, cache_limit = '200gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsVaeCollate(), pin_memory=True, num_workers=6, shuffle=False)
     steps_per_epoch = len(dataset)//micro_batch_size
     n_epochs = 10
@@ -93,8 +93,8 @@ def train(device, local_rank=0):
         for i, batch in pbar:
             with torch.no_grad():
                 means, logvars, _ = batch
-                latents = means + torch.randn_like(means)*torch.exp(logvars*.5)
-                latents = latents.to(device)/vae.std
+                latents = means.to(device) + torch.randn_like(means, device=device)*torch.exp(logvars.to(device)*.5)
+                latents = latents/vae.std
                 latents = einops.rearrange(latents, 'b t c (h hs) (w ws) -> b t (c hs ws) h w', hs=2, ws=2)
                 actions = None
                 
@@ -137,7 +137,11 @@ def train(device, local_rank=0):
         # if i % (total_number_of_steps//100) == 0 and i!=0:  # save every 10% of epochs
         if local_rank==0:
             os.makedirs("saved_models", exist_ok=True)
-            unet.save_to_state_dict(f"saved_models/unet_{unet_params//1e6}M.pt")
+            if isinstance(unet, DDP):
+                unet.module.save_to_state_dict(f"saved_models/unet_{unet_params//1e6}M.pt")
+            else:
+                unet.save_to_state_dict(f"saved_models/unet_{unet_params//1e6}M.pt")
+
             torch.save({
                 'steps_taken': i,
                 'optimizer_state_dict': optimizer.state_dict(),
@@ -150,11 +154,11 @@ def train(device, local_rank=0):
         
         
 if __name__=="__main__":
-    # local_rank = int(os.environ["LOCAL_RANK"])
-    # torch.cuda.set_device(local_rank)
-    # dist.init_process_group(backend="nccl", init_method="env://")
-    # device = torch.device("cuda", local_rank)
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
+    dist.init_process_group(backend="nccl", init_method="env://")
+    device = torch.device("cuda", local_rank)
 
 
     clean_stale_shared_memory()
-    train("cuda")
+    train(device, local_rank)
