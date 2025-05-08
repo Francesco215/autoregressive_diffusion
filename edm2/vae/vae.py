@@ -285,7 +285,7 @@ class VAE(BetterModule):
                 - The frames are rearranged and clipped to the range [0, 255] before being converted to a numpy array.
         """
         batch_size = latents.shape[0]
-        latents = einops.rearrange(latents, 'b t c h w -> b c t h w')
+        latents = einops.rearrange(latents, 'b t (c hs ws) h w -> b c t (h hs) (w ws)', hs=2, ws=2)
 
         latents = latents * self.std
 

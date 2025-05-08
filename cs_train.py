@@ -94,7 +94,7 @@ def train(device, local_rank=0):
             with torch.no_grad():
                 means, logvars, _ = batch
                 latents = means + torch.randn_like(means)*torch.exp(logvars*.5)
-                latents = latents.to(device)#/vae.std
+                latents = latents.to(device)/vae.std
                 latents = einops.rearrange(latents, 'b t c (h hs) (w ws) -> b t (c hs ws) h w', hs=2, ws=2)
                 actions = None
                 

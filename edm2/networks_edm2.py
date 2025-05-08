@@ -1,5 +1,6 @@
 # Code adapted from Nvidia EDM2 repository 
 
+from contextlib import nullcontext
 import inspect
 import numpy as np
 import torch
@@ -211,6 +212,9 @@ class UNet(BetterModule):
         x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
         x = mp_sum(x, res, out_res)
         return x, cache
+
+    def no_sync(self):
+        return nullcontext()
 
 #----------------------------------------------------------------------------
 # Preconditioning and uncertainty estimation.
