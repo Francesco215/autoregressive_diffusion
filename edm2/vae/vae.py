@@ -67,9 +67,16 @@ class GroupCausal3DConvVAE(torch.nn.Module):
         kt = w.shape[2]              
 
         for g in range(self.group_size):
-            w[self.out_channels*g : self.out_channels*(g+1), :, kt-self.group_size+g] = w2d.clone()
+            # Get the min of output and input channels to avoid dimension mismatch
+            min_out_channels = min(w2d.shape[0], self.out_channels)
+            min_in_channels = min(w2d.shape[1], w.shape[1])
+            
+            # Only copy weights for the channels that exist in both models
+            w[self.out_channels*g : self.out_channels*g + min_out_channels, 
+            :min_in_channels, kt-self.group_size+g] = w2d[:min_out_channels, :min_in_channels].clone()
+            
             if b2d is not None:
-                b[self.out_channels*g : self.out_channels*(g+1)] = b2d
+                b[self.out_channels*g : self.out_channels*g + min_out_channels] = b2d[:min_out_channels]
 
         self.conv3d.weight.copy_(w)
         self.conv3d.bias.copy_(b)
