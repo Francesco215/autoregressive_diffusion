@@ -144,9 +144,11 @@ def plot_training_dashboard(
         x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, conditioning = actions, sigma_max = 80, sigma_min=0.4, num_steps=16, rho=2, guidance=1, S_churn=0.)
         context = torch.cat((context,x),dim=1)
 
-    frames = autoencoder.latents_to_frames(context)
+    # frames = autoencoder.latents_to_frames(context)
+    context = einops.rearrange(context, 'b t c h w -> b c t h w')
+    frames = autoencoder.decode(context).sample
 
-    x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=8)
+    x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=16)
     #set high resolution
     ax4.imshow(x[0])
     ax4.axis('off')
