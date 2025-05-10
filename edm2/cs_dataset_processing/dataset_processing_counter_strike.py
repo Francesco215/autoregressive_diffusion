@@ -13,7 +13,8 @@ import threading
 from huggingface_hub import hf_hub_download, HfApi
 import re
 import tempfile
-from edm2.vae import VAE
+from diffusers import AutoencoderKLLTXVideo
+# from edm2.vae import VAE
 
 # Load with h5py
 def read_frames_and_actions(filename):
@@ -36,11 +37,13 @@ def read_frames_and_actions(filename):
 def encode_frames(autoencoder, frames, actions):
     # TODO: add caching to the autoencoder source code to make sure it can work with long sequences
 
+    frames = torch.tensor(frames).to(autoencoder.device)
     frames = einops.rearrange(frames, 't h w c -> c t h w')
-    frames = torch.tensor(frames).to(torch.float)
     frames = frames / 127.5 - 1  # Normalize from (0,255) to (-1,1)
 
-    mean, logvar = autoencoder.encode_long_sequence(frames.unsqueeze(0))
+    with torch.amp.autocast("cuda", dtype=torch.float16):
+        latent_dist = autoencoder.encode(frames.unsqueeze(0)).latent_dist
+    mean, logvar = latent_dist.mean, latent_dist.logvar
     out_dict = {'mean':mean[0].cpu().numpy(), 'logvar':logvar[0].cpu().numpy(), 'action':actions}
     return out_dict
 
@@ -89,7 +92,8 @@ dataset_filenames = api.list_repo_files(repo_id=hf_repo_id, repo_type="dataset")
 #have to filter out some of the data because its's saved slightly differently...
 hf_filenames = [f for f in dataset_filenames if re.match(r"^hdf5_dm_july2021_.*_to_.*\.tar$", f)]
 
-autoencoder = VAE.from_pretrained('saved_models/vae_cs_4264.pt').to("cuda")
+# autoencoder = VAE.from_pretrained('saved_models/vae_cs_4264.pt').to("cuda")
+autoencoder = AutoencoderKLLTXVideo.from_pretrained("Lightricks/LTX-Video", subfolder="vae").to("cuda")
 
 #%%
 # Download the first tar file
@@ -108,7 +112,7 @@ for i in range(len(hf_filenames)):
         download_thread.start()
     
     # Process the current tar file
-    write_mds(save_folder, f"s3://counter-strike-data/dataset_compressed/{hf_filenames[i].split('.')[0]}")
+    write_mds(save_folder, f"s3://counter-strike-data/dataset_compressed_LTX/{hf_filenames[i].split('.')[0]}")
     
     # Wait for the next download to finish (if applicable)
     if i < len(hf_filenames) - 1:
