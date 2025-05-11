@@ -6,6 +6,7 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.optim import AdamW
+from diffusers import AutoencoderKLLTXVideo
 
 import os
 from tqdm import tqdm
@@ -15,24 +16,91 @@ import matplotlib.pyplot as plt
 
 from edm2.cs_dataloading import CsCollate, CsDataset
 from edm2.vae import VAE, MixedDiscriminator
+#%%
+# Load the LTX-Video VAE
+def load_ltx_video_vae(device):
+    # Initialize the LTX-Video VAE with the provided config
+    vae = AutoencoderKLLTXVideo(
+        in_channels=3,
+        out_channels=3,
+        latent_channels=128,
+        block_out_channels=[128, 256, 512, 512],
+        layers_per_block=[4, 3, 3, 3, 4],
+        patch_size=4,
+        patch_size_t=1,
+        encoder_causal=True,
+        decoder_causal=True,
+        resnet_norm_eps=1e-06,
+        scaling_factor=1.0,
+        spatio_temporal_scaling=[True, True, True, False]
+    )
+    
+    # Optionally load pre-trained weights if available
+    # vae.load_state_dict(torch.load("path/to/downloaded/weights.pt"))
+    
+    return vae.to(device)
 
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# vae = load_ltx_video_vae(device)
+
+def test():
+    # Create a dummy video tensor with multiple frames
+    # [batch, channels, time, height, width]
+    dummy_frames = torch.randn(2, 3, 17, 64, 64).to(device)
+    print(f"Input shape: {dummy_frames.shape}")
+
+    # Pass through encoder
+    encoded = vae.encode(dummy_frames)
+    latent_dist = encoded.latent_dist
+    latent = latent_dist.sample()
+    print(f"Latent shape: {latent.shape}")
+
+    # Pass through decoder
+    decoded = vae.decode(latent)
+    recon = decoded.sample
+    print(f"Output shape: {recon.shape}")
+
+    # Check if we can explicitly access the first frame latent
+    # This is just a test to see the structure - it might fail
+    try:
+        print("Attempting to examine latent structure...")
+        if hasattr(latent_dist, 'first_frame'):
+            print(f"First frame latent shape: {latent_dist.first_frame.shape}")
+        else:
+            print("No explicit first_frame attribute in latent_dist")
+            
+        # Try to inspect if there's any pattern in the latent representation
+        print(f"First frame of latent: {latent[:,:,0,:,:].shape}")
+        print(f"Rest of frames of latent: {latent[:,:,1:,:,:].shape}")
+    except Exception as e:
+        print(f"Error while inspecting latent: {str(e)}")
+
+
+
+
+
+
+#%%
 torch.autograd.set_detect_anomaly(True)
 if __name__=="__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     original_env = "LunarLander-v3"
 
-    batch_size = 8
+    batch_size = 16
     micro_batch_size = 2
-    clip_length = 32 
+    clip_length = 17 
+    
+    assert (clip_length - 1) % 8 == 0, 'clip length -1 must be divisible by 8.'
     
     # Hyperparameters
-    latent_channels = 8
-    n_res_blocks = 2
-    channels = [3, 32, 32, latent_channels]
+    # latent_channels = 8
+    # n_res_blocks = 2
+    # channels = [3, 32, 32, latent_channels]
 
     # Initialize models
-    vae = VAE(channels = channels, n_res_blocks=n_res_blocks, spatial_compressions=[1,4,4]).to(device)
+    vae = load_ltx_video_vae(device)
+    #vae = VAE(channels = channels, n_res_blocks=n_res_blocks, spatial_compressions=[1,4,4]).to(device)
     # vae = VAE.load_from_pretrained('saved_models/vae_cs_4264.pt').to(device)
     # Example instantiation
     discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(32,)).to(device)
@@ -75,55 +143,65 @@ if __name__=="__main__":
                 frames = frames.float() / 127.5 - 1  # Normalize to [-1, 1]
                 frames = einops.rearrange(frames, 'b t h w c-> b c t h w').to(device)
 
-            # VAE forward pass
-            recon, mean, logvar, _ = vae(frames)
-
-            # in theory the mean should be only with respect to the batch size
-            individual_var = logvar.exp().mean(dim=(0, 2, 3, 4))  # Average of individual variances
+    
+            latent = vae.encode(frames).latent_dist.sample()
+      
+            decoder_output = vae.decode(latent)
+            recon = decoder_output.sample
+            posterior = vae.encode(frames).latent_dist
+            mean = posterior.mean
+            logvar = posterior.logvar
+            
             mean_var = mean.var(dim=(0, 2, 3, 4))  # Variance of means
+            individual_var = logvar.exp().mean(dim=(0, 2, 3, 4))  # Average of individual variances
             group_var = individual_var + mean_var  # Total mixture variance
             group_mean = mean.mean(dim=(0, 2, 3, 4))
+            
             kl_group = -0.5 * (1 + group_var.log() - group_mean.pow(2) - group_var).sum(dim=0)
-            kl_loss  = -0.5 * (1 + logvar - logvar.exp()).sum(dim=1).mean()
-            # kl_loss = -0.5 * (1 + logvar - mean.pow(2) - logvar.exp()).sum(dim=1).mean()
-
+            kl_loss = -0.5 * torch.mean(1 + logvar - mean.pow(2) - logvar.exp())
             logits = discriminator(recon)
             targets = torch.ones(logits.shape[0], *logits.shape[2:], device=device, dtype=torch.long)
+            
 
             adversarial_loss = F.cross_entropy(logits, targets)/np.log(2)
-
-            # VAE losses
+            
+   
             recon_loss = F.l1_loss(recon, frames)
-
-            # Define the loss components
-            main_loss = recon_loss + kl_group*1e-3 + kl_loss*1e-3 + adversarial_loss*1e-2
-            main_loss.backward()
-
+            
+            # Total VAE loss
+            vae_loss = recon_loss + kl_group*1e-3 + kl_loss*1e-3 + adversarial_loss*1e-2 #3,3,2
+            vae_loss.backward()
+            
+            # Update VAE parameters
             if batch_idx % (batch_size//micro_batch_size) == 0:
                 nn.utils.clip_grad_norm_(vae.parameters(), 1)
                 optimizer_vae.step()
                 scheduler_vae.step()
                 optimizer_vae.zero_grad()
-
-
+            
+            # Train discriminator
             logits_real = discriminator(frames.detach())
             logits_fake = discriminator(recon.detach())
-            loss_disc_real = F.cross_entropy(logits_real, torch.ones_like (targets))/np.log(2)
+            loss_disc_real = F.cross_entropy(logits_real, torch.ones_like(targets))/np.log(2)
             loss_disc_fake = F.cross_entropy(logits_fake, torch.zeros_like(targets))/np.log(2)
             loss_disc = (loss_disc_real + loss_disc_fake)/2
-
+            
             loss_disc.backward()
-            # Update discriminator
+            
+            # Update discriminator parameters
             if batch_idx % (batch_size//micro_batch_size) == 0:
                 nn.utils.clip_grad_norm_(discriminator.parameters(), 1)
                 optimizer_disc.step()
                 scheduler_disc.step()
                 optimizer_disc.zero_grad()
             
-            pbar.set_postfix_str(f"recon loss: {recon_loss.item():.4f}, KL group loss: {kl_group.item():.4f} KL loss: {kl_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}, Adversarial Loss: {adversarial_loss.mean().item():.4f}")
+            # Update progress bar
+            pbar.set_postfix_str(f"recon loss: {recon_loss.item():.4f}, KL loss: {kl_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}, Adversarial Loss: {adversarial_loss.mean().item():.4f}")
+            
+            # Store losses
             recon_losses.append(recon_loss.item())
-            kl_group_losses.append(kl_group.item())
             kl_losses.append(kl_loss.item())
+            kl_group_losses.append(kl_group.item())
             adversarial_losses.append(adversarial_loss.mean().item())
             disc_losses.append(loss_disc.item())
 
@@ -131,7 +209,7 @@ if __name__=="__main__":
             #     adv_multiplier = 5e-2
 
             # Visualization every 100 steps
-            if batch_idx % 1000 == 0 and batch_idx > 0:
+            if batch_idx % 500 == 0 and batch_idx > 0:
                 # Create a figure with a custom layout: 3 sections (2 rows for frames, 2x2 grid for losses)
                 fig = plt.figure(figsize=(15, 12))
 
