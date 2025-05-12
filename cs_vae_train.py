@@ -215,6 +215,7 @@ if __name__=="__main__":
             #     adv_multiplier = 5e-2
 
             # Visualization every 100 steps
+            # Visualization every 100 steps
             if batch_idx % 100 == 0 and batch_idx > 0:
                 # Create a figure with a custom layout: 3 sections (2 rows for frames, 2x2 grid for losses)
                 fig = plt.figure(figsize=(15, 12))
@@ -225,12 +226,12 @@ if __name__=="__main__":
                 recon_axes = [fig.add_subplot(gs_top[1, i]) for i in range(5)]  # Row 1: Reconstructed frames
 
                 # Bottom section: 2x2 grid for loss plots
-                gs_bottom = plt.GridSpec(2, 2, figure=fig, top=0.45, bottom=0.05, left=0.1, right=0.9, hspace = 0.4)
+                gs_bottom = plt.GridSpec(2, 2, figure=fig, top=0.45, bottom=0.05, left=0.1, right=0.9, hspace=0.4)
                 loss_axes = [
                     fig.add_subplot(gs_bottom[0, 0]),  # Top-left: Recon Loss
-                    fig.add_subplot(gs_bottom[0, 1]),  # Top-right: KL Group Loss
-                    fig.add_subplot(gs_bottom[1, 0]),  # Bottom-left: KL Loss
-                    fig.add_subplot(gs_bottom[1, 1])   # Bottom-right: Disc Loss
+                    fig.add_subplot(gs_bottom[0, 1]),  # Top-right: KL Loss
+                    fig.add_subplot(gs_bottom[1, 0]),  # Bottom-left: Disc Loss
+                    fig.add_subplot(gs_bottom[1, 1])   # Bottom-right: Adversarial Loss
                 ]
 
                 # --- Video Frames (Top: Original and Reconstructed) ---
@@ -267,28 +268,23 @@ if __name__=="__main__":
                         recon_axes[i].imshow(recon_denorm[idx])
                         recon_axes[i].set_title(f"Recon t={idx}")
                         recon_axes[i].axis('off')
-                    
+                
 
                 # --- Loss Plots (Bottom 2x2 Grid) ---
                 # Titles and data for each loss plot
                 loss_data = [recon_losses, kl_losses, disc_losses, adversarial_losses]
-                loss_titles = ['Reconstruction Loss', 'KL Group Loss', 'KL Loss', 'Discriminator Losses', 'Discriminator Losses']
-                loss_colors = ['blue', 'green', 'red', 'purple', 'orange']
-                labels = [None, None, None, 'Discriminator Loss', 'Adversarial Loss']
+                loss_titles = ['Reconstruction Loss', 'KL Loss', 'Discriminator Loss', 'Adversarial Loss']
+                loss_colors = ['blue', 'green', 'red', 'purple']
 
-                for i in range(5):
-                    loss_axes[min(i,3)].plot(loss_data[i], color=loss_colors[i], label=labels[i])
-                    loss_axes[min(i,3)].set_title(loss_titles[i])
-                    loss_axes[min(i,3)].set_yscale('log')  
-                    loss_axes[min(i,3)].set_xscale('log')  
-                    loss_axes[min(i,3)].set_xlabel('Steps')
-                    loss_axes[min(i,3)].set_xlim(left=10)
-                    loss_axes[min(i,3)].set_ylabel('Loss')
-                    loss_axes[min(i,3)].grid(True, linestyle='--', alpha=0.7)
-
-                    
-                    if i==4:
-                        loss_axes[min(i,3)].legend()
+                for i in range(4):
+                    loss_axes[i].plot(loss_data[i], color=loss_colors[i])
+                    loss_axes[i].set_title(loss_titles[i])
+                    loss_axes[i].set_yscale('log')  
+                    loss_axes[i].set_xscale('log')  
+                    loss_axes[i].set_xlabel('Steps')
+                    loss_axes[i].set_xlim(left=10)
+                    loss_axes[i].set_ylabel('Loss')
+                    loss_axes[i].grid(True, linestyle='--', alpha=0.7)
 
                 # Adjust layout to fit everything nicely
                 plt.tight_layout()
@@ -297,9 +293,10 @@ if __name__=="__main__":
                 os.makedirs("images_training", exist_ok=True)
                 plt.savefig(f"images_training/combined_step_cs_{batch_idx}.png")
                 plt.close()
+
             if batch_idx % (total_number_of_steps//10) == 0 and batch_idx != 0:
                 os.makedirs("saved_models", exist_ok=True)
                 vae.save_to_state_dict(f'saved_models/vae_cs_{batch_idx}.pt')
 
-    print("Finished Training")
-    # %%
+print("Finished Training")
+# %%
