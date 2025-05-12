@@ -96,26 +96,23 @@ def video_dwt_loss(x, y):
     dwt = DWTForward(J=1, mode='zero', wave='db1').to(x.device)
     
     batch_size, channels, time_steps, height, width = x.shape
-    dwt_loss = 0.0
     
-    # For each time step, compute 2D DWT
-    for t in range(time_steps):
-        # Get current frame
-        x_t = x[:, :, t]  # [B, C, H, W]
-        y_t = y[:, :, t]  # [B, C, H, W]
-        
-        # Apply DWT transform
-        x_coeffs = dwt(x_t)  # Returns low-pass and list of high-pass coefficients
-        y_coeffs = dwt(y_t)
-        
-        # Calculate L1 loss on low-frequency components
-        dwt_loss += F.l1_loss(x_coeffs[0], y_coeffs[0])
-        
-        # Calculate L1 loss on high-frequency components (horizontal, vertical, diagonal)
-        for i in range(len(x_coeffs[1])):
-            dwt_loss += F.l1_loss(x_coeffs[1][i], y_coeffs[1][i])
+    # Reshape to [B*T, C, H, W] for batch processing
+    x_reshaped = x.permute(0, 2, 1, 3, 4).reshape(-1, channels, height, width)
+    y_reshaped = y.permute(0, 2, 1, 3, 4).reshape(-1, channels, height, width)
     
-    return dwt_loss / time_steps
+    # Apply DWT transform to all frames at once
+    x_coeffs = dwt(x_reshaped)  # Returns low-pass and list of high-pass coefficients
+    y_coeffs = dwt(y_reshaped)
+    
+    # Calculate L1 loss on low-frequency components
+    dwt_loss = F.l1_loss(x_coeffs[0], y_coeffs[0])
+    
+    # Calculate L1 loss on high-frequency components (horizontal, vertical, diagonal)
+    for i in range(len(x_coeffs[1])):
+        dwt_loss += F.l1_loss(x_coeffs[1][i], y_coeffs[1][i])
+    
+    return dwt_loss
 
 def perceptual_loss(x, y):
     """
@@ -123,44 +120,19 @@ def perceptual_loss(x, y):
     x, y: tensors of shape [B, C, T, H, W]
     """
     batch_size, channels, time_steps, height, width = x.shape
-    total_loss = 0.0
+    x = torch.clamp(x, -1.0, 1.0)
+    y = torch.clamp(y, -1.0, 1.0)
+    # Reshape to combine batch and time dimensions
+    x_reshaped = x.permute(0, 2, 1, 3, 4).reshape(-1, channels, height, width)  # [B*T, C, H, W]
+    y_reshaped = y.permute(0, 2, 1, 3, 4).reshape(-1, channels, height, width)  # [B*T, C, H, W]
     
-    # For each time step, compute LPIPS
-    for t in range(time_steps):
-        # Get current frame and ensure it's in the right format (normalized to [-1,1])
-        x_t = x[:, :, t]  # [B, C, H, W]
-        y_t = y[:, :, t]  # [B, C, H, W]
-        
-        # Calculate perceptual loss - make sure lpips_loss_fn is on the same device
-        # as the input tensors
-        p_loss = lpips_loss_fn(x_t, y_t)
-        total_loss += p_loss.mean()
+    # Calculate perceptual loss for all frames at once
+    p_loss = lpips_loss_fn(x_reshaped, y_reshaped)
     
-    return total_loss / time_steps
-
-def reconstruction_gan_losses(discriminator, real_frames, reconstructed_frames):
-
-    batch_size = real_frames.shape[0]
-    device = real_frames.device
-
-    real_recon_pairs = torch.cat([real_frames, reconstructed_frames], dim=2)  # Concat along time dimension
-    recon_real_pairs = torch.cat([reconstructed_frames, real_frames], dim=2)
-  
-    real_recon_logits = discriminator(real_recon_pairs)  # Should predict 1 (first is real)
-    recon_real_logits = discriminator(recon_real_pairs)  # Should predict 0 (second is real)
-
-    ones = torch.ones(batch_size, *real_recon_logits.shape[2:], device=device, dtype=torch.long)
-    zeros = torch.zeros(batch_size, *recon_real_logits.shape[2:], device=device, dtype=torch.long)
-
-    gen_loss_real_recon = F.cross_entropy(real_recon_logits, zeros)/np.log(2)  # Want discriminator to think recon is real
-    gen_loss_recon_real = F.cross_entropy(recon_real_logits, ones)/np.log(2)   # Want discriminator to think real is recon
-    adversarial_loss = (gen_loss_real_recon + gen_loss_recon_real) / 2
-
-    disc_loss_real_recon = F.cross_entropy(real_recon_logits, ones)/np.log(2)   # Should predict real is real
-    disc_loss_recon_real = F.cross_entropy(recon_real_logits, zeros)/np.log(2)  # Should predict recon is recon
-    discriminator_loss = (disc_loss_real_recon + disc_loss_recon_real) / 2
+    # Reshape loss back to [B, T] and take mean
+    p_loss = p_loss.reshape(batch_size, time_steps).mean()
     
-    return adversarial_loss, discriminator_loss
+    return p_loss
 
 
 #%%
@@ -229,61 +201,79 @@ if __name__=="__main__":
     for _ in range(10):
         pbar = tqdm(enumerate(dataloader), total=total_number_of_steps)
         for batch_idx, micro_batch in pbar:
+            frames, _ = micro_batch
+            frames = frames.float() / 127.5 - 1
+            frames = einops.rearrange(frames, 'b t h w c-> b c t h w').to(device)
+            
+            # Step 1: Train Discriminator
+            optimizer_disc.zero_grad()
+            
             with torch.no_grad():
-                frames, _ = micro_batch  # Ignore actions and reward for this VggAE training
-                frames = frames.float() / 127.5 - 1  # Normalize to [-1, 1]
-                frames = einops.rearrange(frames, 'b t h w c-> b c t h w').to(device)
-
-    
-            latent = vae.encode(frames).latent_dist.sample()
-      
-            decoder_output = vae.decode(latent)
-            recon = decoder_output.sample
-            posterior = vae.encode(frames).latent_dist
-            mean = posterior.mean
-            logvar = posterior.logvar
+                # Get VAE output without tracking gradients for discriminator training
+                latent = vae.encode(frames).latent_dist.sample()
+                recon = vae.decode(latent).sample
             
-           
-            uniform_logvar = logvar.mean(dim=1, keepdim=True)
-            uniform_logvar = uniform_logvar.expand_as(logvar)
-            kl_loss = -0.5 * torch.mean(1 + uniform_logvar - mean.pow(2) - uniform_logvar.exp())
+            # Calculate discriminator loss
+            real_recon_pairs = torch.cat([frames, recon], dim=2)
+            recon_real_pairs = torch.cat([recon, frames], dim=2)
             
-            logits = discriminator(recon)
-            targets = torch.ones(logits.shape[0], *logits.shape[2:], device=device, dtype=torch.long)
+            real_recon_logits = discriminator(real_recon_pairs)
+            recon_real_logits = discriminator(recon_real_pairs)
             
-
-            adversarial_loss, loss_disc = reconstruction_gan_losses(discriminator, frames, recon)
+            ones = torch.ones(frames.shape[0], *real_recon_logits.shape[2:], device=device, dtype=torch.long)
+            zeros = torch.zeros(frames.shape[0], *recon_real_logits.shape[2:], device=device, dtype=torch.long)
             
-   
-            # Pixel reconstruction loss (MSE)
-            recon_loss = F.mse_loss(recon, frames)
+            disc_loss_real_recon = F.cross_entropy(real_recon_logits, ones)/np.log(2)
+            disc_loss_recon_real = F.cross_entropy(recon_real_logits, zeros)/np.log(2)
+            loss_disc = (disc_loss_real_recon + disc_loss_recon_real) / 2
             
-            # DWT loss
-            dwt_loss = video_dwt_loss(recon, frames)
-            
-            # Perceptual loss (LPIPS)
-            perceptual_loss_value = perceptual_loss(recon, frames)
-            
-            # Total VAE loss
-            vae_loss = recon_loss + 0.1 * dwt_loss + 0.1 * perceptual_loss_value + kl_loss*1e-5 + adversarial_loss*1e-5
-            vae_loss.backward()
-
-            # Update VAE parameters
-            if batch_idx % (batch_size//micro_batch_size) == 0:
-                nn.utils.clip_grad_norm_(vae.parameters(), 1)
-                optimizer_vae.step()
-                scheduler_vae.step()
-                optimizer_vae.zero_grad()
-            
-            # Train discriminator
+            # Backward and optimize discriminator
             loss_disc.backward()
-            
-            # Update discriminator parameters
             if batch_idx % (batch_size//micro_batch_size) == 0:
                 nn.utils.clip_grad_norm_(discriminator.parameters(), 1)
                 optimizer_disc.step()
                 scheduler_disc.step()
-                optimizer_disc.zero_grad()
+            
+            # Step 2: Train VAE/Generator
+            optimizer_vae.zero_grad()
+            
+            # Forward pass through VAE
+            latent = vae.encode(frames).latent_dist.sample()
+            decoder_output = vae.decode(latent)
+            recon = decoder_output.sample
+            
+            # Calculate KL loss
+            posterior = vae.encode(frames).latent_dist
+            mean = posterior.mean
+            logvar = posterior.logvar
+            uniform_logvar = logvar.mean(dim=1, keepdim=True).expand_as(logvar)
+            kl_loss = -0.5 * torch.mean(1 + uniform_logvar - mean.pow(2) - uniform_logvar.exp())
+            
+            # Calculate reconstruction losses
+            recon_loss = F.mse_loss(recon, frames)
+            dwt_loss = video_dwt_loss(recon, frames)
+            perceptual_loss_value = perceptual_loss(recon, frames)
+            
+            # Adversarial loss for generator
+            real_recon_pairs = torch.cat([frames, recon], dim=2)
+            recon_real_pairs = torch.cat([recon, frames], dim=2)
+            
+            real_recon_logits = discriminator(real_recon_pairs)
+            recon_real_logits = discriminator(recon_real_pairs)
+            
+            gen_loss_real_recon = F.cross_entropy(real_recon_logits, zeros)/np.log(2)
+            gen_loss_recon_real = F.cross_entropy(recon_real_logits, ones)/np.log(2)
+            adversarial_loss = (gen_loss_real_recon + gen_loss_recon_real) / 2
+            
+            # Total VAE loss
+            vae_loss = recon_loss + 0.1 * dwt_loss + 0.1 * perceptual_loss_value + kl_loss*1e-4 + adversarial_loss*1e-4
+            
+            # Backward and optimize VAE
+            vae_loss.backward()
+            if batch_idx % (batch_size//micro_batch_size) == 0:
+                nn.utils.clip_grad_norm_(vae.parameters(), 1)
+                optimizer_vae.step()
+                scheduler_vae.step()
             
             # Update progress bar
             pbar.set_postfix_str(f"pixel: {recon_loss.item():.4f}, dwt: {dwt_loss.item():.4f}, lpips: {perceptual_loss_value.item():.4f}, kl: {kl_loss.item():.4f}, disc: {loss_disc.item():.4f}, adv: {adversarial_loss.mean().item():.4f}")
