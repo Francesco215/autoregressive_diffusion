@@ -16,6 +16,14 @@ import matplotlib.pyplot as plt
 
 from edm2.cs_dataloading import CsCollate, CsDataset
 from edm2.vae import VAE, MixedDiscriminator
+
+import os
+import tempfile
+
+# Set custom temporary directory
+os.environ['TMPDIR'] = '/mnt/mnemo9/mpelus/'
+# Optional: Also set for tempfile module
+tempfile.tempdir = '/mnt/mnemo9/mpelus/'
 #%%
 # Load the LTX-Video VAE
 def load_ltx_video_vae(device):
@@ -131,7 +139,7 @@ if __name__=="__main__":
     losses = []
 
 
-    recon_losses, kl_group_losses, kl_losses, disc_losses, adversarial_losses= [], [], [], [], []
+    recon_losses,  kl_losses, disc_losses, adversarial_losses= [], [], [], []
 
     #%%
     # Training loop
@@ -152,13 +160,11 @@ if __name__=="__main__":
             mean = posterior.mean
             logvar = posterior.logvar
             
-            mean_var = mean.var(dim=(0, 2, 3, 4))  # Variance of means
-            individual_var = logvar.exp().mean(dim=(0, 2, 3, 4))  # Average of individual variances
-            group_var = individual_var + mean_var  # Total mixture variance
-            group_mean = mean.mean(dim=(0, 2, 3, 4))
+           
+            uniform_logvar = logvar.mean(dim=1, keepdim=True)
+            uniform_logvar = uniform_logvar.expand_as(logvar)
+            kl_loss = -0.5 * torch.mean(1 + uniform_logvar - mean.pow(2) - uniform_logvar.exp())
             
-            kl_group = -0.5 * (1 + group_var.log() - group_mean.pow(2) - group_var).sum(dim=0)
-            kl_loss = -0.5 * torch.mean(1 + logvar - mean.pow(2) - logvar.exp())
             logits = discriminator(recon)
             targets = torch.ones(logits.shape[0], *logits.shape[2:], device=device, dtype=torch.long)
             
@@ -169,7 +175,7 @@ if __name__=="__main__":
             recon_loss = F.l1_loss(recon, frames)
             
             # Total VAE loss
-            vae_loss = recon_loss + kl_group*1e-5 + kl_loss*1e-5 + adversarial_loss*1e-6 #3,3,2
+            vae_loss = recon_loss + kl_loss*1e-5 + adversarial_loss*1e-6 #3,3,2
             vae_loss.backward()
             
             # Update VAE parameters
@@ -201,7 +207,7 @@ if __name__=="__main__":
             # Store losses
             recon_losses.append(recon_loss.item())
             kl_losses.append(kl_loss.item())
-            kl_group_losses.append(kl_group.item())
+        
             adversarial_losses.append(adversarial_loss.mean().item())
             disc_losses.append(loss_disc.item())
 
@@ -265,7 +271,7 @@ if __name__=="__main__":
 
                 # --- Loss Plots (Bottom 2x2 Grid) ---
                 # Titles and data for each loss plot
-                loss_data = [recon_losses, kl_group_losses, kl_losses, disc_losses, adversarial_losses]
+                loss_data = [recon_losses, kl_losses, disc_losses, adversarial_losses]
                 loss_titles = ['Reconstruction Loss', 'KL Group Loss', 'KL Loss', 'Discriminator Losses', 'Discriminator Losses']
                 loss_colors = ['blue', 'green', 'red', 'purple', 'orange']
                 labels = [None, None, None, 'Discriminator Loss', 'Adversarial Loss']
