@@ -138,7 +138,29 @@ def perceptual_loss(x, y):
     
     return total_loss / time_steps
 
+def reconstruction_gan_losses(discriminator, real_frames, reconstructed_frames):
 
+    batch_size = real_frames.shape[0]
+    device = real_frames.device
+
+    real_recon_pairs = torch.cat([real_frames, reconstructed_frames], dim=2)  # Concat along time dimension
+    recon_real_pairs = torch.cat([reconstructed_frames, real_frames], dim=2)
+  
+    real_recon_logits = discriminator(real_recon_pairs)  # Should predict 1 (first is real)
+    recon_real_logits = discriminator(recon_real_pairs)  # Should predict 0 (second is real)
+
+    ones = torch.ones(batch_size, *real_recon_logits.shape[2:], device=device, dtype=torch.long)
+    zeros = torch.zeros(batch_size, *recon_real_logits.shape[2:], device=device, dtype=torch.long)
+
+    gen_loss_real_recon = F.cross_entropy(real_recon_logits, zeros)/np.log(2)  # Want discriminator to think recon is real
+    gen_loss_recon_real = F.cross_entropy(recon_real_logits, ones)/np.log(2)   # Want discriminator to think real is recon
+    adversarial_loss = (gen_loss_real_recon + gen_loss_recon_real) / 2
+
+    disc_loss_real_recon = F.cross_entropy(real_recon_logits, ones)/np.log(2)   # Should predict real is real
+    disc_loss_recon_real = F.cross_entropy(recon_real_logits, zeros)/np.log(2)  # Should predict recon is recon
+    discriminator_loss = (disc_loss_real_recon + disc_loss_recon_real) / 2
+    
+    return adversarial_loss, discriminator_loss
 
 
 #%%
@@ -230,7 +252,7 @@ if __name__=="__main__":
             targets = torch.ones(logits.shape[0], *logits.shape[2:], device=device, dtype=torch.long)
             
 
-            adversarial_loss = F.cross_entropy(logits, targets)/np.log(2)
+            adversarial_loss, loss_disc = reconstruction_gan_losses(discriminator, frames, recon)
             
    
             # Pixel reconstruction loss (MSE)
@@ -254,12 +276,6 @@ if __name__=="__main__":
                 optimizer_vae.zero_grad()
             
             # Train discriminator
-            logits_real = discriminator(frames.detach())
-            logits_fake = discriminator(recon.detach())
-            loss_disc_real = F.cross_entropy(logits_real, torch.ones_like(targets))/np.log(2)
-            loss_disc_fake = F.cross_entropy(logits_fake, torch.zeros_like(targets))/np.log(2)
-            loss_disc = (loss_disc_real + loss_disc_fake)/2
-            
             loss_disc.backward()
             
             # Update discriminator parameters
@@ -275,7 +291,6 @@ if __name__=="__main__":
             # Store losses
             recon_losses.append(recon_loss.item())
             kl_losses.append(kl_loss.item())
-        
             adversarial_losses.append(adversarial_loss.mean().item())
             disc_losses.append(loss_disc.item())
 
@@ -283,9 +298,8 @@ if __name__=="__main__":
             #     adv_multiplier = 5e-2
 
             # Visualization every 100 steps
-            # Visualization every 100 steps
             if batch_idx % 100 == 0 and batch_idx > 0:
-                # Create a figure with a custom layout: 3 sections (2 rows for frames, 2x2 grid for losses)
+                # Create a figure with a custom layout: 3 sections (2 rows for frames, 3 loss plots)
                 fig = plt.figure(figsize=(15, 12))
 
                 # Top section: 2 rows for original and reconstructed frames (2x5 grid)
@@ -293,13 +307,12 @@ if __name__=="__main__":
                 orig_axes = [fig.add_subplot(gs_top[0, i]) for i in range(5)]  # Row 0: Original frames
                 recon_axes = [fig.add_subplot(gs_top[1, i]) for i in range(5)]  # Row 1: Reconstructed frames
 
-                # Bottom section: 2x2 grid for loss plots
-                gs_bottom = plt.GridSpec(2, 2, figure=fig, top=0.45, bottom=0.05, left=0.1, right=0.9, hspace=0.4)
+                # Bottom section: 3 subplots for losses (1x3 grid)
+                gs_bottom = plt.GridSpec(1, 3, figure=fig, top=0.45, bottom=0.05, left=0.1, right=0.9, wspace=0.3)
                 loss_axes = [
-                    fig.add_subplot(gs_bottom[0, 0]),  # Top-left: Recon Loss
-                    fig.add_subplot(gs_bottom[0, 1]),  # Top-right: KL Loss
-                    fig.add_subplot(gs_bottom[1, 0]),  # Bottom-left: Disc Loss
-                    fig.add_subplot(gs_bottom[1, 1])   # Bottom-right: Adversarial Loss
+                    fig.add_subplot(gs_bottom[0, 0]),  # Left: Recon Loss
+                    fig.add_subplot(gs_bottom[0, 1]),  # Middle: KL Loss
+                    fig.add_subplot(gs_bottom[0, 2])   # Right: Combined Disc and Adversarial Loss
                 ]
 
                 # --- Video Frames (Top: Original and Reconstructed) ---
@@ -338,21 +351,38 @@ if __name__=="__main__":
                         recon_axes[i].axis('off')
                 
 
-                # --- Loss Plots (Bottom 2x2 Grid) ---
-                # Titles and data for each loss plot
-                loss_data = [recon_losses, kl_losses, disc_losses, adversarial_losses]
-                loss_titles = ['Reconstruction Loss', 'KL Loss', 'Discriminator Loss', 'Adversarial Loss']
-                loss_colors = ['blue', 'green', 'red', 'purple']
-
-                for i in range(4):
-                    loss_axes[i].plot(loss_data[i], color=loss_colors[i])
-                    loss_axes[i].set_title(loss_titles[i])
-                    loss_axes[i].set_yscale('log')  
-                    loss_axes[i].set_xscale('log')  
-                    loss_axes[i].set_xlabel('Steps')
-                    loss_axes[i].set_xlim(left=10)
-                    loss_axes[i].set_ylabel('Loss')
-                    loss_axes[i].grid(True, linestyle='--', alpha=0.7)
+                # --- Loss Plots (Bottom Row) ---
+                # Plot reconstruction loss
+                loss_axes[0].plot(recon_losses, color='blue')
+                loss_axes[0].set_title('Reconstruction Loss')
+                loss_axes[0].set_yscale('log')  
+                loss_axes[0].set_xscale('log')  
+                loss_axes[0].set_xlabel('Steps')
+                loss_axes[0].set_xlim(left=10)
+                loss_axes[0].set_ylabel('Loss')
+                loss_axes[0].grid(True, linestyle='--', alpha=0.7)
+                
+                # Plot KL loss
+                loss_axes[1].plot(kl_losses, color='green')
+                loss_axes[1].set_title('KL Loss')
+                loss_axes[1].set_yscale('log')  
+                loss_axes[1].set_xscale('log')  
+                loss_axes[1].set_xlabel('Steps')
+                loss_axes[1].set_xlim(left=10)
+                loss_axes[1].set_ylabel('Loss')
+                loss_axes[1].grid(True, linestyle='--', alpha=0.7)
+                
+                # Plot discriminator and adversarial losses together
+                loss_axes[2].plot(disc_losses, color='red', label='Discriminator Loss')
+                loss_axes[2].plot(adversarial_losses, color='purple', label='Adversarial Loss')
+                loss_axes[2].set_title('Discriminator & Adversarial Losses')
+                loss_axes[2].set_yscale('log')  
+                loss_axes[2].set_xscale('log')  
+                loss_axes[2].set_xlabel('Steps')
+                loss_axes[2].set_xlim(left=10)
+                loss_axes[2].set_ylabel('Loss')
+                loss_axes[2].grid(True, linestyle='--', alpha=0.7)
+                loss_axes[2].legend()
 
                 # Adjust layout to fit everything nicely
                 plt.tight_layout()
