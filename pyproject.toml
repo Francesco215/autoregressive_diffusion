@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 dependencies = [
     "torch" ,
+    "awscli",
     "setuptools",
     "einops",
     "ipykernel",
