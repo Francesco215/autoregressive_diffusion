@@ -35,7 +35,7 @@ class CsDataset(IterableDataset):
         return len(self.dataset)*(1000//self.clip_size)
 
 class CsDataset(IterableDataset):
-    def __init__(self, remote, clip_size, local='/tmp/streaming_dataset/counterstrike', shuffle=False, **kwargs):
+    def __init__(self, remote, clip_size, local='./tmp/streaming_dataset/counterstrike', shuffle=False, **kwargs):
         self.dataset = StreamingDataset(remote=remote, local=local, shuffle=shuffle, **kwargs)
         self.clip_size = clip_size
         

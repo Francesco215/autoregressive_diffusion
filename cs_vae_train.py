@@ -169,7 +169,7 @@ if __name__=="__main__":
             recon_loss = F.l1_loss(recon, frames)
             
             # Total VAE loss
-            vae_loss = recon_loss + kl_group*1e-3 + kl_loss*1e-3 + adversarial_loss*1e-2 #3,3,2
+            vae_loss = recon_loss + kl_group*1e-5 + kl_loss*1e-5 + adversarial_loss*1e-4 #3,3,2
             vae_loss.backward()
             
             # Update VAE parameters
@@ -209,7 +209,7 @@ if __name__=="__main__":
             #     adv_multiplier = 5e-2
 
             # Visualization every 100 steps
-            if batch_idx % 500 == 0 and batch_idx > 0:
+            if batch_idx % 100 == 0 and batch_idx > 0:
                 # Create a figure with a custom layout: 3 sections (2 rows for frames, 2x2 grid for losses)
                 fig = plt.figure(figsize=(15, 12))
 
