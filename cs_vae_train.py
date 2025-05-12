@@ -118,7 +118,7 @@ if __name__=="__main__":
     sigma_data = 1.
 
     # Define optimizers
-    base_lr = 1e-4
+    base_lr = 1e-6 #4
     optimizer_vae = AdamW(vae.parameters(), lr=base_lr, eps=1e-8)
     optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr, eps=1e-8)
     optimizer_vae.zero_grad()
@@ -169,7 +169,7 @@ if __name__=="__main__":
             recon_loss = F.l1_loss(recon, frames)
             
             # Total VAE loss
-            vae_loss = recon_loss + kl_group*1e-5 + kl_loss*1e-5 + adversarial_loss*1e-4 #3,3,2
+            vae_loss = recon_loss + kl_group*1e-5 + kl_loss*1e-5 + adversarial_loss*1e-6 #3,3,2
             vae_loss.backward()
             
             # Update VAE parameters

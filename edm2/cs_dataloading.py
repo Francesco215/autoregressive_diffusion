@@ -35,9 +35,26 @@ class CsDataset(IterableDataset):
         return len(self.dataset)*(1000//self.clip_size)
 
 class CsDataset(IterableDataset):
-    def __init__(self, remote, clip_size, local='./tmp/streaming_dataset/counterstrike', shuffle=False, **kwargs):
+    def __init__(self, remote, clip_size, local=None, shuffle=False, **kwargs):
+        
+        if local is None:
+            # Get current working directory (where the script is run from)
+            cwd = os.getcwd()
+            
+            # Create a unique path for each worker to avoid conflicts
+            worker_id = kwargs.get('worker_id', 0)
+            local = os.path.join(cwd, f'streaming_dataset_cache_{worker_id}')
+            
+            # Make sure the directory exists
+            os.makedirs(local, exist_ok=True)
+        
+        
         self.dataset = StreamingDataset(remote=remote, local=local, shuffle=shuffle, **kwargs)
         self.clip_size = clip_size
+        
+        
+        
+        
         
         # Safety check for the first shard
         samples_per_shard = getattr(self.dataset, 'samples_per_shard', None)
