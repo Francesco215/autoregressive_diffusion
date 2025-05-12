@@ -7,6 +7,10 @@ from torch.utils.data import DataLoader
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.optim import AdamW
 from diffusers import AutoencoderKLLTXVideo
+import pywt
+import pytorch_wavelets
+from pytorch_wavelets import DWTForward, DWTInverse
+import lpips
 
 import os
 from tqdm import tqdm
@@ -83,7 +87,56 @@ def test():
     except Exception as e:
         print(f"Error while inspecting latent: {str(e)}")
 
+def video_dwt_loss(x, y):
+    """
+    Compute DWT loss between original and reconstructed videos
+    x, y: tensors of shape [B, C, T, H, W]
+    """
+    # Initialize 2D DWT transform and move to the same device as input tensors
+    dwt = DWTForward(J=1, mode='zero', wave='db1').to(x.device)
+    
+    batch_size, channels, time_steps, height, width = x.shape
+    dwt_loss = 0.0
+    
+    # For each time step, compute 2D DWT
+    for t in range(time_steps):
+        # Get current frame
+        x_t = x[:, :, t]  # [B, C, H, W]
+        y_t = y[:, :, t]  # [B, C, H, W]
+        
+        # Apply DWT transform
+        x_coeffs = dwt(x_t)  # Returns low-pass and list of high-pass coefficients
+        y_coeffs = dwt(y_t)
+        
+        # Calculate L1 loss on low-frequency components
+        dwt_loss += F.l1_loss(x_coeffs[0], y_coeffs[0])
+        
+        # Calculate L1 loss on high-frequency components (horizontal, vertical, diagonal)
+        for i in range(len(x_coeffs[1])):
+            dwt_loss += F.l1_loss(x_coeffs[1][i], y_coeffs[1][i])
+    
+    return dwt_loss / time_steps
 
+def perceptual_loss(x, y):
+    """
+    Compute LPIPS perceptual loss between original and reconstructed videos
+    x, y: tensors of shape [B, C, T, H, W]
+    """
+    batch_size, channels, time_steps, height, width = x.shape
+    total_loss = 0.0
+    
+    # For each time step, compute LPIPS
+    for t in range(time_steps):
+        # Get current frame and ensure it's in the right format (normalized to [-1,1])
+        x_t = x[:, :, t]  # [B, C, H, W]
+        y_t = y[:, :, t]  # [B, C, H, W]
+        
+        # Calculate perceptual loss - make sure lpips_loss_fn is on the same device
+        # as the input tensors
+        p_loss = lpips_loss_fn(x_t, y_t)
+        total_loss += p_loss.mean()
+    
+    return total_loss / time_steps
 
 
 
@@ -112,6 +165,8 @@ if __name__=="__main__":
     # vae = VAE.load_from_pretrained('saved_models/vae_cs_4264.pt').to(device)
     # Example instantiation
     discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(32,)).to(device)
+    lpips_loss_fn = lpips.LPIPS(net='alex').to(device)
+    
     
     dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False)
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(clip_length), num_workers=8, shuffle=False)
@@ -126,7 +181,7 @@ if __name__=="__main__":
     sigma_data = 1.
 
     # Define optimizers
-    base_lr = 1e-6 #4
+    base_lr = 1e-4 #4
     optimizer_vae = AdamW(vae.parameters(), lr=base_lr, eps=1e-8)
     optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr, eps=1e-8)
     optimizer_vae.zero_grad()
@@ -142,6 +197,12 @@ if __name__=="__main__":
     recon_losses,  kl_losses, disc_losses, adversarial_losses= [], [], [], []
 
     #%%
+    
+    # Initialize LPIPS loss function
+
+
+    
+    
     # Training loop
     for _ in range(10):
         pbar = tqdm(enumerate(dataloader), total=total_number_of_steps)
@@ -172,12 +233,19 @@ if __name__=="__main__":
             adversarial_loss = F.cross_entropy(logits, targets)/np.log(2)
             
    
-            recon_loss = F.l1_loss(recon, frames)
+            # Pixel reconstruction loss (MSE)
+            recon_loss = F.mse_loss(recon, frames)
+            
+            # DWT loss
+            dwt_loss = video_dwt_loss(recon, frames)
+            
+            # Perceptual loss (LPIPS)
+            perceptual_loss_value = perceptual_loss(recon, frames)
             
             # Total VAE loss
-            vae_loss = recon_loss + kl_loss*1e-5 + adversarial_loss*1e-6 #3,3,2
+            vae_loss = recon_loss + 0.1 * dwt_loss + 0.1 * perceptual_loss_value + kl_loss*1e-5 + adversarial_loss*1e-5
             vae_loss.backward()
-            
+
             # Update VAE parameters
             if batch_idx % (batch_size//micro_batch_size) == 0:
                 nn.utils.clip_grad_norm_(vae.parameters(), 1)
@@ -202,7 +270,7 @@ if __name__=="__main__":
                 optimizer_disc.zero_grad()
             
             # Update progress bar
-            pbar.set_postfix_str(f"recon loss: {recon_loss.item():.4f}, KL loss: {kl_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}, Adversarial Loss: {adversarial_loss.mean().item():.4f}")
+            pbar.set_postfix_str(f"pixel: {recon_loss.item():.4f}, dwt: {dwt_loss.item():.4f}, lpips: {perceptual_loss_value.item():.4f}, kl: {kl_loss.item():.4f}, disc: {loss_disc.item():.4f}, adv: {adversarial_loss.mean().item():.4f}")
             
             # Store losses
             recon_losses.append(recon_loss.item())
