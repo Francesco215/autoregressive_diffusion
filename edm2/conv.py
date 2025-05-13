@@ -33,7 +33,7 @@ class MPConv(torch.nn.Module):
         self.dilation = dilation
         self.padding = [dilation*(kernel[-1]//2)]*4 if len(kernel)!=0 else None
 
-    def forward(self, x, gain=1, batch_size=None):
+    def forward(self, x, gain=1):
         w = self.weight(gain).to(x.dtype)
         if w.ndim == 2:
             return x @ w.t()

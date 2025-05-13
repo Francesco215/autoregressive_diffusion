@@ -1,7 +1,7 @@
 # Code adapted from Nvidia EDM2 repository 
 
 import inspect
-import numpy as np
+from contextlib import nullcontext
 import torch
 from torch import nn, Tensor
 from torch.nn import functional as F
@@ -44,9 +44,11 @@ class Block(torch.nn.Module):
         self.clip_act = clip_act
         self.emb_gain = torch.nn.Parameter(torch.zeros([]))
         self.emb_linear = MPConv(emb_channels, out_channels, kernel=[])
-        # if attention:
+
         self.conv_res0 = MPCausal3DGatedConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3,3])
         self.conv_res1 = MPCausal3DGatedConv(out_channels, out_channels, kernel=[3,3,3])
+        # self.conv_res0 = MPConv(out_channels if flavor == 'enc' else in_channels, out_channels, kernel=[3,3])
+        # self.conv_res1 = MPConv(out_channels, out_channels, kernel=[3,3])
 
         self.conv_skip = MPConv(in_channels, out_channels, kernel=[1,1]) if in_channels != out_channels else None
         if attention == 'video':
@@ -69,12 +71,14 @@ class Block(torch.nn.Module):
 
         # Residual branch.
         y, cache['conv_res0'] = self.conv_res0(mp_silu(x), emb, batch_size, c_noise, cache.get('conv_res0', None), update_cache) 
+        # y = self.conv_res0(mp_silu(x)) 
         c = self.emb_linear(emb, gain=self.emb_gain) + 1
         y = bmult(y, c.to(y.dtype)) 
         y = mp_silu(y)
         if self.training and self.dropout != 0:
             y = torch.nn.functional.dropout(y, p=self.dropout)
         y, cache['conv_res1'] = self.conv_res1(y, emb, batch_size, c_noise, cache.get('conv_res1', None), update_cache) 
+        # y = self.conv_res1(y) 
 
         # Connect the branches.
         if self.flavor == 'dec' and self.conv_skip is not None:
@@ -212,6 +216,10 @@ class UNet(BetterModule):
         x = mp_sum(x, res, out_res)
         return x, cache
 
+        
+    def no_sync(self):
+        return nullcontext()
+
 #----------------------------------------------------------------------------
 # Preconditioning and uncertainty estimation.
 
@@ -245,8 +253,8 @@ class Precond(BetterModule):
         # Run the model.
         x_in = (c_in * x).to(dtype)
         F_x, cache = self.unet(x_in, c_noise, conditioning, cache, update_cache)
-        D_x = c_skip * x + c_out * F_x.to(torch.float32)
-        return D_x, cache
+        # F_x = c_skip * x + c_out * F_x.to(torch.float32)
+        return F_x, cache
     
 
 

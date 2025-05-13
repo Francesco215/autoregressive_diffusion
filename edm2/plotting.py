@@ -122,10 +122,17 @@ def plot_training_dashboard(
 
     # Run sampler with sigma_max=0.5 for initial noise level
     conditioning = None if actions is None else actions[:,context.shape[1]:context.shape[1]+1]
-    _, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(net=precond, cache=cache, target=target, sigma_max=3, sigma_min=0.4, num_steps=32, conditioning=conditioning, rho = 2, guidance = 1, S_churn=20, S_noise=1,
+    sigma_max_val = 3.0   # <- must match the call you make just below
+    sigma_min_val = 0.4
+    rho_val        = 2.0
+    num_steps_val  = 32
+    _, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(net=precond, cache=cache, target=target, sigma_max=sigma_max_val, sigma_min=sigma_min_val, num_steps=num_steps_val, conditioning=conditioning, rho = rho_val, guidance = 1, S_churn=20, S_noise=1,
     )
 
     # Plot results
+    # is it possible to plot above the corresponding times ot the timesteps
+    #they are determined like this #!wrong code below!#
+
     ax3.plot(mse_steps, marker='o', linestyle='-', label="MSE")
     ax3.plot(mse_pred_values, marker='o', linestyle='-', label="MSE (Predicted)")
     ax3.set_xlabel("Denoising Step")
@@ -134,7 +141,19 @@ def plot_training_dashboard(
     ax3.set_title("Denoising Progress (Lower is Better)")
     ax3.grid(True, which="both", ls="--", alpha=0.5)
     # ax3.legend()
+    step_idx  = torch.arange(num_steps_val, device=latents.device)
+    sigmas_ts = (sigma_max_val ** (1/rho_val)
+                + step_idx / (num_steps_val - 1)
+                * (sigma_min_val ** (1/rho_val) - sigma_max_val ** (1/rho_val))
+                ) ** rho_val
+    sigmas_ts = torch.cat([sigmas_ts, sigmas_ts.new_zeros(1)])  # final σ = 0
+    sigma_lbls = [f'{s.item():.2f}' for s in sigmas_ts]         # or use f'{s:.1e}'
 
+    ax3_top = ax3.secondary_xaxis('top')          # use ax3.twiny() for MPL < 3.4
+    ax3_top.set_xlim(ax3.get_xlim())              # keep identical limits
+    ax3_top.set_xticks(range(len(sigmas_ts)))
+    ax3_top.set_xticklabels(sigma_lbls, rotation=45, ha='left', fontsize=8)
+    ax3_top.set_xlabel("σ-timestep")
 
     # --- Plot 4: Generated Frames (Bottom-Right) ---
     # Replicate the *exact* logic from sampler_training_callback
