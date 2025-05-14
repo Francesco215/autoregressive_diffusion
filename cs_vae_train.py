@@ -31,29 +31,56 @@ tempfile.tempdir = '/mnt/mnemo9/mpelus/'
 #%%
 # Load the LTX-Video VAE
 def load_ltx_video_vae(device):
-    # Initialize the LTX-Video VAE with the provided config
+    # Configuration for a 3-block encoder/decoder architecture
+    num_blocks = 3
+    # Encoder settings
+    enc_block_out_channels = [128, 256, 512]        # Length: num_blocks
+    enc_layers_per_block = [4, 3, 3, 4]             # Length: num_blocks + 1
+    enc_spatio_temporal_scaling = [True, True, True]# Length: num_blocks
+    # Decoder settings (to match encoder structure)
+    # LTXVideoDecoder3d internally reverses them.
+    dec_block_out_channels = list(enc_block_out_channels)           # e.g., [128, 256, 512]
+    # For symmetric layer counts, decoder_layers_per_block can mirror encoder_layers_per_block.
+    # LTXVideoDecoder3d expects this in [L_outer, ..., L_inner, L_mid] format, then reverses it.
+    dec_layers_per_block = list(enc_layers_per_block)               # e.g., [4, 3, 3, 4]
+    dec_spatio_temporal_scaling = list(enc_spatio_temporal_scaling) # e.g., [True, True, True]
+    # Tuple lengths dependent on num_blocks for the decoder:
+    # inject_noise: num_blocks + 1
+    # others: num_blocks
+    dec_inject_noise = (True,) * (num_blocks + 1)             # (True, True, True, True)
+    dec_upsample_residual = (False,) * num_blocks             # (False, False, False)
+    dec_upsample_factor = (1,) * num_blocks                   # (1, 1, 1)
+
     vae = AutoencoderKLLTXVideo(
         in_channels=3,
         out_channels=3,
         latent_channels=128,
-        block_out_channels=[128, 256, 512, 512],
-        layers_per_block=[4, 3, 3, 3, 4],
+
+        # Encoder parameters
+        block_out_channels=enc_block_out_channels,
+        layers_per_block=enc_layers_per_block,
+        spatio_temporal_scaling=enc_spatio_temporal_scaling,
+
+        # Decoder parameters
+        decoder_block_out_channels=dec_block_out_channels,
+        decoder_layers_per_block=dec_layers_per_block,
+        decoder_spatio_temporal_scaling=dec_spatio_temporal_scaling,
+        decoder_inject_noise=dec_inject_noise,
+        upsample_residual=dec_upsample_residual,
+        upsample_factor=dec_upsample_factor,
+
         patch_size=4,
         patch_size_t=1,
         encoder_causal=True,
-        decoder_causal=True,
+        decoder_causal=True,  # This is passed to LTXVideoDecoder3d as is_causal
         resnet_norm_eps=1e-06,
         scaling_factor=1.0,
-        spatio_temporal_scaling=[True, True, True, False]
+        # timestep_conditioning=True, # Set if needed
     )
-    
-    # Optionally load pre-trained weights if available
-    # vae.load_state_dict(torch.load("path/to/downloaded/weights.pt"))
-    
     return vae.to(device)
 
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# vae = load_ltx_video_vae(device)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+vae = load_ltx_video_vae(device)
 
 def test():
     # Create a dummy video tensor with multiple frames
@@ -71,21 +98,6 @@ def test():
     decoded = vae.decode(latent)
     recon = decoded.sample
     print(f"Output shape: {recon.shape}")
-
-    # Check if we can explicitly access the first frame latent
-    # This is just a test to see the structure - it might fail
-    try:
-        print("Attempting to examine latent structure...")
-        if hasattr(latent_dist, 'first_frame'):
-            print(f"First frame latent shape: {latent_dist.first_frame.shape}")
-        else:
-            print("No explicit first_frame attribute in latent_dist")
-            
-        # Try to inspect if there's any pattern in the latent representation
-        print(f"First frame of latent: {latent[:,:,0,:,:].shape}")
-        print(f"Rest of frames of latent: {latent[:,:,1:,:,:].shape}")
-    except Exception as e:
-        print(f"Error while inspecting latent: {str(e)}")
 
 def video_dwt_loss(x, y):
     """
@@ -143,7 +155,7 @@ if __name__=="__main__":
     original_env = "LunarLander-v3"
 
     batch_size = 16
-    micro_batch_size = 2
+    micro_batch_size = 1
     clip_length = 17 
     
     assert (clip_length - 1) % 8 == 0, 'clip length -1 must be divisible by 8.'
@@ -158,7 +170,7 @@ if __name__=="__main__":
     #vae = VAE(channels = channels, n_res_blocks=n_res_blocks, spatial_compressions=[1,4,4]).to(device)
     # vae = VAE.load_from_pretrained('saved_models/vae_cs_4264.pt').to(device)
     # Example instantiation
-    discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(32,)).to(device)
+    discriminator = MixedDiscriminator(in_channels = 6, block_out_channels=(32,)).to(device)
     lpips_loss_fn = lpips.LPIPS(net='alex').to(device)
     
     
@@ -191,98 +203,98 @@ if __name__=="__main__":
     recon_losses,  kl_losses, disc_losses, adversarial_losses= [], [], [], []
 
     #%%
-    
-    # Initialize LPIPS loss function
+# Assuming the same setup as before
 
-
-    
-    
     # Training loop
-    for _ in range(10):
-        pbar = tqdm(enumerate(dataloader), total=total_number_of_steps)
+    for epoch in range(10):
+        pbar = tqdm(enumerate(dataloader), total=len(dataloader), desc=f"Epoch {epoch+1}")
+        grad_accum_steps = batch_size // micro_batch_size
+
         for batch_idx, micro_batch in pbar:
-            frames, _ = micro_batch
-            frames = frames.float() / 127.5 - 1
-            frames = einops.rearrange(frames, 'b t h w c-> b c t h w').to(device)
-            
-            # Step 1: Train Discriminator
-            optimizer_disc.zero_grad()
-            
-            with torch.no_grad():
-                # Get VAE output without tracking gradients for discriminator training
-                latent = vae.encode(frames).latent_dist.sample()
-                recon = vae.decode(latent).sample
-            
-            # Calculate discriminator loss
-            real_recon_pairs = torch.cat([frames, recon], dim=2)
-            recon_real_pairs = torch.cat([recon, frames], dim=2)
-            
-            real_recon_logits = discriminator(real_recon_pairs)
-            recon_real_logits = discriminator(recon_real_pairs)
-            
-            ones = torch.ones(frames.shape[0], *real_recon_logits.shape[2:], device=device, dtype=torch.long)
-            zeros = torch.zeros(frames.shape[0], *recon_real_logits.shape[2:], device=device, dtype=torch.long)
-            
-            disc_loss_real_recon = F.cross_entropy(real_recon_logits, ones)/np.log(2)
-            disc_loss_recon_real = F.cross_entropy(recon_real_logits, zeros)/np.log(2)
-            loss_disc = (disc_loss_real_recon + disc_loss_recon_real) / 2
-            
-            # Backward and optimize discriminator
-            loss_disc.backward()
-            if batch_idx % (batch_size//micro_batch_size) == 0:
-                nn.utils.clip_grad_norm_(discriminator.parameters(), 1)
-                optimizer_disc.step()
-                scheduler_disc.step()
-            
-            # Step 2: Train VAE/Generator
-            optimizer_vae.zero_grad()
-            
-            # Forward pass through VAE
-            latent = vae.encode(frames).latent_dist.sample()
-            decoder_output = vae.decode(latent)
-            recon = decoder_output.sample
-            
-            # Calculate KL loss
-            posterior = vae.encode(frames).latent_dist
+            frames_raw, _ = micro_batch
+            frames = frames_raw.float() / 127.5 - 1
+            frames = einops.rearrange(frames, 'b t h w c -> b c t h w').to(device)
+            current_batch_size = frames.shape[0]
+
+            # Step 0: Common forward pass
+            posterior = vae.encode(frames).latent_dist 
+            latent_sampled = posterior.sample()
+            recon_g = vae.decode(latent_sampled).sample
+
+            # Step 1: VAE/Generator losses
+            # KL loss
             mean = posterior.mean
             logvar = posterior.logvar
             uniform_logvar = logvar.mean(dim=1, keepdim=True).expand_as(logvar)
             kl_loss = -0.5 * torch.mean(1 + uniform_logvar - mean.pow(2) - uniform_logvar.exp())
             
-            # Calculate reconstruction losses
-            recon_loss = F.mse_loss(recon, frames)
-            dwt_loss = video_dwt_loss(recon, frames)
-            perceptual_loss_value = perceptual_loss(recon, frames)
+            # Reconstruction losses
+            recon_loss_for_vae = F.mse_loss(recon_g, frames)
+            dwt_loss = video_dwt_loss(recon_g, frames)
+            perceptual_loss_value = perceptual_loss(recon_g, frames)
             
-            # Adversarial loss for generator
-            real_recon_pairs = torch.cat([frames, recon], dim=2)
-            recon_real_pairs = torch.cat([recon, frames], dim=2)
+            # Adversarial loss for VAE/generator
+            frames_recon_g_pairs_adv = torch.cat([frames, recon_g], dim=1)
+            recon_g_frames_pairs_adv = torch.cat([recon_g, frames], dim=1)
             
-            real_recon_logits = discriminator(real_recon_pairs)
-            recon_real_logits = discriminator(recon_real_pairs)
+            frames_recon_g_logits_adv = discriminator(frames_recon_g_pairs_adv)
+            recon_g_frames_logits_adv = discriminator(recon_g_frames_pairs_adv)
+
+            spatial_dims_disc_out = frames_recon_g_logits_adv.shape[2:]
+            ones_targets = torch.ones(current_batch_size, *spatial_dims_disc_out, device=device, dtype=torch.long)
+            zeros_targets = torch.zeros(current_batch_size, *spatial_dims_disc_out, device=device, dtype=torch.long)
             
-            gen_loss_real_recon = F.cross_entropy(real_recon_logits, zeros)/np.log(2)
-            gen_loss_recon_real = F.cross_entropy(recon_real_logits, ones)/np.log(2)
-            adversarial_loss = (gen_loss_real_recon + gen_loss_recon_real) / 2
+            # G wants D to misclassify
+            gen_loss_frames_recon = F.cross_entropy(frames_recon_g_logits_adv, zeros_targets) / np.log(2)
+            gen_loss_recon_frames = F.cross_entropy(recon_g_frames_logits_adv, ones_targets) / np.log(2)
+            adversarial_loss_for_vae = (gen_loss_frames_recon + gen_loss_recon_frames) / 2
             
             # Total VAE loss
-            vae_loss = recon_loss + 0.1 * dwt_loss + 0.1 * perceptual_loss_value + kl_loss*1e-4 + adversarial_loss*1e-4
+            total_vae_loss = recon_loss_for_vae 
+
+            # Step 2: Discriminator losses
+            recon_g_detached = recon_g.detach() 
             
-            # Backward and optimize VAE
-            vae_loss.backward()
-            if batch_idx % (batch_size//micro_batch_size) == 0:
-                nn.utils.clip_grad_norm_(vae.parameters(), 1)
+            real_frames_recon_d_pairs = torch.cat([frames, recon_g_detached], dim=1)
+            recon_d_real_frames_pairs = torch.cat([recon_g_detached, frames], dim=1)
+            
+            real_frames_recon_d_logits = discriminator(real_frames_recon_d_pairs)
+            recon_d_real_frames_logits = discriminator(recon_d_real_frames_pairs)
+            
+            # D wants correct classification
+            disc_loss_type1 = F.cross_entropy(real_frames_recon_d_logits, ones_targets) / np.log(2)
+            disc_loss_type0 = F.cross_entropy(recon_d_real_frames_logits, zeros_targets) / np.log(2)
+            total_loss_disc = (disc_loss_type1 + disc_loss_type0) / 2
+            
+            # Step 3: Updates
+            # Update VAE/Generator
+            optimizer_vae.zero_grad()
+            total_vae_loss.backward()
+            if batch_idx % grad_accum_steps == 0:
+                nn.utils.clip_grad_norm_(vae.parameters(), 1.0)
                 optimizer_vae.step()
                 scheduler_vae.step()
-            
-            # Update progress bar
-            pbar.set_postfix_str(f"pixel: {recon_loss.item():.4f}, dwt: {dwt_loss.item():.4f}, lpips: {perceptual_loss_value.item():.4f}, kl: {kl_loss.item():.4f}, disc: {loss_disc.item():.4f}, adv: {adversarial_loss.mean().item():.4f}")
+
+            # Update Discriminator
+            optimizer_disc.zero_grad()
+            total_loss_disc.backward()
+            if batch_idx % grad_accum_steps == 0:
+                nn.utils.clip_grad_norm_(discriminator.parameters(), 1.0)
+                optimizer_disc.step()
+                scheduler_disc.step()
+                
+            # Update progress bar & store losses
+            pbar.set_postfix_str(
+                f"pixel: {recon_loss_for_vae.item():.4f}, kl: {kl_loss.item():.4f}, "
+                f"disc: {total_loss_disc.item():.4f}, adv: {adversarial_loss_for_vae.item():.4f}"
+            )
+       
             
             # Store losses
-            recon_losses.append(recon_loss.item())
+            recon_losses.append(recon_loss_for_vae.item())
             kl_losses.append(kl_loss.item())
-            adversarial_losses.append(adversarial_loss.mean().item())
-            disc_losses.append(loss_disc.item())
+            adversarial_losses.append(adversarial_loss_for_vae.item())
+            disc_losses.append(total_loss_disc.item())
 
             # if batch_idx == 500:
             #     adv_multiplier = 5e-2
@@ -309,7 +321,7 @@ if __name__=="__main__":
                 with torch.no_grad():
                     # Detach and denormalize frames and reconstructions
                     frames_denorm = (frames.cpu() + 1) / 2  # Shape: (batch, channels, time, height, width)
-                    recon_denorm = (recon.cpu() + 1) / 2    # Shape: (batch, channels, time, height, width)
+                    recon_denorm = (recon_g.cpu() + 1) / 2    # Shape: (batch, channels, time, height, width)
 
                     # Select the first sequence in the batch
                     frames_denorm = frames_denorm[0]  # Shape: (channels, time, height, width)
