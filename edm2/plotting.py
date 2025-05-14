@@ -162,7 +162,8 @@ def plot_training_dashboard(
         actions = None if actions is None else torch.randint(0,3,(latents.shape[0],1), device=latents.device)
         x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, conditioning = actions, sigma_max = 80, sigma_min=0.4, num_steps=16, rho=2, guidance=1, S_churn=0.)
         context = torch.cat((context,x),dim=1)
-
+    
+    # context = einops.rearrange(context, 'b t (c hs ws) h w -> b t c (h hs) (w ws) ', hs=2, ws=2)
     frames = autoencoder.latents_to_frames(context)
 
     x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=8)

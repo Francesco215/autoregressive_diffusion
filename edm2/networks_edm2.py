@@ -253,7 +253,7 @@ class Precond(BetterModule):
         # Run the model.
         x_in = (c_in * x).to(dtype)
         F_x, cache = self.unet(x_in, c_noise, conditioning, cache, update_cache)
-        # F_x = c_skip * x + c_out * F_x.to(torch.float32)
+        F_x = c_skip * x + c_out * F_x.to(torch.float32)
         return F_x, cache
     
 
