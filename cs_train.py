@@ -22,7 +22,6 @@ from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.phema import PowerFunctionEMA
 import torch._dynamo.config
 
-from diffusers import AutoencoderKLLTXVideo
 torch._dynamo.config.cache_size_limit = 100
         
 
@@ -162,12 +161,12 @@ def train(device, local_rank=0):
         
         
 if __name__=="__main__":
-    local_rank = int(os.environ["LOCAL_RANK"])
-    torch.cuda.set_device(local_rank)
-    dist.init_process_group(backend="nccl", init_method="env://")
-    device = torch.device("cuda", local_rank)
+    if 'LOCAL_RANK' in os.environ:
+        local_rank = int(os.environ["LOCAL_RANK"])
+        torch.cuda.set_device(local_rank)
+        dist.init_process_group(backend="nccl", init_method="env://")
+        device = torch.device("cuda", local_rank)
+    else:
+        device, local_rank = "cuda", 0
 
-    # device, local_rank = "cuda", 0
-
-    clean_stale_shared_memory()
     train(device, local_rank)
