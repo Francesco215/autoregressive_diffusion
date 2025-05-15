@@ -14,28 +14,27 @@ class EDM2Loss:
         self.context_noise_reduction = context_noise_reduction
         assert context_noise_reduction >= 0 and context_noise_reduction <= 1, f"context_noise_reduction must be in [0,1], what are you doing? {context_noise_reduction}"
 
-    def __call__(self, net, images, conditioning=None, sigma=None):
+    def __call__(self, net, images, conditioning=None, sigma=None, just_2d=False):
         batch_size, n_frames, channels, height, width = images.shape    
         assert net.training, "The model should be in training mode"
-        cat_images = torch.cat((images,images),dim=1).clone()
-        if conditioning is not None:
+        cat_images = images if just_2d else torch.cat((images,images),dim=1).clone()
+        if conditioning is not None and not just_2d:
             conditioning = torch.cat((conditioning,conditioning),dim=1).clone()
 
         if sigma is None:
-            sigma_targets = (torch.randn(batch_size,n_frames,device=images.device) * self.P_std + self.P_mean).exp()
-            sigma_context = torch.rand(batch_size,1,device=images.device).expand(-1,n_frames).clone()*self.context_noise_reduction # reducing significantly the noise of the context tokens
-            sigma = torch.cat((sigma_context,sigma_targets),dim=1)
+            sigma = (torch.randn(batch_size,n_frames,device=images.device) * self.P_std + self.P_mean).exp()
+            if not just_2d:
+                sigma_context = torch.rand(batch_size,1,device=images.device).expand(-1,n_frames).clone()*self.context_noise_reduction # reducing significantly the noise of the context tokens
+                sigma = torch.cat((sigma_context,sigma),dim=1)
         
-        assert sigma.shape == (batch_size, n_frames*2), f"sigma shape is {sigma.shape} but should be {(batch_size, n_frames*2)}"
-
         noise = einops.einsum(sigma, torch.randn_like(cat_images), 'b t, b t ... -> b t ...') 
-        out, _ = net(cat_images + noise, sigma, conditioning)
-        denoised = out[:,n_frames:]
+        out, _ = net(cat_images + noise, sigma, conditioning, just_2d)
+        denoised = out[:,-n_frames:]
         errors = (denoised - images) ** 2
         losses = errors.mean(dim=(-1,-2,-3))
         # losses = top_losses(errors, fraction=3e-3)
 
-        sigma = sigma[:,n_frames:]
+        sigma = sigma[:,-n_frames:]
         weight = (sigma ** 2 + self.sigma_data ** 2) / (sigma * self.sigma_data) ** 2 # the 0.5 factor is because the Karras paper is wrong
         losses = losses * weight
 

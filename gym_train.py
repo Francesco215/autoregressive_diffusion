@@ -31,8 +31,9 @@ if __name__=="__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     autoencoder = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_lunar_lander.pt").to(device).requires_grad_(False)
+    autoencoder.std = 1.45
 
-    resume_training = True
+    resume_training = False
     unet = UNet(img_resolution=256//autoencoder.spatial_compression, # Match your latent resolution
                 img_channels=autoencoder.latent_channels, # Match your latent channels
                 label_dim = 4, #this should be equal to the action space of the gym environment
@@ -92,7 +93,7 @@ if __name__=="__main__":
             latents = autoencoder.frames_to_latents(frames)
 
         # Calculate loss    
-        loss, un_weighted_loss = loss_fn(precond, latents, actions)
+        loss, un_weighted_loss = loss_fn(precond, latents, actions, just_2d=i%4)
         losses.append(un_weighted_loss)
         # Backpropagation and optimization
 

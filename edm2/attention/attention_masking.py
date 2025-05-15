@@ -1,3 +1,4 @@
+from functools import lru_cache
 import einops
 import warnings
 import torch
@@ -23,6 +24,7 @@ class AutoregressiveDiffusionMask:
         return mask_towards_clean ^ self_mask_noisy ^ domain_attention_towards_clean
 
 
+@lru_cache(maxsize=16)
 def make_train_mask(batch_size, num_heads, n_frames, image_size):
     # image_size is the number of pixels (height x width)
     autoregressive_diffusion_mask = AutoregressiveDiffusionMask(n_frames, image_size)
@@ -58,6 +60,7 @@ class DiagonalDiffusionMask:
         q_idx, kv_idx = q_idx // self.image_size, kv_idx // self.image_size
         return q_idx >= kv_idx
 
+@lru_cache(max_size=16)
 def make_infer_mask(batch_size, num_heads, n_frames, image_size):
     # image size is the number of pixels (height x width)
 

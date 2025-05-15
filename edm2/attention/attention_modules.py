@@ -44,13 +44,6 @@ class VideoAttention(nn.Module):
             y = self.attn_proj(y)
             return mp_sum(x, y, t=self.attn_balance), cache
             
-        if self.training and (self.train_mask is None or self.last_x_shape != x.shape):
-            # This can trigger a recompilation of the flex_attention function
-            n_frames, image_size= x.shape[0]//(batch_size*2), h*w
-            self.train_mask = make_train_mask(batch_size, self.num_heads, n_frames, image_size)
-            self.last_x_shape = x.shape
-
-
         # b:batch, t:time, m: multi-head, s: split, c: channels, h: height, w: width
         y = einops.rearrange(y, '(b t) (s m c) h w -> s b m t (h w) c', b=batch_size, s=3, m=self.num_heads)
         q, k, v = y.unbind(0) # pixel norm & split 
@@ -68,7 +61,10 @@ class VideoAttention(nn.Module):
         v = einops.rearrange(v, ' b m t hw c -> b m (t hw) c') # q and k are already rearranged inside of rope
 
         if self.training:
-            y = compiled_flex_attention(q, k, v, block_mask=self.train_mask)
+            n_frames, image_size= x.shape[0]//(batch_size*2), h*w
+            train_mask = make_train_mask(batch_size, self.num_heads, n_frames, image_size)
+            y = compiled_flex_attention(q, k, v, block_mask=train_mask)
+
         else:
             if q.shape[-2] == h*w: # if only one frame is being generated 
                 y = F.scaled_dot_product_attention(q, k, v)
@@ -106,7 +102,7 @@ class FrameAttention(nn.Module):
         self.attn_qkv = MPConv(channels, channels * 3, kernel=[1,1]) 
         self.attn_proj = MPConv(channels, channels, kernel=[1,1]) 
 
-    def forward(self, x, batch_size, cache=None, update_cache=False):
+    def forward(self, x, batch_size, cache=None, update_cache=False, just_2d=True):
         if self.num_heads==0:
             return x, None
         # x.shape = bt c h w
