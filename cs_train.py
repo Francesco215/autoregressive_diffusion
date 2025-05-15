@@ -1,6 +1,7 @@
 #%%
 from contextlib import nullcontext
 import os
+import einops
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -21,30 +22,20 @@ from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.phema import PowerFunctionEMA
 import torch._dynamo.config
 
+from diffusers import AutoencoderKLLTXVideo
 torch._dynamo.config.cache_size_limit = 100
         
-if __name__=="__main__":
-    # local_rank = int(os.environ["LOCAL_RANK"])
-    # torch.cuda.set_device(local_rank)
-    # dist.init_process_group(backend="nccl", init_method="env://")
-    # device = torch.device("cuda", local_rank)
 
-    dist.init_process_group(backend="nccl")
-    local_rank=dist.get_rank()
-    torch.cuda.set_device(local_rank)
-    device = torch.device("cuda", local_rank)
-
-    clean_stale_shared_memory()
-    
-
+        
+def train(device, local_rank=0):
     unet = UNet(img_resolution=64, # Match your latent resolution
                 img_channels=8, # Match your latent channels
                 label_dim = 4,
-                model_channels=128,
-                channel_mult=[1,2,4,8],
+                model_channels=256,
+                channel_mult=[1,2,4,4],
                 channel_mult_noise=None,
                 channel_mult_emb=None,
-                num_blocks=4,
+                num_blocks=2,
                 video_attn_resolutions=[8],
                 frame_attn_resolutions=[16],
                 )
@@ -52,19 +43,23 @@ if __name__=="__main__":
     unet_params = sum(p.numel() for p in unet.parameters())
     if resume_training:
         unet=UNet.from_pretrained(f'saved_models/unet_{unet_params//1e6}M.pt')
-    unet = DDP(unet.to(device), device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
 
+    unet=unet.to(device)
+    if dist.is_available() and dist.is_initialized():
+        unet = DDP(unet, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
+
+    vae = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_cs.pt").to(device)
+    vae.std = 1.35
     if local_rank==0:
-        autoencoder = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_cs.pt").to(device)
         print(f"Number of UNet parameters: {unet_params//1e6}M")
 
     micro_batch_size = 1
     batch_size = 1
     accumulation_steps = batch_size//micro_batch_size
-    clip_length = 12
+    clip_length = 16
     # training_steps = total_number_of_steps * batch_size
-    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed/', local = f'/data/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False, cache_limit = '200gb')
-    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsVaeCollate(), pin_memory=True, num_workers=6, shuffle=False)
+    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed', local = f'/data/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False, cache_limit = '200gb')
+    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsVaeCollate(), pin_memory=True, num_workers=4, shuffle=False)
     steps_per_epoch = len(dataset)//micro_batch_size
     n_epochs = 10
     total_number_of_steps = n_epochs * steps_per_epoch
@@ -74,7 +69,7 @@ if __name__=="__main__":
     # sigma_data = 0.434
     sigma_data = 1.
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
-    loss_fn = EDM2Loss(P_mean=0.3,P_std=2., sigma_data=sigma_data, context_noise_reduction=0.5)
+    loss_fn = EDM2Loss(P_mean=0.7,P_std=1., sigma_data=sigma_data, context_noise_reduction=0.5)
 
     ref_lr = 1e-2
     current_lr = ref_lr
@@ -99,17 +94,25 @@ if __name__=="__main__":
         pbar = tqdm(enumerate(dataloader, start=steps_taken),total=steps_per_epoch) if local_rank==0 else enumerate(dataloader)
         for i, batch in pbar:
             with torch.no_grad():
-                latents, _, _ = batch
-                latents = latents.to(device)/1.6
+                means, logvars, _ = batch
+                latents = means.to(device) + torch.randn_like(means, device=device)*torch.exp(logvars.to(device)*.5)
+                latents = latents/vae.std
+                # latents = einops.rearrange(latents, 'b t c (h hs) (w ws) -> b t (c hs ws) h w', hs=2, ws=2)
                 actions = None
+
                 
-                    
+
             # Calculate loss    
             loss, un_weighted_loss = loss_fn(precond, latents, actions)
-            losses.append(un_weighted_loss)
             # Backpropagation and optimization
             with (nullcontext() if i % accumulation_steps == 0 else unet.no_sync()):
                 loss.backward()
+
+            if dist.is_initialized():
+                un_weighted_loss = torch.tensor(un_weighted_loss, device=device)
+                dist.all_reduce(un_weighted_loss, op=dist.ReduceOp.SUM)
+                un_weighted_loss = un_weighted_loss.item()/ dist.get_world_size()
+            losses.append(un_weighted_loss)
             if local_rank==0:
                 pbar.set_postfix_str(f"Loss: {np.mean(losses[-accumulation_steps:]):.4f}, lr: {current_lr:.6f}, epoch: {epoch+1}")
 
@@ -130,7 +133,7 @@ if __name__=="__main__":
                     plot_training_dashboard(
                         save_path=f'images_training/dashboard_step_{i}.png', # Dynamic filename
                         precond=precond,
-                        autoencoder=autoencoder,
+                        autoencoder=vae,
                         losses_history=losses, # Pass the list of scalar losses
                         current_step=i,
                         micro_batch_size=micro_batch_size,
@@ -142,7 +145,11 @@ if __name__=="__main__":
         # if i % (total_number_of_steps//100) == 0 and i!=0:  # save every 10% of epochs
         if local_rank==0:
             os.makedirs("saved_models", exist_ok=True)
-            unet.save_to_state_dict(f"saved_models/unet_{unet_params//1e6}M.pt")
+            if isinstance(unet, DDP):
+                unet.module.save_to_state_dict(f"saved_models/unet_{unet_params//1e6}M.pt")
+            else:
+                unet.save_to_state_dict(f"saved_models/unet_{unet_params//1e6}M.pt")
+
             torch.save({
                 'steps_taken': i,
                 'optimizer_state_dict': optimizer.state_dict(),
@@ -152,3 +159,15 @@ if __name__=="__main__":
             }, f"saved_models/optimizers_{unet_params//1e6}M.pt")
 
 # %%
+        
+        
+if __name__=="__main__":
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
+    dist.init_process_group(backend="nccl", init_method="env://")
+    device = torch.device("cuda", local_rank)
+
+    # device, local_rank = "cuda", 0
+
+    clean_stale_shared_memory()
+    train(device, local_rank)

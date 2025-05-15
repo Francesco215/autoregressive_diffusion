@@ -65,7 +65,7 @@ class CsVaeDataset(StreamingDataset):
             actions = einops.rearrange(actions, 'c t -> t c')
 
 
-            while(actions.shape[0]>=self.clip_size):
+            while(means.shape[0]>=self.clip_size):
                 yield means[:self.clip_size], logvars[:self.clip_size], actions[:self.clip_size]
                 means, logvars, actions = means[self.clip_size:], logvars[self.clip_size:], actions[self.clip_size:]
     

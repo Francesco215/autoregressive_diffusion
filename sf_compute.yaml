@@ -33,6 +33,12 @@ spec:
     volumeMounts:
     - name: data-volume
       mountPath: /data
+    - name: data-volume
+      mountPath: /dev/shm
   volumes:
   - name: data-volume
     emptyDir: {}
+  - name: dshm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 64Gi

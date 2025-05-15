@@ -39,8 +39,8 @@ def encode_frames(autoencoder, frames, actions):
     frames = einops.rearrange(frames, 't h w c -> c t h w')
     frames = torch.tensor(frames).to(torch.float)
     frames = frames / 127.5 - 1  # Normalize from (0,255) to (-1,1)
-
     mean, logvar = autoencoder.encode_long_sequence(frames.unsqueeze(0))
+    mean, logvar = mean.to(torch.float16), logvar.to(torch.float16)
     out_dict = {'mean':mean[0].cpu().numpy(), 'logvar':logvar[0].cpu().numpy(), 'action':actions}
     return out_dict
 
@@ -65,7 +65,7 @@ def compress_huggingface_filename(save_folder):
         frames, actions = read_frames_and_actions(f"{save_folder}/{file}")
         os.remove(f"{save_folder}/{file}")
 
-        yield encode_frames(autoencoder, frames, actions)
+        yield encode_frames(vae, frames, actions)
 
 
 def write_mds(save_folder, mds_dirname):
@@ -89,11 +89,11 @@ dataset_filenames = api.list_repo_files(repo_id=hf_repo_id, repo_type="dataset")
 #have to filter out some of the data because its's saved slightly differently...
 hf_filenames = [f for f in dataset_filenames if re.match(r"^hdf5_dm_july2021_.*_to_.*\.tar$", f)]
 
-autoencoder = VAE.from_pretrained('saved_models/vae_cs_4264.pt').to("cuda")
+vae = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_cs.pt").to("cuda")
 
 #%%
 # Download the first tar file
-download_tar_file(hf_repo_id, hf_filenames[0])
+# download_tar_file(hf_repo_id, hf_filenames[0])
 
 for i in range(len(hf_filenames)):
     save_folder = f"/tmp/{hf_filenames[i].split('.')[0]}"

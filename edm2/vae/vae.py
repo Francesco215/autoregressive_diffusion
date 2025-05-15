@@ -184,7 +184,7 @@ class EncoderDecoder(nn.Module):
 
 
 class VAE(BetterModule):
-    def __init__(self, channels, n_res_blocks, time_compressions=[1, 2, 2], spatial_compressions=[1, 2, 2], logvar_mode='learned'):
+    def __init__(self, channels, n_res_blocks, time_compressions=[1, 2, 2], spatial_compressions=[1, 2, 2], logvar_mode='learned', std=None):
         super().__init__()
         
         self.latent_channels = channels[-1]
@@ -195,7 +195,8 @@ class VAE(BetterModule):
         self.spatial_compression = np.prod(spatial_compressions)
 
         # self.std=1.68 # this is when i pass z
-        self.std=1.45 #TODO put this as an argument, when it's untrained it should be none, but it must be specified when loading_from_pretrained
+        self.std=std #TODO put this as an argument, when it's untrained it should be none, but it must be specified when loading_from_pretrained
+
 
         # is it possible to put this inside of the super() class and avoid having it here?
         frame = inspect.currentframe()
