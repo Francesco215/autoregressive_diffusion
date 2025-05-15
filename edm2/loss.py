@@ -28,7 +28,7 @@ class EDM2Loss:
                 sigma = torch.cat((sigma_context,sigma),dim=1)
         
         noise = einops.einsum(sigma, torch.randn_like(cat_images), 'b t, b t ... -> b t ...') 
-        out, _ = net(cat_images + noise, sigma, conditioning, just_2d)
+        out, _ = net(cat_images + noise, sigma, conditioning, just_2d=just_2d)
         denoised = out[:,-n_frames:]
         errors = (denoised - images) ** 2
         losses = errors.mean(dim=(-1,-2,-3))

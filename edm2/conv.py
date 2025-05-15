@@ -97,15 +97,20 @@ class Gating(nn.Module):
         super().__init__()
         self.offset = nn.Parameter(torch.tensor([0.,0.]))
         self.mult = nn.Parameter(torch.tensor([1.5,-0.5]))
+        self.max_gating = nn.Parameter(torch.tensor(0.))
         self.activation = nn.Sigmoid()
 
-    def forward(self, c_noise:Tensor, n_context_frames:int=0):
+    def forward(self, c_noise:Tensor, n_context_frames:int=0, just_2d=False):
         batch_size, time_dimention = c_noise.shape
         if self.training: time_dimention = time_dimention//2
-        positions = torch.arange(c_noise.numel(), device=c_noise.device) % time_dimention
-        positions = einops.rearrange(positions, '(b t) -> b t', b=batch_size) + n_context_frames
 
-        positions = positions.to(c_noise.dtype).log1p()
+        if just_2d:
+            positions = torch.zeros_like(c_noise)
+        else:
+            positions = torch.arange(c_noise.numel(), device=c_noise.device) % time_dimention
+            positions = einops.rearrange(positions, '(b t) -> b t', b=batch_size) + n_context_frames
+            positions = positions.to(c_noise.dtype).log1p()
+
         state_vector = torch.stack([c_noise, positions], dim=-1)
         state_vector = (state_vector * self.mult + self.offset).sum(dim=-1)
-        return self.activation(state_vector), n_context_frames+time_dimention 
+        return self.activation(state_vector)*self.activation(self.max_gating), n_context_frames+time_dimention 

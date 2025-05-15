@@ -27,6 +27,7 @@ def plot_training_dashboard(
     unet_params,
     latents, 
     actions,
+    guidance=1,
     ):
     """
     Generates and saves a consolidated 2x2 plot dashboard for training monitoring.
@@ -126,7 +127,7 @@ def plot_training_dashboard(
     sigma_min_val = 0.4
     rho_val        = 2.0
     num_steps_val  = 32
-    _, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(net=precond, cache=cache, target=target, sigma_max=sigma_max_val, sigma_min=sigma_min_val, num_steps=num_steps_val, conditioning=conditioning, rho = rho_val, guidance = 1, S_churn=20, S_noise=1,
+    _, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(net=precond, cache=cache, target=target, sigma_max=sigma_max_val, sigma_min=sigma_min_val, num_steps=num_steps_val, conditioning=conditioning, rho = rho_val, guidance = guidance, S_churn=20, S_noise=1,
     )
 
     # Plot results
@@ -160,7 +161,7 @@ def plot_training_dashboard(
     ax4 = axes[1, 1]
     for _ in tqdm(range(6)):
         actions = None if actions is None else torch.randint(0,3,(latents.shape[0],1), device=latents.device)
-        x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, conditioning = actions, sigma_max = 80, sigma_min=0.4, num_steps=16, rho=2, guidance=1, S_churn=0.)
+        x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, conditioning = actions, sigma_max = 80, sigma_min=0.4, num_steps=16, rho=2, guidance=guidance, S_churn=0.)
         context = torch.cat((context,x),dim=1)
     
     # context = einops.rearrange(context, 'b t (c hs ws) h w -> b t c (h hs) (w ws) ', hs=2, ws=2)

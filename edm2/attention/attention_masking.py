@@ -60,7 +60,7 @@ class DiagonalDiffusionMask:
         q_idx, kv_idx = q_idx // self.image_size, kv_idx // self.image_size
         return q_idx >= kv_idx
 
-@lru_cache(max_size=16)
+@lru_cache(maxsize=16)
 def make_infer_mask(batch_size, num_heads, n_frames, image_size):
     # image size is the number of pixels (height x width)
 

@@ -174,7 +174,7 @@ class UNet(BetterModule):
         n_context_frames = cache.get('n_context_frames', 0)
 
         res = x.clone()
-        out_res, updated_n_context_frames = self.out_res(c_noise, n_context_frames)
+        out_res, updated_n_context_frames = self.out_res(c_noise, n_context_frames, just_2d)
         if update_cache: cache['n_context_frames']=updated_n_context_frames
 
         # Reshaping
@@ -224,7 +224,7 @@ class UNet(BetterModule):
 
 class Precond(BetterModule):
     def __init__(self,
-        unet,                   # UNet model.
+        unet: UNet,             # UNet model.
         use_fp16        = True, # Run the model at FP16 precision?
         sigma_data      = 0.5,  # Expected standard deviation of the training data.
     ):
@@ -251,7 +251,7 @@ class Precond(BetterModule):
  
         # Run the model.
         x_in = (c_in * x).to(dtype)
-        F_x, cache = self.unet(x_in, c_noise, conditioning, cache, update_cache, just_2d)
+        F_x, cache = self.unet.forward(x_in, c_noise, conditioning, cache, update_cache, just_2d)
         F_x = c_skip * x + c_out * F_x.to(torch.float32)
         return F_x, cache
     

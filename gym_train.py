@@ -93,7 +93,7 @@ if __name__=="__main__":
             latents = autoencoder.frames_to_latents(frames)
 
         # Calculate loss    
-        loss, un_weighted_loss = loss_fn(precond, latents, actions, just_2d=i%4)
+        loss, un_weighted_loss = loss_fn(precond, latents, actions, just_2d = True)
         losses.append(un_weighted_loss)
         # Backpropagation and optimization
 
@@ -126,6 +126,7 @@ if __name__=="__main__":
                 unet_params=n_params,
                 latents=latents, # Pass the latents from the current batch
                 actions=actions,
+                guidance = 2,
             )
 
         if i % (total_number_of_steps//40) == 0 and i!=0:  # save every 10% of epochs
