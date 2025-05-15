@@ -52,7 +52,9 @@ class MPCausal3DGatedConv(torch.nn.Module):
         self.weight = NormalizedWeight(in_channels, out_channels, kernel)
         self.gating = Gating()
 
-    def forward(self, x, emb, batch_size, c_noise, cache=None, update_cache=False):
+    def forward(self, x, emb, batch_size, c_noise, cache=None, update_cache=False, just_2d=False):
+        if just_2d: return self.last_frame_conv.forward(x), cache
+
         if cache is None: cache = {}
         w = self.weight().to(x.dtype)
 
@@ -106,4 +108,4 @@ class Gating(nn.Module):
         positions = positions.to(c_noise.dtype).log1p()
         state_vector = torch.stack([c_noise, positions], dim=-1)
         state_vector = (state_vector * self.mult + self.offset).sum(dim=-1)
-        return self.activation(state_vector), n_context_frames+time_dimention # TODO:check this thing
+        return self.activation(state_vector), n_context_frames+time_dimention 
