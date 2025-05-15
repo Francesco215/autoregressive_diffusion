@@ -88,7 +88,7 @@ class MPCausal3DGatedConv(torch.nn.Module):
         else:
             context = einops.rearrange(context, 'b c t h w -> (b t) c h w')
 
-        return mp_sum(context, last_frame_conv, gating.flatten()), cache
+        return mp_sum(last_frame_conv, context, gating.flatten()), cache
 
 
 
@@ -97,7 +97,8 @@ class Gating(nn.Module):
         super().__init__()
         self.offset = nn.Parameter(torch.tensor([0.,0.]))
         self.mult = nn.Parameter(torch.tensor([1.5,-0.5]))
-        self.max_gating = nn.Parameter(torch.tensor(0.))
+        self.max_gating = nn.Parameter(torch.tensor(-2.))
+        self.min_gating = nn.Parameter(torch.tensor(-2.))
         self.activation = nn.Sigmoid()
 
     def forward(self, c_noise:Tensor, n_context_frames:int=0, just_2d=False):
@@ -113,4 +114,5 @@ class Gating(nn.Module):
 
         state_vector = torch.stack([c_noise, positions], dim=-1)
         state_vector = (state_vector * self.mult + self.offset).sum(dim=-1)
-        return self.activation(state_vector)*self.activation(self.max_gating), n_context_frames+time_dimention 
+        min, max = self.activation(self.min_gating), self.activation(self.max_gating)
+        return min + (1-min)*max*self.activation(state_vector), n_context_frames+time_dimention 

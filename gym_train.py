@@ -53,7 +53,7 @@ if __name__=="__main__":
     print(f"start training with {n_params//1e6}M parameters")
 
     micro_batch_size = 8
-    batch_size = micro_batch_size
+    batch_size = 16
     accumulation_steps = batch_size//micro_batch_size
     state_size = 32 
     total_number_of_steps = 80_000
@@ -66,7 +66,7 @@ if __name__=="__main__":
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
     loss_fn = EDM2Loss(P_mean=1.2,P_std=1., sigma_data=sigma_data, context_noise_reduction=0.5)
 
-    ref_lr = 1e-2
+    ref_lr = 3e-3
     current_lr = ref_lr
     optimizer = AdamW(precond.parameters(), lr=ref_lr, eps = 1e-8)
     optimizer.zero_grad()
@@ -93,7 +93,7 @@ if __name__=="__main__":
             latents = autoencoder.frames_to_latents(frames)
 
         # Calculate loss    
-        loss, un_weighted_loss = loss_fn(precond, latents, actions, just_2d = True)
+        loss, un_weighted_loss = loss_fn(precond, latents, actions, just_2d = i%2==0)
         losses.append(un_weighted_loss)
         # Backpropagation and optimization
 
