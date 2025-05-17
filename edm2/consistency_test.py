@@ -3,7 +3,7 @@ import torch
 import unittest
 import logging
 import os
-from edm2.conv import MPCausal3DConv, MPCausal3DGatedConv
+from edm2.conv import MPCausal3DGatedConv
 from edm2.attention import VideoAttention
 from edm2.networks_edm2 import UNet
 import numpy as np
@@ -15,7 +15,7 @@ import random
 torch._logging.set_logs(dynamo=logging.INFO)
 
 # Constants
-IMG_RESOLUTION = 64
+IMG_RESOLUTION = 32
 BATCH_SIZE = 4
 IMG_CHANNELS = 16
 N_FRAMES = 8
@@ -50,6 +50,18 @@ class TestAttention(unittest.TestCase):
 
         self.assertLessEqual(std_diff_1, error_bound, f"Test failed: std deviation {std_diff_1} exceeded {error_bound}")
         self.assertLessEqual(std_diff_2, error_bound, f"Test failed: std deviation {std_diff_2} exceeded {error_bound}")
+
+
+    def test_attention_consistency_between_frame_and_video_attention(self):
+        self.attention.train()
+        x = torch.randn(BATCH_SIZE * 2 * N_FRAMES, 4*IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
+        y_video, _ = self.attention(x.clone(), BATCH_SIZE)
+        y_frame, _ = self.attention(x, BATCH_SIZE, just_2d=True)
+        
+        y_video, y_frame = einops.rearrange(y_video,'(b l) ... -> b l ...', b=BATCH_SIZE), einops.rearrange(y_frame,'(b l) ... -> b l ...', b=BATCH_SIZE)
+        index = N_FRAMES
+        std_diff = (y_video[:,index]-y_frame[:,index]).std().item()
+        self.assertLessEqual(std_diff, error_bound, f"Test failed: std deviation {std_diff} exceeded {error_bound}") # fails here why?
 
     def test_attention_consistrency_between_cached_and_non_cached(self):
         self.attention.eval()
@@ -153,12 +165,12 @@ class TestUNet(unittest.TestCase):
         self.assertTrue((y[:, N_FRAMES + CUT_FRAME:].std()>0.3).item())
 
 
-class TestMPCausal3DConv(unittest.TestCase):
+class TestMPCausal3DGatedConv(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         torch.manual_seed(SEED)
         torch.cuda.manual_seed_all(SEED)
-        cls.conv3d = MPCausal3DConv(IMG_CHANNELS, IMG_CHANNELS, kernel=(3,3,3)).to("cuda").to(dtype)
+        cls.conv3d = MPCausal3DGatedConv(IMG_CHANNELS, IMG_CHANNELS, kernel=(3,3,3)).to("cuda").to(dtype)
     
     def test_conv_consistency_between_train_and_eval(self):
         self.conv3d.train()
