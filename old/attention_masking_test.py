@@ -33,13 +33,14 @@ plt.imshow(block_mask_old.to_dense()[0,0].cpu())
 plt.show()
 plt.imshow(block_mask.to_dense()[0,0].cpu())
 plt.show()
+#%%
 
 #%% 
 
 # step2: check that the two block masks lead to the same results
-q = torch.randn(batch_size, num_heads, sequence_length, head_dim, device=device, dtype=torch.float16)*10
-k = torch.randn(batch_size, num_heads, sequence_length, head_dim, device=device, dtype=torch.float16)*10
-v = torch.randn(batch_size, num_heads, sequence_length, head_dim, device=device, dtype=torch.float16)*10
+q = torch.randn(batch_size, num_heads, sequence_length, head_dim, device=device, dtype=torch.float16)*1
+k = torch.randn(batch_size, num_heads, sequence_length, head_dim, device=device, dtype=torch.float16)*1
+v = torch.randn(batch_size, num_heads, sequence_length, head_dim, device=device, dtype=torch.float16)*1
 out1=flex_attention(q,k,v, block_mask=block_mask) 
 out2=flex_attention(q,k,v, block_mask=block_mask_old)
 out = out1-out2 # it's equal to zero. it works.
@@ -83,8 +84,8 @@ import gc
 
 batch_size = 2
 num_heads = 8
-n_frames = 5
-image_size = 16  # this is the widthxheight
+n_frames = 8
+image_size = 64  # this is the widthxheight
 head_dim = 16
 sequence_length = n_frames * image_size # Removed multiplication by image_size
 

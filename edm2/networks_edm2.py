@@ -170,6 +170,7 @@ class UNet(BetterModule):
         self.kwargs = {arg: values[arg] for arg in args if arg != "self"}
 
     def forward(self, x, c_noise, conditioning = None, cache:dict=None, update_cache=False, just_2d=False):
+        if cache == None: cache={}
         batch_size, time_dimention = x.shape[:2]
         n_context_frames = cache.get('n_context_frames', 0)
 
