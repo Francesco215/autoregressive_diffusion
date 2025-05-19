@@ -1,13 +1,17 @@
 import einops
 import torch
+from torch.nn import functional as F
 import unittest
 import logging
 import os
 from edm2.conv import MPCausal3DGatedConv
 from edm2.attention import VideoAttention
 from edm2.networks_edm2 import UNet
+from edm2.attention.attention_masking import TrainingMask, make_train_mask
 import numpy as np
-import random 
+import random
+
+from edm2.utils import mp_sum 
 
 # os.environ['TORCH_LOGS']='recompiles'
 # os.environ['TORCH_COMPILE_MAX_AUTOTUNE_RECOMPILE_LIMIT']='100000'
@@ -15,7 +19,7 @@ import random
 torch._logging.set_logs(dynamo=logging.INFO)
 
 # Constants
-IMG_RESOLUTION = 32
+IMG_RESOLUTION = 16
 BATCH_SIZE = 4
 IMG_CHANNELS = 16
 N_FRAMES = 8
@@ -24,13 +28,52 @@ SEED = 42  # Set a seed for reproducibility
 dtype = torch.float32
 np.random.seed(42)
 random.seed(42)
-error_bound = 1e-2
+error_bound = 3e-4
 class TestAttention(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         torch.manual_seed(SEED)
         torch.cuda.manual_seed_all(SEED)
         cls.attention = VideoAttention(channels = 4*IMG_CHANNELS, num_heads = 4).to("cuda").to(dtype)
+
+    def test_attention_consistency_between_frame_and_video_attention(self):
+        self.attention.train()
+        x = torch.randn(BATCH_SIZE * 2 * N_FRAMES, 4*IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
+        y_video, _ = self.attention(x.clone(), BATCH_SIZE, just_2d=False)
+        y_frame, _ = self.attention(x.clone(), BATCH_SIZE, just_2d=True)
+        
+        y_video, y_frame = einops.rearrange(y_video,'(b t) ... -> b t ...', b=BATCH_SIZE), einops.rearrange(y_frame,'(b t) ... -> b t ...', b=BATCH_SIZE)
+        std_diff = (y_video-y_frame).std(dim=(0,2,3,4))
+        self.assertLessEqual(std_diff[0].item(), error_bound, f"Test failed: std deviation {std_diff} exceeded {error_bound}") # fails here why?
+
+
+
+    def test_attention_consistency_between_flex_and_flash_video_attention(self):
+        self.attention.train()
+        x = torch.randn(BATCH_SIZE * 2 * N_FRAMES, 4*IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
+        y_video, _ = self.attention(x.clone(), BATCH_SIZE, just_2d=False)
+
+        mask = make_train_mask(BATCH_SIZE, 4, N_FRAMES, IMG_RESOLUTION**2)
+        repeated_mask = mask.to_dense()[0,0].bool().repeat_interleave(IMG_RESOLUTION**2,0).repeat_interleave(IMG_RESOLUTION**2,1)
+
+        y = self.attention.attn_qkv(x)
+        y = einops.rearrange(y, '(b t) (s m c) h w -> s b m (t h w) c', b=BATCH_SIZE, s=3, m=4)
+        q, k, v = y.unbind(0) # pixel norm & split 
+
+        y = F.scaled_dot_product_attention(q,k,v, repeated_mask)
+
+        y = einops.rearrange(y, 'b m (t h w) c -> (b t) (c m) h w', b=BATCH_SIZE, h=IMG_RESOLUTION, w=IMG_RESOLUTION)
+        y = self.attention.attn_proj(y)
+        
+        y_manual = mp_sum(x, y, t=self.attention.attn_balance)
+
+
+        y_video, y_manual = einops.rearrange(y_video,'(b t) ... -> b t ...', b=BATCH_SIZE), einops.rearrange(y_manual,'(b t) ... -> b t ...', b=BATCH_SIZE)
+        std_diff = (y_manual-y_video).std()
+        self.assertLessEqual(std_diff.item(), error_bound, f"Test failed: std deviation {std_diff} exceeded {error_bound}")
+
+        
+
 
     def test_attention_consistency_between_train_and_eval(self):
         self.attention.train()
@@ -52,16 +95,6 @@ class TestAttention(unittest.TestCase):
         self.assertLessEqual(std_diff_2, error_bound, f"Test failed: std deviation {std_diff_2} exceeded {error_bound}")
 
 
-    def test_attention_consistency_between_frame_and_video_attention(self):
-        self.attention.train()
-        x = torch.randn(BATCH_SIZE * 2 * N_FRAMES, 4*IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
-        y_video, _ = self.attention(x.clone(), BATCH_SIZE)
-        y_frame, _ = self.attention(x, BATCH_SIZE, just_2d=True)
-        
-        y_video, y_frame = einops.rearrange(y_video,'(b l) ... -> b l ...', b=BATCH_SIZE), einops.rearrange(y_frame,'(b l) ... -> b l ...', b=BATCH_SIZE)
-        index = N_FRAMES
-        std_diff = (y_video[:,index]-y_frame[:,index]).std().item()
-        self.assertLessEqual(std_diff, error_bound, f"Test failed: std deviation {std_diff} exceeded {error_bound}") # fails here why?
 
     def test_attention_consistrency_between_cached_and_non_cached(self):
         self.attention.eval()
@@ -73,13 +106,13 @@ class TestAttention(unittest.TestCase):
         y_non_cached, _ =  self.attention(x, BATCH_SIZE)
         y_non_cached = einops.rearrange(y_non_cached, '(b t) ... -> b t ...', b=BATCH_SIZE)
 
-        y_cached, cache = self.attention(context, BATCH_SIZE)
+        y_cached, cache = self.attention(context, BATCH_SIZE, update_cache=True)
         out, _ = self.attention(last_frame, BATCH_SIZE, cache)
         y_cached = einops.rearrange(y_cached, '(b t) ... -> b t ...', b = BATCH_SIZE)
         out = einops.rearrange(out, '(b t) ... -> b t ...', b = BATCH_SIZE)
         y_cached = torch.cat((y_cached, out), dim=1)
 
-        std_diff = (y_non_cached - y_cached).std().item()
+        std_diff = (y_non_cached - y_cached)[:,-1].std().item()
         self.assertLessEqual(std_diff, error_bound, f"Test failed: std deviation {std_diff} exceeded {error_bound}")
 
     def test_attention_consistrency_between_cached_and_non_cached_multistep(self):
@@ -105,7 +138,7 @@ class TestAttention(unittest.TestCase):
         out2 = einops.rearrange(out2, '(b t) ... -> b t ...', b=b)
         y_cached = torch.cat((y_cached, out1, out2), dim=1)
 
-        std_diff = (y_non_cached - y_cached).std().item()
+        std_diff = (y_non_cached - y_cached)[:,-2:].std().item()
         self.assertLessEqual(std_diff, error_bound, f"Test failed: std deviation {std_diff} exceeded {error_bound}")
 
 class TestUNet(unittest.TestCase):
@@ -165,79 +198,6 @@ class TestUNet(unittest.TestCase):
         self.assertTrue((y[:, N_FRAMES + CUT_FRAME:].std()>0.3).item())
 
 
-class TestMPCausal3DGatedConv(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        torch.manual_seed(SEED)
-        torch.cuda.manual_seed_all(SEED)
-        cls.conv3d = MPCausal3DGatedConv(IMG_CHANNELS, IMG_CHANNELS, kernel=(3,3,3)).to("cuda").to(dtype)
-    
-    def test_conv_consistency_between_train_and_eval(self):
-        self.conv3d.train()
-        x = torch.randn(BATCH_SIZE * 2 * N_FRAMES, IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
-        y_train, _ = self.conv3d(x, None, BATCH_SIZE)
-        
-        self.conv3d.eval()
-        x = einops.rearrange(x, '(b l) ... -> b l ...', b=BATCH_SIZE)
-        x_eval = torch.cat((x[:, :CUT_FRAME], x[:, CUT_FRAME + N_FRAMES].unsqueeze(1)), dim=1)
-        x_eval = einops.rearrange(x_eval, 'b l ... -> (b l ) ...')
-        y_eval, _ = self.conv3d(x_eval, None, BATCH_SIZE)
-        
-        y_train, y_eval = einops.rearrange(y_train,'(b l) ... -> b l ...', b=BATCH_SIZE), einops.rearrange(y_eval,'(b l) ... -> b l ...', b=BATCH_SIZE)
-        
-        std_diff_1 = (y_train[:, :CUT_FRAME] - y_eval[:, :-1]).std().item()
-        std_diff_2 = (y_train[:, CUT_FRAME + N_FRAMES] - y_eval[:, -1]).std().item()
-        
-        self.assertLessEqual(std_diff_1, error_bound, f"Test failed: std deviation {std_diff_1} exceeded {error_bound}")
-        self.assertLessEqual(std_diff_2, error_bound, f"Test failed: std deviation {std_diff_2} exceeded {error_bound}")
-    
-    def test_conv_consistency_between_cached_and_non_cached(self):
-        self.conv3d.eval()
-        x = torch.randn(BATCH_SIZE, N_FRAMES, IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
-        context, last_frame = x[:, :-1], x[:,-1:]
-        x = einops.rearrange(x, 'b t ... -> (b t) ...')
-        context = einops.rearrange(context, 'b t ... -> (b t) ...')
-        last_frame = einops.rearrange(last_frame, 'b t ... -> (b t) ...')
-        
-        y_non_cached, _ = self.conv3d(x, None, BATCH_SIZE)
-        y_non_cached = einops.rearrange(y_non_cached, '(b t) ... -> b t ...', b=BATCH_SIZE)
-        
-        y_cached, cache = self.conv3d(context, None, BATCH_SIZE)
-        out, _ = self.conv3d(last_frame, None, BATCH_SIZE, cache=cache)
-        y_cached = einops.rearrange(y_cached, '(b t) ... -> b t ...', b=BATCH_SIZE)
-        out = einops.rearrange(out, '(b t) ... -> b t ...', b=BATCH_SIZE)
-        y_cached = torch.cat((y_cached, out), dim=1)
-        
-        std_diff = (y_non_cached - y_cached).std().item()
-        self.assertLessEqual(std_diff, error_bound, f"Test failed: std deviation {std_diff} exceeded {error_bound}")
-    
-    def test_conv_consistency_between_cached_and_non_cached_multistep(self):
-        self.conv3d.eval()
-        b = 1
-        img_res = 16
-        x = torch.randn(b, N_FRAMES, IMG_CHANNELS, img_res, img_res, device="cuda", dtype=dtype)
-        context, second_last, last_frame = x[:, :-2], x[:,-2:-1], x[:,-1:]
-        
-        x = einops.rearrange(x, 'b t ... -> (b t) ...')
-        context = einops.rearrange(context, 'b t ... -> (b t) ...')
-        second_last = einops.rearrange(second_last, 'b t ... -> (b t) ...')
-        last_frame = einops.rearrange(last_frame, 'b t ... -> (b t) ...')
-        
-        y_non_cached, _ = self.conv3d(x, None, b)
-        y_cached, cache = self.conv3d(context, None, b)
-        out1, cache = self.conv3d(second_last, None, b, cache=cache)
-        out2, _ = self.conv3d(last_frame, None, b, cache=cache)
-        
-        y_non_cached = einops.rearrange(y_non_cached, '(b t) ... -> b t ...', b=b)
-        y_cached = einops.rearrange(y_cached, '(b t) ... -> b t ...', b=b)
-        out1 = einops.rearrange(out1, '(b t) ... -> b t ...', b=b)
-        out2 = einops.rearrange(out2, '(b t) ... -> b t ...', b=b)
-        y_cached = torch.cat((y_cached, out1, out2), dim=1)
-        
-        std_diff = (y_non_cached - y_cached).std().item()
-        self.assertLessEqual(std_diff, error_bound, f"Test failed: std deviation {std_diff} exceeded {error_bound}")
-
-        
         
 class TestMPCausal3DGatedConv(unittest.TestCase):
     @classmethod

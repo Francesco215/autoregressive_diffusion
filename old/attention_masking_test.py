@@ -1,54 +1,29 @@
 #%%
 import torch
 import time
-import einops
 from torch.nn.attention.flex_attention import flex_attention, create_block_mask, BlockMask, _DEFAULT_SPARSE_BLOCK_SIZE
 from matplotlib import pyplot as plt
-import numpy as np
 import gc
+
+from edm2.attention.attention_masking import TrainingMask, make_train_mask
 
 device= torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 # Your code (with modifications for sequence_length)
 batch_size = 2
 num_heads = 8
 n_frames = 4
-image_size = 600  # this is the widthxheight
+image_size = 128
 head_dim = 16
 sequence_length = 2 * n_frames * image_size # Removed multiplication by image_size
 
 # q = Tensor[batch_size, num_heads, sequence_length, head_dim]
 # però sequence_length = 2 x number_frames x image_size
-def autoregressive_diffusion_mask(b, h, q_idx, kv_idx):
-    q_idx, kv_idx = q_idx // image_size, kv_idx // image_size
-    
-    causal_mask_clean = q_idx >= kv_idx
-    causal_mask_noisy = q_idx - n_frames > kv_idx 
-    domain_attention_towards_clean = kv_idx < n_frames
-    mask_towards_clean = (causal_mask_clean ^ causal_mask_noisy ^ (q_idx < n_frames)) & domain_attention_towards_clean
 
-    self_mask_noisy = (kv_idx >= n_frames) & (q_idx == kv_idx)
-    return mask_towards_clean ^ self_mask_noisy ^ domain_attention_towards_clean
-
-def make_ARBlockMask(n_frames,image_size, mask_mod=autoregressive_diffusion_mask):
-    block_size = image_size # fix it with the line below
-    # block_size = max(image_size, _DEFAULT_SPARSE_BLOCK_SIZE)
-    num_blocks_in_row = torch.arange(1, n_frames+1, dtype=torch.int32, device=device).repeat(2)
-    num_blocks_in_row = einops.repeat(num_blocks_in_row, '... -> b h ...', b=batch_size, h=num_heads)
-
-    causal_mask = torch.tril(torch.ones(n_frames, n_frames))
-    col_indices1 = torch.arange(n_frames).expand(n_frames,n_frames) * causal_mask
-    col_indices2 = torch.arange(n_frames).expand(n_frames,n_frames) * causal_mask
-    col_indices2 = col_indices2 + torch.diag(torch.ones(n_frames)) * n_frames
-
-    col_indices = torch.cat((col_indices1, col_indices2))
-    col_indices = torch.cat((col_indices,torch.zeros_like(col_indices)), dim=1)
-    col_indices = einops.repeat(col_indices, '... -> b h ...', b=batch_size, h=num_heads).cuda().to(torch.int32)
-
-    return BlockMask.from_kv_blocks(num_blocks_in_row, col_indices, BLOCK_SIZE=block_size, mask_mod=mask_mod)
 
 # define the two functions
-block_mask = make_ARBlockMask(n_frames,image_size)
-block_mask_old = create_block_mask(autoregressive_diffusion_mask, B=batch_size, H=num_heads, Q_LEN=sequence_length, KV_LEN=sequence_length)
+block_mask = make_train_mask(batch_size, num_heads, n_frames, image_size)
+mask_function = TrainingMask(n_frames, image_size)
+block_mask_old = create_block_mask(mask_function, B=batch_size, H=num_heads, Q_LEN=sequence_length, KV_LEN=sequence_length)
 
 
 # ------ TESTING AND BENCHMARKING
@@ -58,12 +33,9 @@ plt.imshow(block_mask_old.to_dense()[0,0].cpu())
 plt.show()
 plt.imshow(block_mask.to_dense()[0,0].cpu())
 plt.show()
-#%%
-from edm2.attention_masking import make_train_mask, make_AR_BlockMask_Inference
-block_mask_old = make_train_mask(batch_size, num_heads, n_frames, image_size)
-plt.imshow(block_mask_old.to_dense()[0,0].cpu())
 
 #%% 
+
 # step2: check that the two block masks lead to the same results
 q = torch.randn(batch_size, num_heads, sequence_length, head_dim, device=device, dtype=torch.float16)*10
 k = torch.randn(batch_size, num_heads, sequence_length, head_dim, device=device, dtype=torch.float16)*10
@@ -72,6 +44,28 @@ out1=flex_attention(q,k,v, block_mask=block_mask)
 out2=flex_attention(q,k,v, block_mask=block_mask_old)
 out = out1-out2 # it's equal to zero. it works.
 print((out==0).all()) #True
+#%%
+
+# manual_masking = torch.zeros(size=(batch_size, num_heads, sequence_length, sequence_length), dtype=torch.bool, device='cuda')
+# for i in range(sequence_length):
+#     for j in range(sequence_length):
+#         manual_masking[:,:,i,j]=mask_function(0,0,i,j)
+
+# plt.imshow(manual_masking.to_dense()[0,0].cpu())
+        
+
+repeated_mask = block_mask_old.to_dense()[0,0].bool().repeat_interleave(_DEFAULT_SPARSE_BLOCK_SIZE,0).repeat_interleave(_DEFAULT_SPARSE_BLOCK_SIZE,1)
+plt.imshow(repeated_mask.cpu())
+plt.show()
+
+
+
+out3 = torch.nn.functional.scaled_dot_product_attention(q,k,v,attn_mask=repeated_mask)
+out = out1-out3 # it's equal to zero. it works.
+print((out==0).all()) #should be true, but it's false. why??
+
+
+
 #%%
 inference_mask=make_AR_BlockMask_Inference(batch_size, num_heads, n_frames, image_size)
 plt.imshow(inference_mask.to_dense()[0,0].cpu())
