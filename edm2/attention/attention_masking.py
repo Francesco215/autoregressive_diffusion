@@ -27,7 +27,7 @@ class TrainingMask:
 @lru_cache(maxsize=16)
 def make_train_mask(batch_size, num_heads, n_frames, image_size):
     # image_size is the number of pixels (height x width)
-    autoregressive_diffusion_mask = TrainingMask(n_frames, image_size)
+    training_mask = TrainingMask(n_frames, image_size)
 
     if image_size<_DEFAULT_SPARSE_BLOCK_SIZE:
         if n_frames*image_size%_DEFAULT_SPARSE_BLOCK_SIZE!=0:
@@ -50,7 +50,7 @@ def make_train_mask(batch_size, num_heads, n_frames, image_size):
     col_indices = einops.repeat(col_indices, '... -> b h ...', b=batch_size, h=num_heads).cuda().to(torch.int32)
 
     # return BlockMask.from_kv_blocks(num_blocks_in_row, col_indices, BLOCK_SIZE=image_size)
-    return BlockMask.from_kv_blocks(num_blocks_in_row, col_indices, BLOCK_SIZE=image_size, mask_mod=autoregressive_diffusion_mask)
+    return BlockMask.from_kv_blocks(num_blocks_in_row, col_indices, BLOCK_SIZE=image_size, mask_mod=training_mask)
 
 
 class InferenceMask:

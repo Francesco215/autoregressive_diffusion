@@ -62,7 +62,7 @@ class TestAttention(unittest.TestCase):
 
         q, k = self.attention.rope(q, k)
         v = einops.rearrange(v, ' b m t hw c -> b m (t hw) c') # q and k are already rearranged inside of rope
-        y = F.scaled_dot_product_attention(q,k,v, repeated_mask)
+        y = F.scaled_dot_product_attention(q,k,v,repeated_mask)
 
         y = einops.rearrange(y, 'b m (t h w) c -> (b t) (c m) h w', b=BATCH_SIZE, h=IMG_RESOLUTION, w=IMG_RESOLUTION)
         y = self.attention.attn_proj(y)
