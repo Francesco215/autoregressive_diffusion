@@ -76,7 +76,7 @@ class VideoAttention(nn.Module):
             else:
                 raise NotImplementedError("The inference mask is not implemented for this case")
 
-        y = einops.rearrange(y, 'b m (t h w) c -> (b t) (c m) h w', b=batch_size, h=h, w=w)
+        y = einops.rearrange(y, 'b m (t h w) c -> (b t) (m c) h w', b=batch_size, h=h, w=w)
         y = self.attn_proj(y)
         
         return mp_sum(x, y, t=self.attn_balance), cache
