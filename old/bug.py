@@ -24,19 +24,21 @@ q = torch.randn(batch_size, num_heads, sequence_length, head_dim, device=device,
 k = torch.randn(batch_size, num_heads, sequence_length, head_dim, device=device, dtype=torch.float16)
 v = torch.randn(batch_size, num_heads, sequence_length, head_dim, device=device, dtype=torch.float16)
 
-# --- Apply attention ---
+# --- Apply flex attention ---
 out1 = flex_attention(q, k, v, block_mask=block_mask)
 
+# --- Apply reshape the random imputs
 q = einops.rearrange(q, 'b m (t hw) c -> (b t) m hw c', hw = image_size)
 k = einops.rearrange(k, 'b m (t hw) c -> (b t) m hw c', hw = image_size)
 v = einops.rearrange(v, 'b m (t hw) c -> (b t) m hw c', hw = image_size)
 
+# --- Apply flash attention ---
 out2 = F.scaled_dot_product_attention(q,k,v)
 
 
-out2 = einops.rearrange(out2, '(b t) m hw c -> b t m hw c', b = batch_size)
-out1 = einops.rearrange(out1, 'b m (t hw) c -> b t m hw c', hw = image_size)
+out2 = einops.rearrange(out2, '(b s t) m hw c -> (s b) t m hw c', s = 2, b = batch_size)
+out1 = einops.rearrange(out1, 'b m (s t hw) c -> (s b) t m hw c', s = 2, hw = image_size)
 diff_std = (out2 - out1).std(dim=(0, 2, 3, 4))
-print("Per-head std between out4 (diag) and out1 (training):", diff_std)
+print(diff_std[0]) # it retuns 1e-5!
 
 # %%
