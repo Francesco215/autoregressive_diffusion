@@ -42,9 +42,13 @@ class TestAttention(unittest.TestCase):
         y_video, _ = self.attention(x.clone(), BATCH_SIZE, just_2d=False)
         y_frame, _ = self.attention(x.clone(), BATCH_SIZE, just_2d=True)
         
-        y_video, y_frame = einops.rearrange(y_video,'(b t) ... -> b t ...', b=BATCH_SIZE), einops.rearrange(y_frame,'(b t) ... -> b t ...', b=BATCH_SIZE)
+        y_video = einops.rearrange(y_video, '(b s t) c h w -> (s b) t c h w', b=BATCH_SIZE, s = 2)
+        y_frame = einops.rearrange(y_frame, '(b s t) c h w -> (s b) t c h w', b=BATCH_SIZE, s = 2)
+
         std_diff = (y_video-y_frame).std(dim=(0,2,3,4))
-        self.assertLessEqual(std_diff[0].item(), error_bound, f"Test failed: std deviation {std_diff} exceeded {error_bound}") # fails here why?
+        self.assertLessEqual(std_diff[0].item(), error_bound, f"Test failed: std deviation {std_diff} exceeded {error_bound}") 
+        self.assertGreaterEqual(std_diff[1:].mean().item(), 1e-2, f"Test failed: std deviation {std_diff} exceeded {error_bound}") 
+
 
 
 

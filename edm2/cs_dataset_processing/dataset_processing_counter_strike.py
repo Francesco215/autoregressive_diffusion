@@ -14,6 +14,7 @@ from huggingface_hub import hf_hub_download, HfApi
 import re
 import tempfile
 from edm2.vae import VAE
+from diffusers import AutoencoderKL
 
 # Load with h5py
 def read_frames_and_actions(filename):
@@ -36,13 +37,30 @@ def read_frames_and_actions(filename):
 def encode_frames(autoencoder, frames, actions):
     # TODO: add caching to the autoencoder source code to make sure it can work with long sequences
 
-    frames = einops.rearrange(frames, 't h w c -> c t h w')
-    frames = torch.tensor(frames).to(torch.float)
-    frames = frames / 127.5 - 1  # Normalize from (0,255) to (-1,1)
-    mean, logvar = autoencoder.encode_long_sequence(frames.unsqueeze(0))
+    frames = einops.rearrange(frames, 't h w c -> t c h w')
+    frames = torch.tensor(frames).to("cuda").to(torch.float32)
+    frames = frames / 255  # Normalize from (0,255) to (0,1)
+    mean, logvar = [], []
+    for batch in frames.split(64):
+        out = autoencoder.encode(batch)['latent_dist'] 
+        mean.append(out.mean), logvar.append(out.logvar)
+
+    mean, logvar = torch.cat(mean,dim=0), torch.cat(logvar,dim=0)
     mean, logvar = mean.to(torch.float16), logvar.to(torch.float16)
-    out_dict = {'mean':mean[0].cpu().numpy(), 'logvar':logvar[0].cpu().numpy(), 'action':actions}
+    out_dict = {'mean':mean.cpu().numpy(), 'logvar':logvar.cpu().numpy(), 'action':actions}
     return out_dict
+
+# @torch.no_grad()
+# def encode_frames(autoencoder, frames, actions):
+#     # TODO: add caching to the autoencoder source code to make sure it can work with long sequences
+
+#     frames = einops.rearrange(frames, 't h w c -> c t h w')
+#     frames = torch.tensor(frames).to(torch.float)
+#     frames = frames / 127.5 - 1  # Normalize from (0,255) to (-1,1)
+#     mean, logvar = autoencoder.encode_long_sequence(frames.unsqueeze(0))
+#     mean, logvar = mean.to(torch.float16), logvar.to(torch.float16)
+#     out_dict = {'mean':mean[0].cpu().numpy(), 'logvar':logvar[0].cpu().numpy(), 'action':actions}
+#     return out_dict
 
 def download_tar_file(hf_repo_id, hf_filename):
     with tempfile.TemporaryDirectory() as temp_cache_dir:
@@ -87,13 +105,15 @@ hf_repo_id="TeaPearce/CounterStrike_Deathmatch"
 dataset_filenames = api.list_repo_files(repo_id=hf_repo_id, repo_type="dataset")
 
 #have to filter out some of the data because its's saved slightly differently...
-hf_filenames = [f for f in dataset_filenames if re.match(r"^hdf5_dm_july2021_.*_to_.*\.tar$", f)]
+hf_filenames = [f for f in dataset_filenames if re.match(r"^hdf5_dm_july2021_.*_to_.*\.tar$", f)][5:]
 
-vae = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_cs.pt").to("cuda")
+# vae = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_cs.pt").to("cuda")
+vae = AutoencoderKL.from_pretrained('stabilityai/sd-vae-ft-mse').to("cuda")
+
 
 #%%
 # Download the first tar file
-# download_tar_file(hf_repo_id, hf_filenames[0])
+download_tar_file(hf_repo_id, hf_filenames[0])
 
 for i in range(len(hf_filenames)):
     save_folder = f"/tmp/{hf_filenames[i].split('.')[0]}"
@@ -108,11 +128,11 @@ for i in range(len(hf_filenames)):
         download_thread.start()
     
     # Process the current tar file
-    write_mds(save_folder, f"s3://counter-strike-data/dataset_compressed/{hf_filenames[i].split('.')[0]}")
+    write_mds(save_folder, f"s3://counter-strike-data/dataset_compressed_stable_diff/{hf_filenames[i].split('.')[0]}")
     
     # Wait for the next download to finish (if applicable)
     if i < len(hf_filenames) - 1:
         download_thread.join()
 
         
-#%%
+# %%
