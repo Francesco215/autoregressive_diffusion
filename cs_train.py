@@ -27,6 +27,8 @@ torch._dynamo.config.cache_size_limit = 100
 
         
 def train(device, local_rank=0):
+    vae = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_cs.pt").to(device)
+    vae.std = 1.35
     unet = UNet(img_resolution=64, # Match your latent resolution
                 img_channels=8, # Match your latent channels
                 label_dim = 4,
@@ -47,15 +49,13 @@ def train(device, local_rank=0):
     if dist.is_available() and dist.is_initialized():
         unet = DDP(unet, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
 
-    vae = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_cs.pt").to(device)
-    vae.std = 1.35
     if local_rank==0:
         print(f"Number of UNet parameters: {unet_params//1e6}M")
 
     micro_batch_size = 1
     batch_size = 1
     accumulation_steps = batch_size//micro_batch_size
-    clip_length = 16
+    clip_length = 12
     # training_steps = total_number_of_steps * batch_size
     dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed', local = f'/data/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False, cache_limit = '200gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsVaeCollate(), pin_memory=True, num_workers=4, shuffle=False)
@@ -68,7 +68,7 @@ def train(device, local_rank=0):
     # sigma_data = 0.434
     sigma_data = 1.
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
-    loss_fn = EDM2Loss(P_mean=0.7,P_std=1., sigma_data=sigma_data, context_noise_reduction=0.5)
+    loss_fn = EDM2Loss(P_mean=0.7,P_std=1., sigma_data=sigma_data, context_noise_reduction=0.1)
 
     ref_lr = 1e-2
     current_lr = ref_lr
@@ -95,14 +95,14 @@ def train(device, local_rank=0):
             with torch.no_grad():
                 means, logvars, _ = batch
                 latents = means.to(device) + torch.randn_like(means, device=device)*torch.exp(logvars.to(device)*.5)
-                latents = latents/vae.std
+                latents = latents/1.25
+                # latents = latents/vae.std
                 # latents = einops.rearrange(latents, 'b t c (h hs) (w ws) -> b t (c hs ws) h w', hs=2, ws=2)
                 actions = None
 
-                
 
             # Calculate loss    
-            loss, un_weighted_loss = loss_fn(precond, latents, actions)
+            loss, un_weighted_loss = loss_fn(precond, latents, actions, just_2d=True)
             # Backpropagation and optimization
             with (nullcontext() if i % accumulation_steps == 0 else unet.no_sync()):
                 loss.backward()
@@ -169,4 +169,5 @@ if __name__=="__main__":
     else:
         device, local_rank = "cuda", 0
 
+    clean_stale_shared_memory()
     train(device, local_rank)

@@ -33,7 +33,7 @@ if __name__=="__main__":
     autoencoder = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_lunar_lander.pt").to(device).requires_grad_(False)
     autoencoder.std = 1.45
 
-    resume_training = False
+    resume_training = True
     unet = UNet(img_resolution=256//autoencoder.spatial_compression, # Match your latent resolution
                 img_channels=autoencoder.latent_channels, # Match your latent channels
                 label_dim = 4, #this should be equal to the action space of the gym environment
@@ -66,7 +66,7 @@ if __name__=="__main__":
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
     loss_fn = EDM2Loss(P_mean=1.2,P_std=1., sigma_data=sigma_data, context_noise_reduction=0.5)
 
-    ref_lr = 3e-3
+    ref_lr = 1e-2
     current_lr = ref_lr
     optimizer = AdamW(precond.parameters(), lr=ref_lr, eps = 1e-8)
     optimizer.zero_grad()
@@ -93,7 +93,7 @@ if __name__=="__main__":
             latents = autoencoder.frames_to_latents(frames)
 
         # Calculate loss    
-        loss, un_weighted_loss = loss_fn(precond, latents, actions, just_2d = i%2==0)
+        loss, un_weighted_loss = loss_fn(precond, latents, actions, just_2d = i%4==0)
         losses.append(un_weighted_loss)
         # Backpropagation and optimization
 

@@ -105,7 +105,7 @@ hf_repo_id="TeaPearce/CounterStrike_Deathmatch"
 dataset_filenames = api.list_repo_files(repo_id=hf_repo_id, repo_type="dataset")
 
 #have to filter out some of the data because its's saved slightly differently...
-hf_filenames = [f for f in dataset_filenames if re.match(r"^hdf5_dm_july2021_.*_to_.*\.tar$", f)][5:]
+hf_filenames = [f for f in dataset_filenames if re.match(r"^hdf5_dm_july2021_.*_to_.*\.tar$", f)][10:]
 
 # vae = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_cs.pt").to("cuda")
 vae = AutoencoderKL.from_pretrained('stabilityai/sd-vae-ft-mse').to("cuda")
@@ -133,6 +133,5 @@ for i in range(len(hf_filenames)):
     # Wait for the next download to finish (if applicable)
     if i < len(hf_filenames) - 1:
         download_thread.join()
-
-        
+print("cinokete")
 # %%

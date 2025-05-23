@@ -101,7 +101,7 @@ class UNet(BetterModule):
         img_resolution,                     # Image resolution.
         img_channels,                       # Image channels.
         label_dim,                          # Class label dimensionality. 0 = unconditional.
-        model_channels         = 192,       # Base multiplier for the number of channels.
+        model_channels,                     # Base multiplier for the number of channels.
         channel_mult           = [1,2,2,4], # Per-resolution multipliers for the number of channels.
         channel_mult_noise     = None,      # Multiplier for noise embedding dimensionality. None = select based on channel_mult.
         channel_mult_emb       = None,      # Multiplier for final embedding dimensionality. None = select based on channel_mult.
@@ -153,7 +153,7 @@ class UNet(BetterModule):
         for level, channels in reversed(list(enumerate(cblock))):
             res = img_resolution >> level
             if level == len(cblock) - 1:
-                self.dec[f'{res}x{res}_in0'] = Block(cout, cout, cemb, flavor='dec', attention=True, **block_kwargs)
+                self.dec[f'{res}x{res}_in0'] = Block(cout, cout, cemb, flavor='dec', attention='video', **block_kwargs)
                 self.dec[f'{res}x{res}_in1'] = Block(cout, cout, cemb, flavor='dec', **block_kwargs)
             else:
                 self.dec[f'{res}x{res}_up'] = Block(cout, cout, cemb, flavor='dec', resample_mode='up', **block_kwargs)

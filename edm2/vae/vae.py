@@ -184,7 +184,7 @@ class EncoderDecoder(nn.Module):
 
 
 class VAE(BetterModule):
-    def __init__(self, channels, n_res_blocks, time_compressions=[1, 2, 2], spatial_compressions=[1, 2, 2], logvar_mode='fixed', std=None):
+    def __init__(self, channels, n_res_blocks, time_compressions=[1, 2, 2], spatial_compressions=[1, 2, 2], logvar_mode='learned', std=None):
         super().__init__()
         
         self.latent_channels = channels[-1]
