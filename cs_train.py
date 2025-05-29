@@ -29,17 +29,7 @@ torch._dynamo.config.cache_size_limit = 100
 def train(device, local_rank=0):
     vae = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_cs.pt").to(device)
     vae.std = 1.35
-    unet = UNet(img_resolution=64, # Match your latent resolution
-                img_channels=8, # Match your latent channels
-                label_dim = 4,
-                model_channels=256,
-                channel_mult=[1,2,4,4],
-                channel_mult_noise=None,
-                channel_mult_emb=None,
-                num_blocks=2,
-                video_attn_resolutions=[8],
-                frame_attn_resolutions=[16],
-                )
+    unet = UNet.from_pretrained("s3://autoregressive-diffusion/saved_models/edm2-img512-xs.pt")
     resume_training=False
     unet_params = sum(p.numel() for p in unet.parameters())
     if resume_training:
@@ -57,7 +47,7 @@ def train(device, local_rank=0):
     accumulation_steps = batch_size//micro_batch_size
     clip_length = 12
     # training_steps = total_number_of_steps * batch_size
-    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed', local = f'/data/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False, cache_limit = '200gb')
+    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed_stable_diff', local = f'/data/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsVaeCollate(), pin_memory=True, num_workers=4, shuffle=False)
     steps_per_epoch = len(dataset)//micro_batch_size
     n_epochs = 10
@@ -88,7 +78,6 @@ def train(device, local_rank=0):
         steps_taken = checkpoint['steps_taken']
         print(f"Resuming training from batch {checkpoint['steps_taken']} with loss {losses[-1]:.4f}")
 
-    #%%
     for epoch in range (n_epochs):
         pbar = tqdm(enumerate(dataloader, start=steps_taken),total=steps_per_epoch) if local_rank==0 else enumerate(dataloader)
         for i, batch in pbar:
@@ -171,3 +160,4 @@ if __name__=="__main__":
 
     clean_stale_shared_memory()
     train(device, local_rank)
+# %%

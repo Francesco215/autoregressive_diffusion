@@ -53,11 +53,11 @@ class Block(torch.nn.Module):
         self.conv_skip = MPConv(in_channels, out_channels, kernel=[1,1]) if in_channels != out_channels else None
         if attention == 'video':
             self.attn = VideoAttention(out_channels, self.num_heads, attn_balance)
-        else:
+        if attention == 'frame':
             self.attn = FrameAttention(out_channels, self.num_heads, attn_balance)
 
-        if self.num_heads > 0: 
-            assert (out_channels & (out_channels - 1) == 0) and out_channels != 0, f"out_channels must be a power of 2, got {out_channels}"
+        # if self.num_heads > 0: 
+            # assert (out_channels & (out_channels - 1) == 0) and out_channels != 0, f"out_channels must be a power of 2, got {out_channels}"
 
     def forward(self, x, emb, batch_size, c_noise, cache=None, update_cache=False, just_2d=False):
         if cache is None: cache = {}
@@ -93,6 +93,24 @@ class Block(torch.nn.Module):
             x = x.clip_(-self.clip_act, self.clip_act)
         return x, cache
 
+    @torch.no_grad()
+    def load_from_2d(self, state_dict):
+        for name in list(state_dict.keys()):
+            if name.endswith(".weight"):
+                state_dict[name.removesuffix('.weight')]=state_dict.pop(name)
+
+        if 'attn_qkv' in state_dict:
+            self.attn.attn_qkv.weight.weight.copy_( state_dict['attn_qkv'])
+            self.attn.attn_proj.weight.weight.copy_(state_dict['attn_proj'])
+        if 'emb_gain' in state_dict:
+            self.emb_gain.copy_(state_dict['emb_gain'])
+        
+        for name, module in self.named_children():
+            if callable(getattr(module, 'load_from_2d', None)):
+                module.load_from_2d(state_dict[name])
+
+
+
 #----------------------------------------------------------------------------
 # EDM2 U-Net model (Figure 21).
 
@@ -125,7 +143,7 @@ class UNet(BetterModule):
 
         # Embedding.
         self.emb_fourier_sigma = MPFourier(cnoise)
-        self.emb_sigma = MPConv(cnoise, cemb, kernel=[]) 
+        self.emb_noise = MPConv(cnoise, cemb, kernel=[]) 
         self.emb_fourier_time = MPFourier(cnoise)
         self.emb_time = MPConv(cnoise, cemb, kernel=[]) 
         self.emb_label = MPConv(label_dim, cemb, kernel=[]) if label_dim != 0 else None
@@ -187,7 +205,7 @@ class UNet(BetterModule):
         frame_labels = frame_labels.log1p().to(c_noise.dtype) / 4 
         frame_embeddings = self.emb_time(self.emb_fourier_time(frame_labels))
 
-        emb = self.emb_sigma(self.emb_fourier_sigma(c_noise))
+        emb = self.emb_noise(self.emb_fourier_sigma(c_noise))
         emb = mp_sum(emb, frame_embeddings, t=0.5)
         if self.emb_label is not None and conditioning is not None:
             conditioning = einops.rearrange(conditioning, 'b t -> (b t)')
@@ -216,7 +234,18 @@ class UNet(BetterModule):
         x = mp_sum(x, res, out_res)
         return x, cache
 
-        
+    @torch.no_grad()
+    def load_from_2d(self, unet):
+        for (_, module_3d), (_, module_2d) in zip(self.enc.named_children(), unet.enc.named_children()):
+            module_3d.load_from_2d(module_2d.state_dict())
+
+        for (_, module_3d), (_, module_2d) in zip(self.dec.named_children(), unet.dec.named_children()):
+            module_3d.load_from_2d(module_2d.state_dict())
+
+        unet.dec, unet.enc = None, None
+        self.emb_noise.load_from_2d(unet.state_dict()['emb_noise.weight'])
+     
+
     def no_sync(self):
         return nullcontext()
 

@@ -40,6 +40,10 @@ class MPConv(torch.nn.Module):
         assert w.ndim == 4
         x = F.conv2d(x, w, padding=(w.shape[-1]//2,))
         return x
+    
+    @torch.no_grad()
+    def load_from_2d(self, state_dict):
+        self.weight.weight.copy_(state_dict) 
 
 
 class MPCausal3DGatedConv(torch.nn.Module):
@@ -90,6 +94,11 @@ class MPCausal3DGatedConv(torch.nn.Module):
 
         return mp_sum(last_frame_conv, context, gating.flatten()), cache
 
+    @torch.no_grad()
+    def load_from_2d(self, weight):
+        if isinstance(weight, dict):
+            weight = weight['weight']
+        self.last_frame_conv.load_from_2d(weight)
 
 
 class Gating(nn.Module):
