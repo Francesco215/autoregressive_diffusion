@@ -14,7 +14,7 @@ class MultiNoiseLoss(nn.Module):
         self.sigmas = torch.tensor([], dtype=torch.float32)
         self.losses = torch.tensor([], dtype=torch.float32)
         self.positions = torch.tensor([], dtype=torch.int64)
-        self.history_size = 5000
+        self.history_size = 10000
         # Create the Fourier approximator as a submodule.
         self.fourier_approximator = FourierSeriesFit(-torch.pi, torch.pi, num_terms=4)
         

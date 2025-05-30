@@ -25,10 +25,10 @@ def edm_sampler_with_mse(
     def denoise(x, t, cache, update_cache):
         t = torch.ones(batch_size, 1, device=device, dtype=dtype) * t
         
-        Dx, cache = net(x, t, conditioning, cache=cache, update_cache=update_cache)
+        Dx, cache = net(x, t, conditioning, cache=cache, update_cache=update_cache, just_2d=False)
         if guidance == 1: return Dx, cache
 
-        ref_Dx, _ = net(x, t, conditioning, cache = {}) # TODO: play with the cache
+        ref_Dx, _ = net(x, t, conditioning, just_2d=True)
         return ref_Dx.lerp(Dx, guidance), cache
 
     # Time step discretization

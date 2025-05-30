@@ -51,7 +51,7 @@ class CsCollate:
 # This is used to train the Diffusion model
 # In i could do some factorization, but i think that for now it's more readable like this
 class CsVaeDataset(StreamingDataset):
-    def __init__(self, remote, clip_size, local='/tmp/streaming_dataset/dataset_compressed', shuffle=False, **kwargs):
+    def __init__(self, remote, clip_size, local, shuffle=False, **kwargs):
         super().__init__(remote=remote, local=local, shuffle=shuffle, **kwargs)
         
         self.clip_size = clip_size
@@ -60,9 +60,9 @@ class CsVaeDataset(StreamingDataset):
 
         for example in super().__iter__():
             means, logvars, actions = torch.tensor(example['mean']), torch.tensor(example['logvar']), torch.tensor(example['action'])
-            means = einops.rearrange(means, 'c t h w -> t c h w')
-            logvars = einops.rearrange(logvars, 'c t h w -> t c h w')
-            actions = einops.rearrange(actions, 'c t -> t c')
+            # means = einops.rearrange(means, 'c t h w -> t c h w')
+            # logvars = einops.rearrange(logvars, 'c t h w -> t c h w')
+            # actions = einops.rearrange(actions, 'c t -> t c')
 
 
             while(means.shape[0]>=self.clip_size):
@@ -70,7 +70,7 @@ class CsVaeDataset(StreamingDataset):
                 means, logvars, actions = means[self.clip_size:], logvars[self.clip_size:], actions[self.clip_size:]
     
     def __len__(self):
-        return super().__len__()*(250//self.clip_size)
+        return super().__len__()*(1000//self.clip_size)
 
 
 
