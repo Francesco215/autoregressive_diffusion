@@ -7,7 +7,7 @@ import einops
 
 from .RoPe import RotaryEmbedding
 from .attention_masking import make_train_mask, make_infer_mask
-from ..utils import  mp_sum
+from ..utils import  mp_sum, normalize
 from ..conv import MPConv
 
 #----------------------------------------------------------------------------
@@ -35,7 +35,7 @@ class VideoAttention(nn.Module):
         y = self.attn_qkv(x)
 
         if just_2d: #just use the code from frame attention
-            y = einops.rearrange(y, 'bt (s m c) h w -> s bt m (h w) c', s=3, m=self.num_heads)
+            y = einops.rearrange(y, 'bt (m c s) h w -> s bt m (h w) c', s=3, m=self.num_heads)
             q, k, v =y.unbind(0)
 
             y = F.scaled_dot_product_attention(q, k, v)
@@ -45,8 +45,8 @@ class VideoAttention(nn.Module):
             return mp_sum(x, y, t=self.attn_balance), cache
             
         # b:batch, t:time, m: multi-head, s: split, c: channels, h: height, w: width
-        y = einops.rearrange(y, '(b t) (s m c) h w -> s b m t (h w) c', b=batch_size, s=3, m=self.num_heads)
-        q, k, v = y.unbind(0) # pixel norm & split 
+        y = einops.rearrange(y, '(b t) (m c s) h w -> s b m t (h w) c', b=batch_size, s=3, m=self.num_heads)
+        q, k, v = normalize(y,dim=-1).unbind(0) # pixel norm & split 
 
         if not self.training: # Handling of the cache during inference
             if cache is not None:
@@ -102,15 +102,15 @@ class FrameAttention(nn.Module):
         self.attn_qkv = MPConv(channels, channels * 3, kernel=[1,1]) 
         self.attn_proj = MPConv(channels, channels, kernel=[1,1]) 
 
-    def forward(self, x, batch_size, cache=None, update_cache=False, just_2d=True):
+    def forward(self, x, batch_size=None, cache=None, update_cache=False, just_2d=True):
         if self.num_heads==0:
             return x, None
         # x.shape = bt c h w
         h, w = x.shape[-2:]
         y = self.attn_qkv(x)
 
-        y = einops.rearrange(y, 'bt (s m c) h w -> s bt m (h w) c', s=3, m=self.num_heads)
-        q, k, v =y.unbind(0)
+        y = einops.rearrange(y, 'bt (m c s) h w -> s bt m (h w) c', s=3, m=self.num_heads)
+        q, k, v = normalize(y, dim=-1).unbind(0)
 
         y = F.scaled_dot_product_attention(q, k, v)
         y = einops.rearrange(y, 'bt m (h w) c -> bt (m c) h w', h=h, w=w)
