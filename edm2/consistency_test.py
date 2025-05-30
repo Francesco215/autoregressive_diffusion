@@ -4,6 +4,7 @@ from torch.nn import functional as F
 import unittest
 import logging
 import os
+from edm2.attention.attention_modules import FrameAttention
 from edm2.conv import MPCausal3DGatedConv
 from edm2.attention import VideoAttention
 from edm2.networks_edm2 import UNet
@@ -11,7 +12,7 @@ from edm2.attention.attention_masking import TrainingMask, make_train_mask
 import numpy as np
 import random
 
-from edm2.utils import mp_sum 
+from edm2.utils import mp_sum, normalize 
 
 # os.environ['TORCH_LOGS']='recompiles'
 # os.environ['TORCH_COMPILE_MAX_AUTOTUNE_RECOMPILE_LIMIT']='100000'
@@ -29,6 +30,29 @@ dtype = torch.float32
 np.random.seed(42)
 random.seed(42)
 error_bound = 3e-4
+
+class TestConsistencyWithOldAttention(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        torch.manual_seed(SEED)
+        torch.cuda.manual_seed_all(SEED)
+        cls.attention = FrameAttention(channels = 4*IMG_CHANNELS, num_heads = 4).to("cuda").to(dtype)
+
+    def test_attention_consistency_between_frame_and_video_attention(self):
+        x = torch.randn(BATCH_SIZE * 2 * N_FRAMES, 4*IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
+        y_frame, _ = self.attention(x.clone())
+
+        y = self.attention.attn_qkv(x)
+        y = y.reshape(y.shape[0], self.attention.num_heads, -1, 3, y.shape[2] * y.shape[3])
+        q, k, v = normalize(y, dim=2).unbind(3) # pixel norm & split
+        w = torch.einsum('nhcq,nhck->nhqk', q, k / np.sqrt(q.shape[2])).softmax(dim=3)
+        y = torch.einsum('nhqk,nhck->nhcq', w, v)
+        y = self.attention.attn_proj(y.reshape(*x.shape))
+        y = mp_sum(x, y, t=self.attention.attn_balance)
+        
+
+        std_diff = (y-y_frame).std()
+        self.assertLessEqual(std_diff.item(), error_bound, f"Test failed: std deviation {std_diff} exceeded {error_bound}") 
 class TestAttention(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
