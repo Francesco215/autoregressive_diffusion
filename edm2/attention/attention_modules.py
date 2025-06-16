@@ -36,7 +36,7 @@ class VideoAttention(nn.Module):
 
         if just_2d: #just use the code from frame attention
             y = einops.rearrange(y, 'bt (m c s) h w -> s bt m (h w) c', s=3, m=self.num_heads)
-            q, k, v =y.unbind(0)
+            q, k, v =normalize(y, dim=-1).unbind(0)
 
             y = F.scaled_dot_product_attention(q, k, v)
             y = einops.rearrange(y, 'bt m (h w) c -> bt (m c) h w', h=h, w=w)
@@ -46,7 +46,7 @@ class VideoAttention(nn.Module):
             
         # b:batch, t:time, m: multi-head, s: split, c: channels, h: height, w: width
         y = einops.rearrange(y, '(b t) (m c s) h w -> s b m t (h w) c', b=batch_size, s=3, m=self.num_heads)
-        q, k, v = normalize(y,dim=-1).unbind(0) # pixel norm & split 
+        q, k, v = normalize(y, dim=-1).unbind(0) # pixel norm & split 
 
         if not self.training: # Handling of the cache during inference
             if cache is not None:

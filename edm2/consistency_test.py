@@ -85,14 +85,14 @@ class TestAttention(unittest.TestCase):
         repeated_mask = mask.to_dense()[0,0].bool().repeat_interleave(IMG_RESOLUTION**2,0).repeat_interleave(IMG_RESOLUTION**2,1)
 
         y = self.attention.attn_qkv(x)
-        y = einops.rearrange(y, '(b t) (s m c) h w -> s b m t (h w) c', b=BATCH_SIZE, s=3, m=4)
-        q, k, v = y.unbind(0) # pixel norm & split 
+        y = einops.rearrange(y, '(b t) (m c s) h w -> s b m t (h w) c', b=BATCH_SIZE, s=3, m=4)
+        q, k, v = normalize(y, dim=-1).unbind(0) # pixel norm & split 
 
         q, k = self.attention.rope(q, k)
         v = einops.rearrange(v, ' b m t hw c -> b m (t hw) c') # q and k are already rearranged inside of rope
         y = F.scaled_dot_product_attention(q,k,v,repeated_mask)
 
-        y = einops.rearrange(y, 'b m (t h w) c -> (b t) (c m) h w', b=BATCH_SIZE, h=IMG_RESOLUTION, w=IMG_RESOLUTION)
+        y = einops.rearrange(y, 'b m (t h w) c -> (b t) (m c) h w', b=BATCH_SIZE, h=IMG_RESOLUTION, w=IMG_RESOLUTION)
         y = self.attention.attn_proj(y)
         
         y_manual = mp_sum(x, y, t=self.attention.attn_balance)

@@ -13,3 +13,4 @@ temp_images/
 images_training/
 counter_strike/
 saved_models/
+*.pkl
