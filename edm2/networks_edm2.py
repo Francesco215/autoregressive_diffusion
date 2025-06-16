@@ -232,7 +232,7 @@ class UNet(BetterModule):
             x, cache['dec', name] = block(x, emb, batch_size, c_noise, cache=cache.get(('dec',name), None),  update_cache=update_cache, just_2d=just_2d)
         x, cache['out_conv'] = self.out_conv(x, emb, batch_size, c_noise, cache=cache.get('out_conv', None), update_cache=update_cache, just_2d=just_2d)
 
-        x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)
+        x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)*self.out_gain
         # x = mp_sum(x, res, out_res)
         return x, cache
 
