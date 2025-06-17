@@ -13,7 +13,6 @@ from .conv import  MPConv, MPCausal3DGatedConv, Gating
 from .attention import FrameAttention, VideoAttention
 
 
-
 #---------------------------------------------------------------------------
 # U-Net encoder/decoder block with optional self-attention (Figure 21).
 

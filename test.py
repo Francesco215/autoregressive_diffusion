@@ -31,6 +31,7 @@ with torch.no_grad():
     my_net.load_from_2d(net.unet)
     net.unet.emb_label=None
 
+    my_net.save_to_state_dict("edm2.pt")
 
     # %% #this part o code below it works!
     n_images = 4

@@ -15,7 +15,7 @@ from streaming.base.util import clean_stale_shared_memory
 
 
 from edm2.plotting import plot_training_dashboard
-from edm2.vae import VAE
+from edm2.vae.stability import StabilityVAEEncoder
 from edm2.cs_dataloading import CsCollate, CsDataset, CsVaeCollate, CsVaeDataset
 from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
@@ -27,20 +27,8 @@ torch._dynamo.config.cache_size_limit = 100
 
         
 def train(device, local_rank=0):
-    vae = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_cs.pt").to(device)
-    vae.std = 1.35
-    # unet = UNet.from_pretrained("s3://autoregressive-diffusion/saved_models/edm2-img512-xs.pt")
-    unet = UNet(img_resolution=64, # Match your latent resolution
-            img_channels=4, # Match your latent channels
-            label_dim = 4,
-            model_channels=128,
-            channel_mult=[1,2,3,4],
-            channel_mult_noise=None,
-            channel_mult_emb=None,
-            num_blocks=3,
-            video_attn_resolutions=[8],
-            frame_attn_resolutions=[16],
-            )
+    vae = StabilityVAEEncoder().to(device)
+    unet = UNet.from_pretrained("edm2.pt").to(device)
     resume_training=False
     unet_params = sum(p.numel() for p in unet.parameters())
     if resume_training:
@@ -67,7 +55,7 @@ def train(device, local_rank=0):
 
 
     # sigma_data = 0.434
-    sigma_data = 1.
+    sigma_data = .5
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
     loss_fn = EDM2Loss(P_mean=0.9,P_std=1.2, sigma_data=sigma_data, context_noise_reduction=0.1)
 
@@ -94,10 +82,8 @@ def train(device, local_rank=0):
         for i, batch in pbar:
             with torch.no_grad():
                 means, logvars, _ = batch
-                latents = means.to(device) + torch.randn_like(means, device=device)*torch.exp(logvars.to(device)*.5)
-                latents = latents/4.
-                # latents = latents/vae.std
-                # latents = einops.rearrange(latents, 'b t c (h hs) (w ws) -> b t (c hs ws) h w', hs=2, ws=2)
+                means, logvars = means.to(device), logvars.to(device)
+                latents = vae.encode_latents(means, logvars)
                 actions = None
 
 
