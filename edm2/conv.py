@@ -106,8 +106,8 @@ class Gating(nn.Module):
         super().__init__()
         self.offset = nn.Parameter(torch.tensor([0.,0.]))
         self.mult = nn.Parameter(torch.tensor([1.5,-0.5]))
-        self.max_gating = nn.Parameter(torch.tensor(-2.))
-        self.min_gating = nn.Parameter(torch.tensor(-2.))
+        self.max_gating = nn.Parameter(torch.tensor(-5.))
+        self.min_gating = nn.Parameter(torch.tensor(-5.))
         self.activation = nn.Sigmoid()
 
     def forward(self, c_noise:Tensor, n_context_frames:int=0, just_2d=False):
