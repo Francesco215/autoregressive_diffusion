@@ -111,7 +111,7 @@ def plot_training_dashboard(
     # (Code remains the same as the previous corrected version)
     # Uses latents_viz_orig
     ax3 = axes[1, 0]
-    latents = latents[:,:7]
+    latents = latents[:,:9]
     # latents = batch["latents"][start:start+num_samples].to(device)
     # text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
     context = latents[:, :-1]  # First frames (context)
@@ -124,7 +124,7 @@ def plot_training_dashboard(
     # Run sampler with sigma_max=0.5 for initial noise level
     conditioning = None if actions is None else actions[:,context.shape[1]:context.shape[1]+1]
     sigma_max_val = 3.0   # <- must match the call you make just below
-    sigma_min = 0.8
+    sigma_min = 0.01
     rho_val        = 2.0
     num_steps_val  = 32
     _, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(net=precond, cache=cache, target=target, sigma_max=sigma_max_val, sigma_min=sigma_min, num_steps=num_steps_val, conditioning=conditioning, rho = rho_val, guidance = guidance, S_churn=20, S_noise=1,
@@ -159,18 +159,18 @@ def plot_training_dashboard(
     # --- Plot 4: Generated Frames (Bottom-Right) ---
     # Replicate the *exact* logic from sampler_training_callback
     ax4 = axes[1, 1]
-    # for _ in tqdm(range(6)):
-    #     actions = None if actions is None else torch.randint(0,3,(latents.shape[0],1), device=latents.device)
-    #     x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, conditioning = actions, sigma_max = 80, sigma_min=sigma_min, num_steps=16, rho=2, guidance=guidance, S_churn=0.)
-    #     context = torch.cat((context,x),dim=1)
+    for _ in tqdm(range(8)):
+        actions = None if actions is None else torch.randint(0,3,(latents.shape[0],1), device=latents.device)
+        x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, conditioning = actions, sigma_max = 80, sigma_min=sigma_min, num_steps=16, rho=2, guidance=guidance, S_churn=0.)
+        context = torch.cat((context,x),dim=1)
     
-    # # context = einops.rearrange(context, 'b t (c hs ws) h w -> b t c (h hs) (w ws) ', hs=2, ws=2)
-    # frames = autoencoder.latents_to_frames(context)
+    # context = einops.rearrange(context, 'b t (c hs ws) h w -> b t c (h hs) (w ws) ', hs=2, ws=2)
+    frames = autoencoder.latents_to_frames(context)
 
-    # x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=8)
-    # #set high resolution
-    # ax4.imshow(x[0])
-    # ax4.axis('off')
+    x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=8).to("cpu").detach().numpy()
+    #set high resolution
+    ax4.imshow(x[0])
+    ax4.axis('off')
 
 
 

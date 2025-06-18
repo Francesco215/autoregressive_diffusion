@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 from streaming.base.util import clean_stale_shared_memory
 
 
+from edm2.conv import MPConv
 from edm2.plotting import plot_training_dashboard
 from edm2.vae.stability import StabilityVAEEncoder
 from edm2.cs_dataloading import CsCollate, CsDataset, CsVaeCollate, CsVaeDataset
@@ -29,6 +30,9 @@ torch._dynamo.config.cache_size_limit = 100
 def train(device, local_rank=0):
     vae = StabilityVAEEncoder().to(device)
     unet = UNet.from_pretrained("edm2.pt").to(device)
+    for name, module in unet.named_modules():
+        if isinstance(module, MPConv):
+            module.requires_grad_(False)
     resume_training=False
     unet_params = sum(p.numel() for p in unet.parameters())
     if resume_training:
@@ -41,8 +45,8 @@ def train(device, local_rank=0):
     if local_rank==0:
         print(f"Number of UNet parameters: {unet_params//1e6}M")
 
-    micro_batch_size = 1
-    batch_size = 1
+    micro_batch_size = 2
+    batch_size = 8
     accumulation_steps = batch_size//micro_batch_size
     clip_length = 16
     # training_steps = total_number_of_steps * batch_size
@@ -57,9 +61,9 @@ def train(device, local_rank=0):
     # sigma_data = 0.434
     sigma_data = .5
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
-    loss_fn = EDM2Loss(P_mean=0.9,P_std=1.2, sigma_data=sigma_data, context_noise_reduction=0.1)
+    loss_fn = EDM2Loss(P_mean=0.9,P_std=1.0, sigma_data=sigma_data, context_noise_reduction=0.1)
 
-    ref_lr = 1e-4
+    ref_lr = 1e-2
     current_lr = ref_lr
     optimizer = AdamW(precond.parameters(), lr=ref_lr, eps = 1e-4)
     optimizer.zero_grad()
@@ -88,7 +92,7 @@ def train(device, local_rank=0):
 
 
             # Calculate loss    
-            loss, un_weighted_loss = loss_fn(precond, latents, actions, just_2d=False)
+            loss, un_weighted_loss = loss_fn(precond, latents, actions, just_2d=i%4==0)
             # Backpropagation and optimization
             with (nullcontext() if i % accumulation_steps == 0 else unet.no_sync()):
                 loss.backward()

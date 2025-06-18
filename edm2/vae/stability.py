@@ -1,3 +1,4 @@
+import einops
 import torch
 from torch.nn import Module
 import numpy as np
@@ -40,13 +41,17 @@ class StabilityVAEEncoder(Module):
         x = x + const_like(x, self.bias).reshape(1, 1, -1, 1, 1)
         return x
 
-    def decode(self, x): # final latents => raw pixels
+    def latents_to_frames(self, x): # final latents => raw pixels
+        batch_size = x.shape[0]
         x = x.to(torch.float32)
+        x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
         x = x - const_like(x, self.bias).reshape(1, -1, 1, 1)
         x = x / const_like(x, self.scale).reshape(1, -1, 1, 1)
         x = torch.cat([self._run_vae_decoder(batch) for batch in x.split(self.batch_size)])
         x = x.clamp(0, 1).mul(255).to(torch.uint8)
+        x = einops.rearrange(x, '(b t) c h w -> b t h w c', b = batch_size)
         return x
+
 
 
 #----------------------------------------------------------------------------
