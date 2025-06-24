@@ -45,23 +45,21 @@ All of them have deal-breaking problems:
 > [!WARNING]
 > The information provided below is just a brief overview of what's going on under the hood.
 
-# Inference
+## Inference
 
-<!-- One way to train a Diffusion model is to learn to predict the score function
+One way to train a Diffusion model is to learn to predict the score function
 
 $$ s(x,\sigma) = -\nabla_x \log p(x,\sigma)$$
 
 The most used architectures are UNets and Image-Transformers.
 
----
 Language models work by estimating the probablilty distribuition of the last token given all of the previous ones
 
 $$F(x_i,\dots,x_0)=-\log p(x_{i+1}|x_i,\dots,x_0)$$
 
 The transformer architecture allows to train such a model in a sample-efficient way. This is very important because it multiplies the effictive batch size by the sequence lenght.
 
----
-To generate a video where each frame if generated autoregressively we need to unite the two paradigms by estimating the score given all of the previous frames. -->
+To generate a video where each frame if generated autoregressively we need to unite the two paradigms by estimating the score given all of the previous frames.
 
 Last-frame generation can be thought as image generation conditioned on the previous frames.
 
@@ -69,16 +67,7 @@ $$s(x_i,\sigma,x_{i-1},\dots,x_0)=-\nabla_{x_i} \log p(x_i,\sigma|x_{i-1},\dots,
 
 Where $x_{i-1},\dots,x_0$ are the noise-free context frames, $x_i$ is the noisy (to be denoised) frame, and $\sigma$ is the noise level
 
-### Video Attention Module (Inference)
-During inference the attention module implements causal attention masking in a manner similar to how it's done in autoregressive language modelling
-<p align="center">
-    <img src="readme_images/inference_mask.png" width="49%">
-</p>
-The only difference is that the mask is block-sparse
-
->During inference the model uses KV-caching to make it fast.
-
-# Training
+## Training
 Here is how you make the training in a way that is sample-efficient.
 
 Let $(x_1,\dots,x_n)$ be a sequence of frames from the training set.
@@ -92,11 +81,28 @@ $$
 x = x_c \oplus x_\epsilon = (x_1,\dots,x_n,\tilde x_1,\dots,\tilde x_n)
 $$
 
+Here is an animation that shows how the training and inference logic are connected
+
+https://github.com/user-attachments/assets/b54d7a44-a31f-4984-a34e-033758fb1eb0
+
+
+
 In this model there are two modules that can transfer information between frames
 - `VideoAttention`
 - `3DCausalConvolution`
 
-Here is how you make sure that each one of them is really efficient and preserves causality. 
+
+
+
+# Modules
+### Video Attention Module (Inference)
+During inference the attention module implements causal attention masking in a manner similar to how it's done in autoregressive language modelling
+<p align="center">
+    <img src="readme_images/inference_mask.png" width="49%">
+</p>
+The only difference is that the mask is block-sparse
+
+>During inference the model uses KV-caching to make it fast.
 
 ### Video Attention Module (Training)
 Here is an illustrative image that shows how the information moves
@@ -112,7 +118,7 @@ This can be archieved by doing block-sparse masking using [FlexAttention](https:
     <img src="readme_images/masking.png" width="49%">
 </p>
 
-### 3D Causal Convolution (Training)
+### 3D Causal Convolution 
 Wierdly enough, the convolution layer is the hardest to explain because it relies on a couple of tricks to make sure that the code runs as fast and efficiently as possible during training.
 
 I'll write later how it works exactly. [For now you can read the code](edm2/conv.py)
