@@ -18,7 +18,8 @@ import matplotlib.pyplot as plt
 from edm2.plotting import plot_training_dashboard
 from edm2.vae import VAE    
 from edm2.gym_dataloader import GymDataGenerator, gym_collate_function
-from edm2.networks_edm2 import UNet, Precond
+from edm2.precond import Precond
+from edm2.unet import UNet
 from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.phema import PowerFunctionEMA
 

@@ -7,7 +7,8 @@ import torch
 from torch.utils.data import DataLoader
 
 from edm2.gym_dataloader import GymDataGenerator, gym_collate_function
-from edm2.networks_edm2 import UNet, Precond
+from edm2.precond import Precond
+from edm2.unet import UNet
 from edm2.vae import VAE
 from edm2.sampler import edm_sampler_with_mse
 

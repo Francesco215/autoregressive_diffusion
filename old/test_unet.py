@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from edm2.loss_weight import MultiNoiseLoss
-from edm2.networks_edm2 import UNet, Precond
+from edm2.precond import UNet, Precond
 from edm2.loss import EDM2Loss
 import logging
 import os

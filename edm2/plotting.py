@@ -1,5 +1,5 @@
 from torch import distributed as dist
-from edm2.networks_edm2 import Precond
+from .precond import Precond
 from .sampler import edm_sampler_with_mse
 import matplotlib.pyplot as plt
 import numpy as np

@@ -3,9 +3,9 @@ import torch
 import unittest
 import logging
 import os
-from edm2.conv import MPCausal3DConv, MPCausal3DGatedConv
+from edm2.conv import MPCausal3DGatedConv
 from edm2.attention import VideoAttention
-from edm2.networks_edm2 import UNet
+from edm2.unet import UNet
 import numpy as np
 import random 
 
