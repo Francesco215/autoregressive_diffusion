@@ -109,7 +109,7 @@ class DiffusionTransformer(BetterModule):
 
     def forward(self, x, c_noise, conditioning = None, cache:dict=None, update_cache=False):
         if cache is None: cache = {}
-        batch_size, time_dimention = x.shape[:2]
+        batch_size, time_dimention, channel_size, height, width = x.shape
         n_context_frames = cache.get('n_context_frames', 0)
 
         res = x.clone()
@@ -141,6 +141,6 @@ class DiffusionTransformer(BetterModule):
             x = block(x, emb)
         x = self.conv_out(x)
 
-        x = einops.rearrange(x, '(b t) (h w) (ph pw c) -> b t c h w', b=batch_size, ph=self.patch_size, pw=self.patch_size)
+        x = einops.rearrange(x, '(b t) (h w) (ph pw c) -> b t c (h ph) (w pw)', b=batch_size, h=height//self.patch_size, w=width//self.patch_size, ph=self.patch_size, pw=self.patch_size)
         x = mp_sum(x, res, out_res)
         return x, cache
