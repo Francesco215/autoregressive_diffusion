@@ -1,12 +1,13 @@
+from functools import lru_cache
 import einops
 import warnings
 import torch
 from torch.nn.attention.flex_attention import create_block_mask, BlockMask, _DEFAULT_SPARSE_BLOCK_SIZE
 
 
-class AutoregressiveDiffusionMask:
-
+class TrainingMask:
     def __init__(self, n_frames, image_size):
+        # image_size is the number of pixels (height x width)
         self.n_frames = torch.tensor(n_frames, dtype = torch.int32, device="cuda")
         self.image_size = torch.tensor(image_size, dtype = torch.int32, device = "cuda")
 
@@ -23,9 +24,10 @@ class AutoregressiveDiffusionMask:
         return mask_towards_clean ^ self_mask_noisy ^ domain_attention_towards_clean
 
 
+@lru_cache(maxsize=16)
 def make_train_mask(batch_size, num_heads, n_frames, image_size):
     # image_size is the number of pixels (height x width)
-    autoregressive_diffusion_mask = AutoregressiveDiffusionMask(n_frames, image_size)
+    training_mask = TrainingMask(n_frames, image_size)
 
     if image_size<_DEFAULT_SPARSE_BLOCK_SIZE:
         if n_frames*image_size%_DEFAULT_SPARSE_BLOCK_SIZE!=0:
@@ -47,10 +49,11 @@ def make_train_mask(batch_size, num_heads, n_frames, image_size):
     col_indices = torch.cat((col_indices,torch.zeros_like(col_indices)), dim=1)
     col_indices = einops.repeat(col_indices, '... -> b h ...', b=batch_size, h=num_heads).cuda().to(torch.int32)
 
-    return BlockMask.from_kv_blocks(num_blocks_in_row, col_indices, BLOCK_SIZE=image_size, mask_mod=autoregressive_diffusion_mask)
+    # return BlockMask.from_kv_blocks(num_blocks_in_row, col_indices, BLOCK_SIZE=image_size)
+    return BlockMask.from_kv_blocks(num_blocks_in_row, col_indices, BLOCK_SIZE=image_size, mask_mod=training_mask)
 
 
-class DiagonalDiffusionMask:
+class InferenceMask:
     def __init__(self, image_size):
         self.image_size = image_size
 
@@ -58,10 +61,11 @@ class DiagonalDiffusionMask:
         q_idx, kv_idx = q_idx // self.image_size, kv_idx // self.image_size
         return q_idx >= kv_idx
 
+@lru_cache(maxsize=16)
 def make_infer_mask(batch_size, num_heads, n_frames, image_size):
     # image size is the number of pixels (height x width)
 
-    diagonal_diffusion_mask = DiagonalDiffusionMask(image_size)
+    diagonal_diffusion_mask = InferenceMask(image_size)
 
     if n_frames*image_size<_DEFAULT_SPARSE_BLOCK_SIZE:
         warnings.warn(f"The masking matrix must be at least the size of the default block size,\ngot {n_frames*image_size} and the default block size is {_DEFAULT_SPARSE_BLOCK_SIZE}\n returning None")
