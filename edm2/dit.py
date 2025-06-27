@@ -23,7 +23,7 @@ class DiTBlock(nn.Module):
         self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
 
         # TODO: change the attention 
-        self.attn = nn.MultiheadAttention(hidden_size, num_heads, batch_first=True)
+        self.attn = VideoAttention(hidden_size, 8, attn_balance=1.)
 
         self.mlp = nn.Sequential(
             nn.Linear(hidden_size, mlp_hidden_size),
@@ -48,17 +48,21 @@ class DiTBlock(nn.Module):
         nn.init.constant_(self.adaLN_modulation[-1].bias, 0)
 
 
-    def forward(self, x, c):
-        modulation_params = self.adaLN_modulation(c)
+    def forward(self, x, emb, batch_size, cache=None, update_cache=False):
+        modulation_params = self.adaLN_modulation(emb)
 
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = \
             torch.chunk(modulation_params, chunks=6, dim=1)
 
         x_norm1 = self.norm1(x)
-        x_modulated1 = modulate(x_norm1, shift_msa, scale_msa)
-        attn_output, _ = self.attn(x_modulated1, x_modulated1, x_modulated1)
+        y = modulate(x_norm1, shift_msa, scale_msa)
 
-        x = x + gate_msa.unsqueeze(1) * attn_output
+        height = int(y.shape[1]**.5)
+        y = einops.rearrange(y, 'bt (h w) c -> bt c h w', h=height)
+        y, cache = self.attn.forward(y, batch_size, cache, update_cache)
+        y = einops.rearrange(y,'bt c h w -> bt (h w) c')
+
+        x = x + gate_msa.unsqueeze(1) * y
 
         x_norm2 = self.norm2(x)
         x_modulated2 = modulate(x_norm2, shift_mlp, scale_mlp)
@@ -66,7 +70,7 @@ class DiTBlock(nn.Module):
 
         x = x + gate_mlp.unsqueeze(1) * mlp_output
 
-        return x
+        return x, cache
 
 
 
@@ -138,7 +142,7 @@ class DiffusionTransformer(BetterModule):
         
         x = self.conv_in(x)
         for i, block in enumerate(self.blocks):
-            x = block(x, emb)
+            x, cache[f'block_{i}'] = block(x, emb, batch_size, cache.get(f'block_{i}'), update_cache)
         x = self.conv_out(x)
 
         x = einops.rearrange(x, '(b t) (h w) (ph pw c) -> b t c (h ph) (w pw)', b=batch_size, h=height//self.patch_size, w=width//self.patch_size, ph=self.patch_size, pw=self.patch_size)

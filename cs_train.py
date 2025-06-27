@@ -44,8 +44,8 @@ def train(device, local_rank=0):
     net = DiffusionTransformer(img_resolution=64, # Match your latent resolution
                 img_channels=8, 
                 label_dim = 4,
-                model_channels=64,
-                num_blocks=4,
+                model_channels=512,
+                num_blocks=8,
                 )
     resume_training=False
     unet_params = sum(p.numel() for p in net.parameters())
