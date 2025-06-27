@@ -61,13 +61,13 @@ def train(device, local_rank=0):
     if local_rank==0:
         print(f"Number of UNet parameters: {unet_params//1e6}M")
 
-    micro_batch_size = 1
-    batch_size = 1
+    micro_batch_size = 8
+    batch_size = 8
     accumulation_steps = batch_size//micro_batch_size
     clip_length = 8
     # training_steps = total_number_of_steps * batch_size
-    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed', local = f'/data/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False, cache_limit = '200gb')
-    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsVaeCollate(), pin_memory=True, num_workers=4, shuffle=False)
+    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed', local = f'/data/streaming_dataset/cs_vae_d', batch_size=micro_batch_size, shuffle=False, cache_limit = '200gb')
+    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsVaeCollate(), pin_memory=True, num_workers=0, shuffle=False)
     steps_per_epoch = len(dataset)//micro_batch_size
     n_epochs = 10
     total_number_of_steps = n_epochs * steps_per_epoch
