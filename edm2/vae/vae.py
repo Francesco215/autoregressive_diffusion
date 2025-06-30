@@ -97,19 +97,61 @@ class EncoderDecoderBlock(nn.Module):
 
     def forward(self,x, cache=None):
         if cache is None: cache = {}
+        res = x.clone()
 
-        if self.decompression_block is not None:
+        if self.decompression_block:
             x, cache['decompression_block'] = self.decompression_block(x, cache = cache.get('decompression_block', None))
 
         x = self.updown_block(x)
 
-        if self.compression_block is not None:
+        if self.compression_block:
             x, cache['compression_block'] = self.compression_block(x, cache = cache.get('compression_block', None))
 
+        res = residual_reshaping(res, res.shape, x.shape)
+        res = self.updown_block(res)
+        x = x + res
+
+        
         for i, res_block in enumerate(self.res_blocks):
             x, cache[f'res_block_{i}'] = res_block(x, cache.get(f'res_block_{i}', None))
 
         return x, cache
+
+        
+def residual_reshaping(x, final_shape):
+    starting_shape = x.shape
+    if np.prod(starting_shape)==np.prod(final_shape): return x
+
+    b, cs, ts, hs, ws = starting_shape
+    b, cf, tf, hf, wf = final_shape
+
+    if ts!=tf:
+        assert ts//tf==2 or tf//ts==2 #TODO: maybe i can remove this assertion all toghether
+
+        x = F.interpolate(x, (tf, hs, ws), mode='area')
+        return residual_reshaping(x, final_shape)
+
+
+    if hs>hf:
+        space_compression = hs//hf
+        #TODO: from this part onward it's wrong
+        channel_extention = cf//cs
+
+    axis_compression = space_compression/channel_extention**.5
+    assert np.round(axis_compression)==axis_compression
+    assert np.round(hs/axis_compression)==hs/axis_compression
+    
+    interpolation_shape = (ts, hs//axis_compression, ws//axis_compression)
+    x = F.interpolate(x, interpolation_shape, mode='area')
+    return x
+    
+
+
+        
+        
+
+
+
 
 
 class UpDownBlock:
