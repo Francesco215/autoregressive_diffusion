@@ -107,8 +107,9 @@ class EncoderDecoderBlock(nn.Module):
         if self.compression_block:
             x, cache['compression_block'] = self.compression_block(x, cache = cache.get('compression_block', None))
 
-        res = residual_reshaping(res, res.shape, x.shape)
-        res = self.updown_block(res)
+        res = residual_reshaping(res, x.shape)
+        if not(isinstance(res, torch.Tensor)) or res.shape[1]!= x.shape[1]:
+            res = self.updown_block(res)
         x = x + res
 
         
@@ -118,32 +119,47 @@ class EncoderDecoderBlock(nn.Module):
         return x, cache
 
         
-def residual_reshaping(x, final_shape):
-    starting_shape = x.shape
-    if np.prod(starting_shape)==np.prod(final_shape): return x
+def residual_reshaping(res, final_shape):
+    starting_shape = res.shape
+    if np.prod(starting_shape)==np.prod(final_shape): return res
 
     b, cs, ts, hs, ws = starting_shape
     b, cf, tf, hf, wf = final_shape
 
-    if ts!=tf:
-        assert ts//tf==2 or tf//ts==2 #TODO: maybe i can remove this assertion all toghether
+    if starting_shape[2:]==final_shape[2:]:
+        #TODO: change this
+        return 0
 
-        x = F.interpolate(x, (tf, hs, ws), mode='area')
-        return residual_reshaping(x, final_shape)
+    if ts!=tf:
+        res = F.interpolate(res, (tf, hs, ws), mode='area')
+        return residual_reshaping(res, final_shape)
 
 
     if hs>hf:
         space_compression = hs//hf
-        #TODO: from this part onward it's wrong
-        channel_extention = cf//cs
+        channel_extention = cf//cs # TODO: THIS can be zero 
 
-    axis_compression = space_compression/channel_extention**.5
-    assert np.round(axis_compression)==axis_compression
-    assert np.round(hs/axis_compression)==hs/axis_compression
+        axis_compression = space_compression//channel_extention**.5
+        assert np.round(axis_compression)==axis_compression
+        assert np.round(hs/axis_compression)==hs/axis_compression
+        axis_compression=int(axis_compression)
+
+        interpolation_shape = (ts, hs//axis_compression, ws//axis_compression)
+
+    if hs<hf:
+        space_extention = hf//hs            
+        channel_compression = cs//cf
+
+        axis_extention = space_extention//channel_compression**.5
+        assert np.round(axis_extention)==axis_extention
+        assert np.round(hs/axis_extention)==hs/axis_extention
+
+        interpolation_shape = (ts, hs*axis_extention, ws*axis_extention)
+
+    res = F.interpolate(res, interpolation_shape, mode='area')
+
     
-    interpolation_shape = (ts, hs//axis_compression, ws//axis_compression)
-    x = F.interpolate(x, interpolation_shape, mode='area')
-    return x
+    return res
     
 
 
