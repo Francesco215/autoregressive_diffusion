@@ -118,6 +118,13 @@ class EncoderDecoderBlock(nn.Module):
 
         return x, cache
 
+def interpolate_channels(res, cf):
+    b, c, t, h, w = res.shape
+    res = einops.rearrange(res, 'b c t h w -> b (t h w) c')
+    res = F.interpolate(res, cf, mode='area')
+    res = einops.rearrange(res, 'b (t h w) c -> b c t h w', t=t, h=h, w=w)
+    return res
+
         
 def residual_reshaping(res, final_shape):
     starting_shape = res.shape
@@ -126,10 +133,6 @@ def residual_reshaping(res, final_shape):
     b, cs, ts, hs, ws = starting_shape
     b, cf, tf, hf, wf = final_shape
 
-    if starting_shape[2:]==final_shape[2:]:
-        #TODO: change this
-        return 0
-
     if ts!=tf:
         res = F.interpolate(res, (tf, hs, ws), mode='area')
         return residual_reshaping(res, final_shape)
@@ -137,7 +140,11 @@ def residual_reshaping(res, final_shape):
 
     if hs>hf:
         space_compression = hs//hf
-        channel_extention = cf//cs # TODO: THIS can be zero 
+        if cs<cf:
+            res = interpolate_channels(res, cf)
+            cs = cf
+
+        channel_extention = cf//cs 
 
         axis_compression = space_compression//channel_extention**.5
         assert np.round(axis_compression)==axis_compression
@@ -148,13 +155,20 @@ def residual_reshaping(res, final_shape):
 
     if hs<hf:
         space_extention = hf//hs            
+        if cs>cf:
+            res = interpolate_channels(res, cf)
+            cs=cf
         channel_compression = cs//cf
 
         axis_extention = space_extention//channel_compression**.5
         assert np.round(axis_extention)==axis_extention
         assert np.round(hs/axis_extention)==hs/axis_extention
+        axis_extention = int(axis_extention)
 
         interpolation_shape = (ts, hs*axis_extention, ws*axis_extention)
+    
+    if cs!=cf:
+        res = interpolate_channels(res, cf)
 
     res = F.interpolate(res, interpolation_shape, mode='area')
 

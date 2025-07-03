@@ -2,7 +2,6 @@ import os
 import inspect
 import tempfile
 from urllib.parse import urlparse
-import boto3
 
 import torch
 from torch import Tensor, nn
@@ -14,6 +13,7 @@ from . import misc
 class BetterModule(nn.Module):
 
     def save_to_state_dict(self, path):
+        import boto3
         data = {"state_dict": self.state_dict(), "kwargs": self.kwargs}
 
         if path.startswith("s3://"):
@@ -35,6 +35,7 @@ class BetterModule(nn.Module):
 
     @classmethod
     def from_pretrained(cls, checkpoint):
+        import boto3
         if isinstance(checkpoint,str):
             if checkpoint.startswith("s3://"):
                 # Parse S3 URL
