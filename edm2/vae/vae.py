@@ -90,8 +90,8 @@ class EncoderDecoderBlock(nn.Module):
         self.updown_block = UpDownBlock(time_compression, spatial_compression, 'up' if type=='decoder' else 'down')
         total_compression = self.updown_block.total_compression
 
-        self.decompression_block = GroupCausal3DConvVAE(in_channels, out_channels*total_compression, kernel, group_size//time_compression) if type=='decoder' else None
-        self.compression_block  =  GroupCausal3DConvVAE(in_channels*total_compression, out_channels, kernel, group_size) if type in ['encoder', 'discriminator'] else None
+        self.decompression_block = nn.Conv3d(in_channels, out_channels*total_compression, kernel_size=(1,1,1)) if type=='decoder' else None
+        self.compression_block  =  nn.Conv3d(in_channels*total_compression, out_channels, kernel_size=(1,1,1)) if type in ['encoder', 'discriminator'] else None
 
         self.res_blocks = nn.ModuleList([ResBlock(out_channels, kernel, group_size) for _ in range(n_res_blocks)])
 
@@ -100,16 +100,15 @@ class EncoderDecoderBlock(nn.Module):
         res = x.clone()
 
         if self.decompression_block:
-            x, cache['decompression_block'] = self.decompression_block(x, cache = cache.get('decompression_block', None))
+            x = self.decompression_block(x)
+            res = interpolate_channels(res, x.shape[1])
 
-        x = self.updown_block(x)
+        x, res = self.updown_block(x), self.updown_block(res)
 
         if self.compression_block:
-            x, cache['compression_block'] = self.compression_block(x, cache = cache.get('compression_block', None))
+            x = self.compression_block(x)
+            res = interpolate_channels(res, x.shape[1])
 
-        res = residual_reshaping(res, x.shape)
-        if not(isinstance(res, torch.Tensor)) or res.shape[1]!= x.shape[1]:
-            res = self.updown_block(res)
         x = x + res
 
         
@@ -118,68 +117,14 @@ class EncoderDecoderBlock(nn.Module):
 
         return x, cache
 
-def interpolate_channels(res, cf):
-    b, c, t, h, w = res.shape
-    res = einops.rearrange(res, 'b c t h w -> b (t h w) c')
-    res = F.interpolate(res, cf, mode='area')
-    res = einops.rearrange(res, 'b (t h w) c -> b c t h w', t=t, h=h, w=w)
-    return res
+def interpolate_channels(x, cf):
+    b, c, t, h, w = x.shape
+    x = einops.rearrange(x, 'b c t h w -> b (t h w) c')
+    x = F.interpolate(x, cf, mode='area')
+    x = einops.rearrange(x, 'b (t h w) c -> b c t h w', t=t, h=h, w=w)
+    return x
 
         
-def residual_reshaping(res, final_shape):
-    starting_shape = res.shape
-    if np.prod(starting_shape)==np.prod(final_shape): return res
-
-    b, cs, ts, hs, ws = starting_shape
-    b, cf, tf, hf, wf = final_shape
-
-    if ts!=tf:
-        res = F.interpolate(res, (tf, hs, ws), mode='area')
-        return residual_reshaping(res, final_shape)
-
-
-    if hs>hf:
-        space_compression = hs//hf
-        if cs<cf:
-            res = interpolate_channels(res, cf)
-            cs = cf
-
-        channel_extention = cf//cs 
-
-        axis_compression = space_compression//channel_extention**.5
-        assert np.round(axis_compression)==axis_compression
-        assert np.round(hs/axis_compression)==hs/axis_compression
-        axis_compression=int(axis_compression)
-
-        interpolation_shape = (ts, hs//axis_compression, ws//axis_compression)
-
-    if hs<hf:
-        space_extention = hf//hs            
-        if cs>cf:
-            res = interpolate_channels(res, cf)
-            cs=cf
-        channel_compression = cs//cf
-
-        axis_extention = space_extention//channel_compression**.5
-        assert np.round(axis_extention)==axis_extention
-        assert np.round(hs/axis_extention)==hs/axis_extention
-        axis_extention = int(axis_extention)
-
-        interpolation_shape = (ts, hs*axis_extention, ws*axis_extention)
-    
-    if cs!=cf:
-        res = interpolate_channels(res, cf)
-
-    res = F.interpolate(res, interpolation_shape, mode='area')
-
-    
-    return res
-    
-
-
-        
-        
-
 
 
 
@@ -197,9 +142,9 @@ class UpDownBlock:
         if self.total_compression==1: return x
 
         if self.direction=='down':
-            return einops.rearrange(x, 'b c (t tc) (h hc) (w wc) -> b (c tc hc wc) t h w', tc=self.time_compression, hc=self.spatial_compression, wc=self.spatial_compression)
+            return einops.rearrange(x, 'b c (t tc) (h hc) (w wc) -> b (tc hc wc c) t h w', tc=self.time_compression, hc=self.spatial_compression, wc=self.spatial_compression)
 
-        return einops.rearrange(x, 'b (c tc hc wc) t h w -> b c (t tc) (h hc) (w wc)', tc=self.time_compression, hc=self.spatial_compression, wc=self.spatial_compression)
+        return einops.rearrange(x, 'b (tc hc wc c) t h w -> b c (t tc) (h hc) (w wc)', tc=self.time_compression, hc=self.spatial_compression, wc=self.spatial_compression)
 
 
 
