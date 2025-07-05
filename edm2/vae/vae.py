@@ -66,7 +66,7 @@ class ResBlock(nn.Module):
         self.norm_1 = GroupNorm3D(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
 
         self.conv3d0 = GroupCausal3DConvVAE(channels, channels,  kernel, group_size, dilation = (1,1,1))
-        self.conv3d1 = GroupCausal3DConvVAE(channels, channels, kernel, group_size, dilation = (1,1,1))
+        self.conv3d1 = nn.Conv3d(channels, channels, kernel_size=(1,3,3), padding = (0,1,1))
 
     def forward(self, x, cache = None):
         if cache is None: cache = {}
@@ -77,7 +77,7 @@ class ResBlock(nn.Module):
 
         y = self.norm_1(y)
         y = mp_silu(y)
-        y, cache['conv3d_res1'] = self.conv3d1(y, cache=cache.get('conv3d_res1', None))
+        y = self.conv3d1(y)
 
         x = x + y
 
