@@ -24,17 +24,17 @@ if __name__=="__main__":
 
     batch_size = 8
     micro_batch_size = 2
-    clip_length = 24 
+    clip_length = 16 
     
     # Hyperparameters
     latent_channels = 8
     n_res_blocks = 2
-    channels = [3, 64, 64, 64, latent_channels]
+    channels = [3, 64, 256, 256, latent_channels]
 
     # Initialize models
     vae = VAE(channels = channels, n_res_blocks=n_res_blocks, spatial_compressions=[1,2,2,2], time_compressions=[1,2,2,1]).to(device)
-    # vae = VAE.load_from_pretrained('saved_models/vae_cs_4264.pt').to(device)
     # Example instantiation
+    #%%
     
     dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(clip_length), num_workers=8, shuffle=False)
@@ -79,7 +79,7 @@ if __name__=="__main__":
             recon_loss = F.l1_loss(recon, frames)
 
             # Define the loss components
-            main_loss = recon_loss + kl_loss*1e-3 
+            main_loss = recon_loss + kl_loss*1e-4 
             main_loss.backward()
 
             if batch_idx % (batch_size//micro_batch_size) == 0:
@@ -99,28 +99,65 @@ if __name__=="__main__":
             # Visualization every 100 steps
 
             
-            if batch_idx % 10 == 0 and batch_idx > 0:
-                fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+            if batch_idx % 1000 == 0 and batch_idx > 0:
+                fig = plt.figure(figsize=(15, 8))
 
-                axes[0].plot(recon_losses, label="Recon Loss", color="blue")
-                axes[0].set_title("Reconstruction Loss")
-                axes[0].set_yscale("log")
-                axes[0].set_xscale("log")
-                axes[0].set_xlabel("Steps")
-                axes[0].set_ylabel("Loss")
-                axes[0].grid(True)
+                # Top section: 2 rows for original and reconstructed frames
+                gs_top = plt.GridSpec(2, 5, figure=fig, top=0.95, bottom=0.55, left=0.1, right=0.9)
+                orig_axes = [fig.add_subplot(gs_top[0, i]) for i in range(5)]
+                recon_axes = [fig.add_subplot(gs_top[1, i]) for i in range(5)]
 
-                axes[1].plot(kl_losses, label="KL Loss", color="red")
-                axes[1].set_title("KL Loss")
-                axes[1].set_yscale("log")
-                axes[1].set_xscale("log")
-                axes[1].set_xlabel("Steps")
-                axes[1].set_ylabel("Loss")
-                axes[1].grid(True)
+                # Bottom section: 1x2 for loss plots
+                gs_bottom = plt.GridSpec(1, 2, figure=fig, top=0.45, bottom=0.1, left=0.1, right=0.9, hspace=0.4)
+                loss_axes = [
+                    fig.add_subplot(gs_bottom[0, 0]),
+                    fig.add_subplot(gs_bottom[0, 1])
+                ]
+
+                # Frame visualization
+                with torch.no_grad():
+                    frames_denorm = (frames.cpu() + 1) / 2
+                    recon_denorm = (recon.cpu() + 1) / 2
+
+                    frames_denorm = torch.clamp(frames_denorm[0], 0, 1)  # (c, t, h, w)
+                    recon_denorm = torch.clamp(recon_denorm[0], 0, 1)
+
+                    frames_denorm = einops.rearrange(frames_denorm, 'c t h w -> t h w c')
+                    recon_denorm = einops.rearrange(recon_denorm, 'c t h w -> t h w c')
+
+                    t = frames_denorm.shape[0]
+                    indices = np.linspace(0, t - 1, 5, dtype=int)
+
+                    for i, idx in enumerate(indices):
+                        orig_axes[i].imshow(frames_denorm[idx])
+                        orig_axes[i].set_title(f"Orig t={idx}")
+                        orig_axes[i].axis('off')
+
+                        recon_axes[i].imshow(recon_denorm[idx])
+                        recon_axes[i].set_title(f"Recon t={idx}")
+                        recon_axes[i].axis('off')
+
+                # Plot reconstruction loss
+                loss_axes[0].plot(recon_losses, label="Recon Loss", color="blue")
+                loss_axes[0].set_title("Reconstruction Loss")
+                loss_axes[0].set_yscale("log")
+                loss_axes[0].set_xscale("log")
+                loss_axes[0].set_xlabel("Steps")
+                loss_axes[0].set_ylabel("Loss")
+                loss_axes[0].grid(True)
+
+                # Plot KL loss
+                loss_axes[1].plot(kl_losses, label="KL Loss", color="red")
+                loss_axes[1].set_title("KL Loss")
+                loss_axes[1].set_yscale("log")
+                loss_axes[1].set_xscale("log")
+                loss_axes[1].set_xlabel("Steps")
+                loss_axes[1].set_ylabel("Loss")
+                loss_axes[1].grid(True)
 
                 plt.tight_layout()
                 os.makedirs("images_training", exist_ok=True)
-                plt.savefig(f"images_training/loss_plot_step_{batch_idx}.png")
+                plt.savefig(f"images_training/combined_step_cs_{batch_idx}.png")
                 plt.close()
 
             if batch_idx % (total_number_of_steps // 10) == 0 and batch_idx != 0:
