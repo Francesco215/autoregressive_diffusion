@@ -82,7 +82,9 @@ if __name__=="__main__":
             adversarial_loss = F.cross_entropy(logits, targets)/np.log(2)
 
             # Define the loss components
-            adversarial_loss.backward()
+            loss = recon_loss + adversarial_loss*1e-1
+            loss.backward()
+
 
             if batch_idx % (batch_size//micro_batch_size) == 0:
                 nn.utils.clip_grad_norm_(vae.parameters(), 1)
@@ -184,7 +186,7 @@ if __name__=="__main__":
                     loss_axes[min(i,1)].grid(True, linestyle='--', alpha=0.7)
 
                     
-                    if i==1:
+                    if i==2:
                         loss_axes[min(i,1)].legend()
 
                 # Adjust layout to fit everything nicely
