@@ -149,10 +149,10 @@ class UpDownBlock:
 
 
 class EncoderDecoder(nn.Module):
-    def __init__(self, channels = [3, 32, 32, 8], n_res_blocks = 2, time_compressions = [1,2,2], spatial_compressions = [1,2,2], type='encoder', logvar_mode='fixed'):
+    def __init__(self, channels = [3, 32, 32, 8], n_res_blocks = 2, time_compressions = [1,2,2], spatial_compressions = [1,2,2], type='encoder', logvar_mode='learned'):
         super().__init__()
         assert type in ['encoder', 'decoder', 'discriminator'], 'Invalid type, expected encoder, decoder or discriminator'
-        assert logvar_mode in ['fixed', 'learned'], 'Invalid logvar_mode, expected fixed or learned'
+        assert logvar_mode in ['learned', 'learned_constant'] or isinstance(logvar_mode, float), 'Invalid logvar_mode, expected learned or learned_constant or a float'
         assert len(channels) -1 == len(time_compressions) == len(spatial_compressions)
 
         self.time_compressions = time_compressions
@@ -167,7 +167,11 @@ class EncoderDecoder(nn.Module):
             group_sizes = group_sizes[::-1]
             if logvar_mode == 'learned':
                 channels[-1] = channels[-1] * 2  
-            self.logvar_multiplier = nn.Parameter(torch.tensor(0.))
+                self.logvar_multiplier = nn.Parameter(torch.tensor(-2.))
+            elif logvar_mode == 'learned_constant':
+                self.logvar_multiplier = nn.Parameter(torch.tensor(-2.))
+            else:
+                self.logvar_multiplier = nn.Parameter(torch.tensor(logvar_mode), requires_grad=False)
 
         elif type=='decoder':
             channels = channels[::-1]
@@ -191,8 +195,8 @@ class EncoderDecoder(nn.Module):
             return x, cache
 
         # Different logvar calculation methods
-        if self.logvar_mode == 'fixed':
-            return x, torch.ones_like(x)*np.log(0.5), cache
+        if self.logvar_mode == 'learned_constant' or isinstance(self.logvar_mode, float):
+            return x, torch.ones_like(x)*self.logvar_multiplier, cache
         else:  # learned
             mean, logvar = x.split(split_size=x.shape[1]//2, dim=1)
             logvar = logvar*torch.exp(self.logvar_multiplier)
@@ -206,7 +210,7 @@ class VAE(BetterModule):
         
         self.latent_channels = channels[-1]
         self.encoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='encoder', logvar_mode=logvar_mode)
-        self.decoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='decoder')
+        self.decoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='decoder', logvar_mode=logvar_mode)
 
         self.time_compression = np.prod(time_compressions)
         self.spatial_compression = np.prod(spatial_compressions)

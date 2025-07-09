@@ -16,23 +16,23 @@ import matplotlib.pyplot as plt
 from edm2.cs_dataloading import CsCollate, CsDataset
 from edm2.vae import VAE, MixedDiscriminator
 
-torch.autograd.set_detect_anomaly(True)
+# torch.autograd.set_detect_anomaly(True)
 if __name__=="__main__":
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+    device = "cuda"
     original_env = "LunarLander-v3"
 
-    batch_size = 8
-    micro_batch_size = 2
-    clip_length = 16 
+    batch_size = 16
+    micro_batch_size = 4
+    clip_length = 32 
     
     # Hyperparameters
     latent_channels = 8
-    n_res_blocks = 2
-    channels = [3, 64, 256, 256, latent_channels]
+    n_res_blocks = 3
+    channels = [3, 64, 256, 512, latent_channels]
 
     # Initialize models
-    vae = VAE(channels = channels, n_res_blocks=n_res_blocks, spatial_compressions=[1,2,2,2], time_compressions=[1,2,2,1]).to(device)
+    vae = VAE(channels = channels, n_res_blocks=n_res_blocks, spatial_compressions=[1,2,2,2], time_compressions=[1,2,2,1], logvar_mode=0.1).to(device)
+    vae = torch.compile(vae)
     # Example instantiation
     #%%
     
@@ -40,24 +40,37 @@ if __name__=="__main__":
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(clip_length), num_workers=8, shuffle=False)
     total_number_of_steps = len(dataloader)//micro_batch_size
 
-
     vae_params = sum(p.numel() for p in vae.parameters())
     print(f"Number of vae parameters: {vae_params//1e3}K")
     # sigma_data = 0.434
     sigma_data = 1.
 
     # Define optimizers
-    base_lr = 1e-4
+    base_lr = 3e-4
     optimizer_vae = AdamW(vae.parameters(), lr=base_lr, eps=1e-8)
     optimizer_vae.zero_grad()
 
-    # Add exponential decay schedule
-    gamma = 0.1 ** (1 / total_number_of_steps)  # Decay factor so lr becomes 0.1 * initial_lr after 40,000 steps
-    scheduler_vae = lr_scheduler.ExponentialLR(optimizer_vae, gamma=gamma)
-    losses = []
+    # --- Scheduler Definition ---
+    warmup_steps = 100
+    decay_factor = 0.1 # The factor by which the LR will be decayed
+
+    # Calculate gamma for the exponential decay part of the schedule
+    # This ensures the LR decays to `decay_factor` * `base_lr` over the steps following the warmup
+    gamma = decay_factor ** (1 / (total_number_of_steps - warmup_steps))
+
+    # Define the learning rate schedule function
+    def lr_lambda(current_step):
+        if current_step < warmup_steps:
+            return float(current_step) / float(max(1, warmup_steps))
+        else:
+            # The decay starts after the warmup is complete
+            return gamma ** (current_step - warmup_steps)
+
+    # Add the combined warmup and decay schedule
+    scheduler_vae = lr_scheduler.LambdaLR(optimizer_vae, lr_lambda)
 
 
-    recon_losses, kl_losses = [], []
+    recon_losses, kl_losses, losses = [], [], []
 
     #%%
     # Training loop
@@ -82,21 +95,16 @@ if __name__=="__main__":
             main_loss = recon_loss + kl_loss*1e-4 
             main_loss.backward()
 
-            if batch_idx % (batch_size//micro_batch_size) == 0:
+            if batch_idx % (batch_size//micro_batch_size) == 0 and batch_idx!=0:
                 nn.utils.clip_grad_norm_(vae.parameters(), 1)
                 optimizer_vae.step()
                 scheduler_vae.step()
                 optimizer_vae.zero_grad()
 
 
-            pbar.set_postfix_str(f"recon loss: {recon_loss.item():.4f}, KL loss: {kl_loss.item():.4f}")
+            pbar.set_postfix_str(f"recon loss: {recon_loss.item():.4f}, KL loss: {kl_loss.item():.4f}, current_lr: {optimizer_vae.param_groups[0]['lr']:.4f}")
             recon_losses.append(recon_loss.item())
             kl_losses.append(kl_loss.item())
-
-            # if batch_idx == 500:
-            #     adv_multiplier = 5e-2
-
-            # Visualization every 100 steps
 
             
             if batch_idx % 1000 == 0 and batch_idx > 0:
