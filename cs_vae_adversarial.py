@@ -26,13 +26,15 @@ if __name__=="__main__":
 
     batch_size = 8
     micro_batch_size = 4
-    clip_length = 32 
+    clip_length = 32
 
     # Initialize models
     vae = VAE.from_pretrained('saved_models/vae_cs_62040.pt').requires_grad_(False).to(device)
+    vae.decoder.encoder_blocks[-2].requires_grad_(True)
     vae.decoder.encoder_blocks[-1].requires_grad_(True)
+    vae = torch.compile(vae)
     # Example instantiation
-    discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(32,)).to(device)
+    discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(64,32)).to(device)
     
     dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(clip_length), num_workers=8, shuffle=False)
@@ -64,54 +66,74 @@ if __name__=="__main__":
 
     #%%
     # Training loop
-    for _ in range(10):
-        pbar = tqdm(enumerate(dataloader), total=total_number_of_steps)
-        for batch_idx, micro_batch in pbar:
-            with torch.no_grad():
-                frames, _ = micro_batch  # Ignore actions and reward for this VggAE training
-                frames = frames.float() / 127.5 - 1  # Normalize to [-1, 1]
-                frames = einops.rearrange(frames, 'b t h w c-> b c t h w').to(device)
+  
+    # --- Training loop ---
+    for epoch in range(10):
+        pbar = tqdm(dataloader)
+        for batch_idx, micro_batch in enumerate(pbar):
+            frames, _ = micro_batch
+            frames = frames.float() / 127.5 - 1
+            frames = einops.rearrange(frames, 'b t h w c -> b c t h w').to(device)
 
-            # VAE forward pass
+            # ===================================
+            #       TRAIN THE VAE (GENERATOR)
+            # ===================================
+            optimizer_vae.zero_grad()
+
+            # VAE forward pass to get reconstructed frames
             recon, _, _, _ = vae(frames)
 
+            # 1. Reconstruction Loss (e.g., L1 loss)
             recon_loss = F.l1_loss(recon, frames)
-            logits = discriminator(recon)
-            targets = torch.ones(logits.shape[0], *logits.shape[2:], device=device, dtype=torch.long)
 
-            adversarial_loss = F.cross_entropy(logits, targets)/np.log(2)
+            # 2. Adversarial Loss for the VAE
+            # We want the VAE to fool the discriminator.
+            # DO NOT detach `recon` here, so gradients can flow to the VAE.
+            with torch.no_grad():
+                logits_real_for_vae = discriminator(frames) # Detach since we don't need grads wrt D
+            logits_fake_for_vae = discriminator(recon)
+        
+            # Generator wants to minimize the difference, which is the negative of the discriminator's objective
+            vae_adv_loss = -torch.log(1 + torch.exp(logits_real_for_vae - logits_fake_for_vae)).mean()
+        
+            # Total VAE loss
+            vae_total_loss = recon_loss + vae_adv_loss * 0.1 # You might want to weight the adv_loss
 
-            # Define the loss components
-            loss = recon_loss + adversarial_loss*1e-1
-            loss.backward()
+            # Backpropagate and update the VAE
+            vae_total_loss.backward(retain_graph=False)
+            nn.utils.clip_grad_norm_(vae.parameters(), 1) # Clipping can still be useful
+            optimizer_vae.step()
+            scheduler_vae.step()
 
+            # ===================================
+            #      TRAIN THE DISCRIMINATOR
+            # ===================================
+            optimizer_disc.zero_grad()
+        
+            # We can reuse `recon` from the VAE step, but we MUST detach it now.
+            recon_detached = recon.detach()
+        
+            # 1. Adversarial Loss for the Discriminator
+            logits_real = discriminator(frames)
+            logits_fake = discriminator(recon_detached)
+        
+            # Discriminator wants to maximize the difference
+            disc_adv_loss = torch.log(1 + torch.exp(logits_real - logits_fake)).mean()
 
-            if batch_idx % (batch_size//micro_batch_size) == 0:
-                nn.utils.clip_grad_norm_(vae.parameters(), 1)
-                optimizer_vae.step()
-                scheduler_vae.step()
-                optimizer_vae.zero_grad()
+            # Total discriminator loss
+            disc_total_loss = disc_adv_loss 
+        
+            # Backpropagate and update the discriminator
+            disc_total_loss.backward()
+            nn.utils.clip_grad_norm_(discriminator.parameters(), 1)
+            optimizer_disc.step()
+            scheduler_disc.step()
+        
+            pbar.set_postfix_str(f"Epoch {epoch+1}, VAE Loss: {recon_loss.item():.4f}, Disc Loss: {disc_total_loss.item():.4f}")
 
-
-            logits_real = discriminator(frames.detach())
-            logits_fake = discriminator(recon.detach())
-            loss_disc_real = F.cross_entropy(logits_real, torch.ones_like (targets))/np.log(2)
-            loss_disc_fake = F.cross_entropy(logits_fake, torch.zeros_like(targets))/np.log(2)
-            loss_disc = (loss_disc_real + loss_disc_fake)/2
-
-            loss_disc.backward()
-            # Update discriminator
-            if batch_idx % (batch_size//micro_batch_size) == 0:
-                nn.utils.clip_grad_norm_(discriminator.parameters(), 1)
-                optimizer_disc.step()
-                scheduler_disc.step()
-                optimizer_disc.zero_grad()
-            
-            pbar.set_postfix_str(f"recon loss: {recon_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}, Adversarial Loss: {adversarial_loss.mean().item():.4f}")
             recon_losses.append(recon_loss.item())
-            adversarial_losses.append(adversarial_loss.mean().item())
-            disc_losses.append(loss_disc.item())
-
+            disc_losses.append(disc_total_loss.item())
+            adversarial_losses.append(vae_adv_loss.item())
             # if batch_idx == 500:
             #     adv_multiplier = 5e-2
 
