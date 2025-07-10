@@ -15,20 +15,21 @@ import matplotlib.pyplot as plt
 
 from edm2.cs_dataloading import CsCollate, CsDataset
 from edm2.vae import VAE, MixedDiscriminator
+from edm2.utils import GaussianLoss
 
-# torch.autograd.set_detect_anomaly(True)
+torch.autograd.set_detect_anomaly(True)
 if __name__=="__main__":
     device = "cuda"
     original_env = "LunarLander-v3"
 
-    batch_size = 16
+    batch_size = 4
     micro_batch_size = 4
     clip_length = 32 
     
     # Hyperparameters
     latent_channels = 8
     n_res_blocks = 3
-    channels = [3, 64, 256, 512, latent_channels]
+    channels = [3, 16, 64, 256, latent_channels]
 
     # Initialize models
     vae = VAE(channels = channels, n_res_blocks=n_res_blocks, spatial_compressions=[1,2,2,2], time_compressions=[1,2,2,1], logvar_mode=0.1).to(device)
@@ -83,16 +84,18 @@ if __name__=="__main__":
                 frames = einops.rearrange(frames, 'b t h w c-> b c t h w').to(device)
 
             # VAE forward pass
-            recon, mean, logvar, _ = vae(frames)
+            r_mean, r_logvar, mean, logvar, _ = vae(frames)
 
             # in theory the mean should be only with respect to the batch size
             kl_loss = -0.5 * (1 + logvar - mean.pow(2) - logvar.exp()).sum(dim=1).mean()
 
             # VAE losses
-            recon_loss = F.l1_loss(recon, frames)
+            gaussian_loss = GaussianLoss(r_mean, r_logvar, frames)
+            l1_loss = F.l1_loss(r_mean, frames)
+
 
             # Define the loss components
-            main_loss = recon_loss + kl_loss*1e-4 
+            main_loss = gaussian_loss + kl_loss*1e-4 
             main_loss.backward()
 
             if batch_idx % (batch_size//micro_batch_size) == 0 and batch_idx!=0:
@@ -102,12 +105,12 @@ if __name__=="__main__":
                 optimizer_vae.zero_grad()
 
 
-            pbar.set_postfix_str(f"recon loss: {recon_loss.item():.4f}, KL loss: {kl_loss.item():.4f}, current_lr: {optimizer_vae.param_groups[0]['lr']:.4f}")
-            recon_losses.append(recon_loss.item())
+            pbar.set_postfix_str(f"recon loss: {gaussian_loss.item():.4f}, l1 loss: {l1_loss.item():.4f}, KL loss: {kl_loss.item():.4f}, current_lr: {optimizer_vae.param_groups[0]['lr']:.4f}")
+            recon_losses.append(l1_loss.item())
             kl_losses.append(kl_loss.item())
 
             
-            if batch_idx % 1000 == 0 and batch_idx > 0:
+            if batch_idx % 100 == 0 and batch_idx > 0:
                 fig = plt.figure(figsize=(15, 8))
 
                 # Top section: 2 rows for original and reconstructed frames
@@ -125,7 +128,7 @@ if __name__=="__main__":
                 # Frame visualization
                 with torch.no_grad():
                     frames_denorm = (frames.cpu() + 1) / 2
-                    recon_denorm = (recon.cpu() + 1) / 2
+                    recon_denorm = ((r_mean + torch.randn_like(r_mean) * torch.exp(0.5 * r_logvar)).cpu() + 1) / 2
 
                     frames_denorm = torch.clamp(frames_denorm[0], 0, 1)  # (c, t, h, w)
                     recon_denorm = torch.clamp(recon_denorm[0], 0, 1)

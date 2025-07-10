@@ -165,20 +165,19 @@ class EncoderDecoder(nn.Module):
 
         if type=='encoder':
             group_sizes = group_sizes[::-1]
-            if logvar_mode == 'learned':
-                channels[-1] = channels[-1] * 2  
-                self.logvar_multiplier = nn.Parameter(torch.tensor(-2.))
-            elif logvar_mode == 'learned_constant':
-                self.logvar_multiplier = nn.Parameter(torch.tensor(-2.))
-            else:
-                self.logvar_multiplier = nn.Parameter(torch.tensor(logvar_mode), requires_grad=False)
-
         elif type=='decoder':
             channels = channels[::-1]
-        elif type=='discriminator':
-            raise NotImplementedError
-            group_sizes = group_sizes[::-1]
-            assert latent_channels == 2, 'Discriminator should have 2 latent channels, one for each logit'
+
+        if logvar_mode == 'learned':
+            self.logvar_multiplier = nn.Parameter(torch.tensor(-2.))
+        elif logvar_mode == 'learned_constant':
+            self.logvar_multiplier = nn.Parameter(torch.tensor(-2.))
+        else:
+            self.logvar_multiplier = nn.Parameter(torch.tensor(logvar_mode), requires_grad=False)
+
+        
+        if logvar_mode=='learned':
+            channels[-1] = channels[-1] * 2  
 
         in_channels, out_channels = channels[:-1], channels[1:]
         kernels = [(int(group_size)*2,3,3) for group_size in group_sizes]
@@ -190,9 +189,6 @@ class EncoderDecoder(nn.Module):
 
         for i, block in enumerate(self.encoder_blocks):
             x, cache[f'encoder_block_{i}'] = block(x, cache.get(f'encoder_block_{i}', None))
-
-        if self.encoding_type in ['decoder','discriminator']:
-            return x, cache
 
         # Different logvar calculation methods
         if self.logvar_mode == 'learned_constant' or isinstance(self.logvar_mode, float):
@@ -210,7 +206,7 @@ class VAE(BetterModule):
         
         self.latent_channels = channels[-1]
         self.encoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='encoder', logvar_mode=logvar_mode)
-        self.decoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='decoder', logvar_mode=logvar_mode)
+        self.decoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='decoder', logvar_mode='learned')
 
         self.time_compression = np.prod(time_compressions)
         self.spatial_compression = np.prod(spatial_compressions)
@@ -230,9 +226,9 @@ class VAE(BetterModule):
         z, mean, logvar, cache['encoder'] = self.encode(x, cache.get('encoder', None))
         
         # Decode latent vector to reconstruct input
-        recon, cache['decoder'] = self.decode(z, cache.get('decoder', None))
+        r_mean, r_logvar, cache['decoder'] = self.decode(z, cache.get('decoder', None))
 
-        return recon, mean, logvar, cache
+        return r_mean, r_logvar, mean, logvar, cache
     
     def encode(self, x, cache=None):
         mean, logvar, cache = self.encoder(x, cache)
@@ -244,8 +240,8 @@ class VAE(BetterModule):
         return z, mean, logvar, cache
     
     def decode(self, z, cache=None):
-        recon, cache = self.decoder(z, cache)
-        return recon, cache
+        r_mean, r_logvar, cache = self.decoder(z, cache)
+        return r_mean, r_logvar, cache
     
 
 

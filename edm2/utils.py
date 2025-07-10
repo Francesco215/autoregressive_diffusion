@@ -206,7 +206,9 @@ def nan_inspector(model):
             hook.remove()
 
             
-            
+def GaussianLoss(mean, logvar, target, eps=1e-4):
+    return ((logvar + (mean-target)**2*(torch.exp(-logvar)))*.5+0.918).mean()
+
 
 
 def compare_caches(cache1, cache2, rtol=1e-4, atol=1e-4, verbose=True):
