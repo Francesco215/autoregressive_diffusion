@@ -15,22 +15,24 @@ from streaming.base.util import clean_stale_shared_memory
 
 
 from edm2.cs_dataloading import CsCollate, CsDataset
+from edm2.utils import GaussianLoss
 from edm2.vae import VAE, MixedDiscriminator
 
-torch.autograd.set_detect_anomaly(True)
+# torch.autograd.set_detect_anomaly(True)
+torch._dynamo.config.recompile_limit=100
 if __name__=="__main__":
     clean_stale_shared_memory()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     original_env = "LunarLander-v3"
 
-    batch_size = 8
-    micro_batch_size = 4
+    batch_size = 1
+    micro_batch_size = 1
     clip_length = 32
 
     # Initialize models
-    vae = VAE.from_pretrained('saved_models/vae_cs_62040.pt').requires_grad_(False).to(device)
-    vae.decoder.encoder_blocks[-2].requires_grad_(True)
+    vae = VAE.from_pretrained('saved_models/vae_cs_18122.pt').requires_grad_(False).to(device)
+    # vae.decoder.encoder_blocks[-2].requires_grad_(True)
     vae.decoder.encoder_blocks[-1].requires_grad_(True)
     vae = torch.compile(vae)
     # Example instantiation
@@ -50,8 +52,9 @@ if __name__=="__main__":
 
     # Define optimizers
     base_lr = 1e-4
-    optimizer_vae = AdamW((p for p in vae.parameters() if p.requires_grad), lr=base_lr, eps=1e-8)
-    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr, eps=1e-8)
+    vae_training_parameters = (p for p in vae.parameters() if p.requires_grad)
+    optimizer_vae =  AdamW(vae_training_parameters, lr=base_lr, eps=1e-8, betas = (0.99,0.9999))    
+    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr, eps=1e-8, betas = (0.99,0.9999)) 
     optimizer_vae.zero_grad()
     optimizer_disc.zero_grad()
 
@@ -59,10 +62,9 @@ if __name__=="__main__":
     gamma = 0.1 ** (1 / total_number_of_steps)  # Decay factor so lr becomes 0.1 * initial_lr after 40,000 steps
     scheduler_vae = lr_scheduler.ExponentialLR(optimizer_vae, gamma=gamma)
     scheduler_disc = lr_scheduler.ExponentialLR(optimizer_disc, gamma=gamma)
-    losses = []
 
 
-    recon_losses, disc_losses, adversarial_losses= [], [], []
+    losses, recon_losses, disc_losses, adversarial_losses= [], [], [], []
 
     #%%
     # Training loop
@@ -75,33 +77,31 @@ if __name__=="__main__":
             frames = frames.float() / 127.5 - 1
             frames = einops.rearrange(frames, 'b t h w c -> b c t h w').to(device)
 
-            # ===================================
-            #       TRAIN THE VAE (GENERATOR)
-            # ===================================
             optimizer_vae.zero_grad()
 
             # VAE forward pass to get reconstructed frames
-            recon, _, _, _ = vae(frames)
+            r_mean, r_logvar, mean, logvar, _ = vae(frames)
 
             # 1. Reconstruction Loss (e.g., L1 loss)
-            recon_loss = F.l1_loss(recon, frames)
+            gaussian_loss = GaussianLoss(r_mean, r_logvar, frames)
+            recon_loss = F.l1_loss(r_mean, frames)
 
             # 2. Adversarial Loss for the VAE
             # We want the VAE to fool the discriminator.
             # DO NOT detach `recon` here, so gradients can flow to the VAE.
             with torch.no_grad():
                 logits_real_for_vae = discriminator(frames) # Detach since we don't need grads wrt D
-            logits_fake_for_vae = discriminator(recon)
+            logits_fake_for_vae = discriminator(r_mean)
         
             # Generator wants to minimize the difference, which is the negative of the discriminator's objective
-            vae_adv_loss = -torch.log(1 + torch.exp(logits_real_for_vae - logits_fake_for_vae)).mean()
+            vae_adv_loss = torch.log(1 + torch.exp(-logits_real_for_vae + logits_fake_for_vae)).mean()
         
             # Total VAE loss
-            vae_total_loss = recon_loss + vae_adv_loss * 0.1 # You might want to weight the adv_loss
+            vae_total_loss = gaussian_loss + vae_adv_loss*0.1 # You might want to weight the adv_loss
 
             # Backpropagate and update the VAE
-            vae_total_loss.backward(retain_graph=False)
-            nn.utils.clip_grad_norm_(vae.parameters(), 1) # Clipping can still be useful
+            vae_total_loss.backward()
+            nn.utils.clip_grad_norm_(vae_training_parameters, 1) # Clipping can still be useful
             optimizer_vae.step()
             scheduler_vae.step()
 
@@ -111,7 +111,7 @@ if __name__=="__main__":
             optimizer_disc.zero_grad()
         
             # We can reuse `recon` from the VAE step, but we MUST detach it now.
-            recon_detached = recon.detach()
+            recon_detached = r_mean.detach()
         
             # 1. Adversarial Loss for the Discriminator
             logits_real = discriminator(frames)
@@ -138,7 +138,7 @@ if __name__=="__main__":
             #     adv_multiplier = 5e-2
 
             # Visualization every 100 steps
-            if batch_idx % 1000 == 0 and batch_idx > 0:
+            if batch_idx % 100 == 0 and batch_idx > 0:
                 # Create a figure with a custom layout: 3 sections (2 rows for frames, 2x2 grid for losses)
                 fig = plt.figure(figsize=(15, 12))
 
@@ -158,7 +158,7 @@ if __name__=="__main__":
                 with torch.no_grad():
                     # Detach and denormalize frames and reconstructions
                     frames_denorm = (frames.cpu() + 1) / 2  # Shape: (batch, channels, time, height, width)
-                    recon_denorm = (recon.cpu() + 1) / 2    # Shape: (batch, channels, time, height, width)
+                    recon_denorm = (r_mean.cpu() + 1) / 2    # Shape: (batch, channels, time, height, width)
 
                     # Select the first sequence in the batch
                     frames_denorm = frames_denorm[0]  # Shape: (channels, time, height, width)
