@@ -73,9 +73,9 @@ class ResBlock(nn.Module):
         self.conv3d2 = nn.Conv3d(channels, channels, kernel_size=(1,3,3), padding = (0,1,1))
 
         scaling_factor = 4 ** -.25
-        nn.init.kaiming_uniform_(self.conv3d0.weight)
-        nn.init.zeros_(self.conv3d0.bias)
-        self.conv3d0.weight.data *= scaling_factor
+        nn.init.kaiming_uniform_(self.conv3d0.conv3d.weight)
+        nn.init.zeros_(self.conv3d0.conv3d.bias)
+        self.conv3d0.conv3d.weight.data *= scaling_factor
 
         nn.init.kaiming_uniform_(self.conv3d1.weight)
         nn.init.zeros_(self.conv3d1.bias)
@@ -86,7 +86,7 @@ class ResBlock(nn.Module):
     def forward(self, x, cache = None):
         if cache is None: cache = {}
 
-        y, cache['conv3d_res0'] = self.conv3d0(y, cache=cache.get('conv3d_res0', None))
+        y, cache['conv3d_res0'] = self.conv3d0(x, cache=cache.get('conv3d_res0', None))
         y = self.act1(y)
 
         y = self.conv3d1(y)

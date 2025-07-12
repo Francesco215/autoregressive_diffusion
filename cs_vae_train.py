@@ -12,6 +12,8 @@ from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
 
+# Import LPIPS
+import lpips # <--- ADDED
 
 from edm2.cs_dataloading import CsCollate, CsDataset
 from edm2.vae import VAE, MixedDiscriminator
@@ -24,8 +26,8 @@ if __name__=="__main__":
 
     batch_size = 4
     micro_batch_size = 4
-    clip_length = 32 
-    
+    clip_length = 32
+
     # Hyperparameters
     latent_channels = 8
     n_res_blocks = 3
@@ -36,7 +38,7 @@ if __name__=="__main__":
     vae = torch.compile(vae)
     # Example instantiation
     #%%
-    
+
     dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(clip_length), num_workers=8, shuffle=False)
     total_number_of_steps = len(dataloader)//micro_batch_size
@@ -70,8 +72,13 @@ if __name__=="__main__":
     # Add the combined warmup and decay schedule
     scheduler_vae = lr_scheduler.LambdaLR(optimizer_vae, lr_lambda)
 
+    # Initialize LPIPS loss function <--- ADDED
+    lpips_loss_fn = lpips.LPIPS(net='alex')
+    if torch.cuda.is_available():
+        lpips_loss_fn.cuda()
 
-    recon_losses, kl_losses, losses = [], [], []
+    # Store losses
+    gaussian_recon_losses, l1_recon_losses, lpips_losses, kl_losses = [], [], [], [] # <--- MODIFIED
 
     #%%
     # Training loop
@@ -79,11 +86,14 @@ if __name__=="__main__":
         pbar = tqdm(enumerate(dataloader), total=total_number_of_steps)
         for batch_idx, micro_batch in pbar:
             with torch.no_grad():
-                frames, _ = micro_batch  # Ignore actions and reward for this VggAE training
-                frames = frames.float() / 127.5 - 1  # Normalize to [-1, 1]
+                frames, _ = micro_batch # Ignore actions and reward for this VggAE training
+                frames = frames.float() / 127.5 - 1 # Normalize to [-1, 1]
                 frames = einops.rearrange(frames, 'b t h w c-> b c t h w').to(device)
 
             # VAE forward pass
+            # r_mean (reconstruction mean): This is your hat_x
+            # r_logvar (reconstruction log variance): Used for GaussianLoss
+            # mean (latent mean), logvar (latent log variance): For KL divergence
             r_mean, r_logvar, mean, logvar, _ = vae(frames)
 
             # in theory the mean should be only with respect to the batch size
@@ -93,9 +103,23 @@ if __name__=="__main__":
             gaussian_loss = GaussianLoss(r_mean, r_logvar, frames)
             l1_loss = F.l1_loss(r_mean, frames)
 
+            # --- MODIFIED LPIPS Calculation ---
+            # Reshape frames and r_mean from [B, C, T, H, W] to [B*T, C, H, W]
+            # so that LPIPS can process them as individual images.
+            # Your frames are C=3, and T=32, so we need to flatten T into the batch dimension.
+            frames_flat = torch.clip(einops.rearrange(frames, 'b c t h w -> (b t) c h w'), -1, 1)
+            r_mean_flat = torch.clip(einops.rearrange(r_mean, 'b c t h w -> (b t) c h w'), -1, 1)
+
+            # Calculate LPIPS loss for each frame and then take the mean
+            lpips_loss = lpips_loss_fn(r_mean_flat, frames_flat).mean()
+            # --- END MODIFIED LPIPS Calculation ---
+
 
             # Define the loss components
-            main_loss = gaussian_loss + kl_loss*1e-4 
+            lpips_weight = 0.1
+            kl_weight = 1e-4
+
+            main_loss = gaussian_loss + kl_weight * kl_loss + lpips_weight * lpips_loss
             main_loss.backward()
 
             if batch_idx % (batch_size//micro_batch_size) == 0 and batch_idx!=0:
@@ -104,33 +128,42 @@ if __name__=="__main__":
                 scheduler_vae.step()
                 optimizer_vae.zero_grad()
 
-
-            pbar.set_postfix_str(f"recon loss: {gaussian_loss.item():.4f}, l1 loss: {l1_loss.item():.4f}, KL loss: {kl_loss.item():.4f}, current_lr: {optimizer_vae.param_groups[0]['lr']:.4f}")
-            recon_losses.append(l1_loss.item())
+            # Update tqdm progress bar <--- MODIFIED
+            pbar.set_postfix_str(f"gaussian_recon: {gaussian_loss.item():.4f}, l1_recon: {l1_loss.item():.4f}, lpips: {lpips_loss.item():.4f}, KL: {kl_loss.item():.4f}, current_lr: {optimizer_vae.param_groups[0]['lr']:.4f}")
+            gaussian_recon_losses.append(gaussian_loss.item()) # Store all loss components for plotting
+            l1_recon_losses.append(l1_loss.item())
+            lpips_losses.append(lpips_loss.item()) # <--- ADDED
             kl_losses.append(kl_loss.item())
 
-            
+
             if batch_idx % 100 == 0 and batch_idx > 0:
-                fig = plt.figure(figsize=(15, 8))
+                fig = plt.figure(figsize=(15, 12)) # <--- Increased figure size for 3 plots
 
                 # Top section: 2 rows for original and reconstructed frames
-                gs_top = plt.GridSpec(2, 5, figure=fig, top=0.95, bottom=0.55, left=0.1, right=0.9)
+                gs_top = plt.GridSpec(2, 5, figure=fig, top=0.95, bottom=0.6, left=0.1, right=0.9) # <--- Adjusted bottom margin
                 orig_axes = [fig.add_subplot(gs_top[0, i]) for i in range(5)]
                 recon_axes = [fig.add_subplot(gs_top[1, i]) for i in range(5)]
 
-                # Bottom section: 1x2 for loss plots
-                gs_bottom = plt.GridSpec(1, 2, figure=fig, top=0.45, bottom=0.1, left=0.1, right=0.9, hspace=0.4)
+                # Bottom section: 1x3 for loss plots <--- MODIFIED (was 1x2)
+                gs_bottom = plt.GridSpec(1, 3, figure=fig, top=0.5, bottom=0.1, left=0.05, right=0.95, hspace=0.4, wspace=0.3) # <--- Adjusted wspace
                 loss_axes = [
                     fig.add_subplot(gs_bottom[0, 0]),
-                    fig.add_subplot(gs_bottom[0, 1])
+                    fig.add_subplot(gs_bottom[0, 1]),
+                    fig.add_subplot(gs_bottom[0, 2]) # <--- ADDED for LPIPS loss
                 ]
 
                 # Frame visualization
                 with torch.no_grad():
+                    # Your current denormalization (frames.cpu() + 1) / 2 assumes input was in [-1, 1].
+                    # This is correct given your `frames = frames.float() / 127.5 - 1` line.
                     frames_denorm = (frames.cpu() + 1) / 2
+                    # When visualizing reconstructed frames, if r_mean is the predicted mean and r_logvar is variance,
+                    # sampling from the Gaussian might give a better sense of generated image diversity,
+                    # but for pure reconstruction quality visualization, just using r_mean is often clearer.
+                    # I'm keeping your current sampling here for consistency.
                     recon_denorm = ((r_mean + torch.randn_like(r_mean) * torch.exp(0.5 * r_logvar)).cpu() + 1) / 2
 
-                    frames_denorm = torch.clamp(frames_denorm[0], 0, 1)  # (c, t, h, w)
+                    frames_denorm = torch.clamp(frames_denorm[0], 0, 1) # (c, t, h, w)
                     recon_denorm = torch.clamp(recon_denorm[0], 0, 1)
 
                     frames_denorm = einops.rearrange(frames_denorm, 'c t h w -> t h w c')
@@ -148,23 +181,32 @@ if __name__=="__main__":
                         recon_axes[i].set_title(f"Recon t={idx}")
                         recon_axes[i].axis('off')
 
-                # Plot reconstruction loss
-                loss_axes[0].plot(recon_losses, label="Recon Loss", color="blue")
-                loss_axes[0].set_title("Reconstruction Loss")
+                # Plot Gaussian Reconstruction loss (formerly "Recon Loss")
+                loss_axes[0].plot(l1_recon_losses, label="L1 Recon Loss", color="blue") # <--- MODIFIED
+                loss_axes[0].set_title("Gaussian Recon Loss") # <--- MODIFIED
                 loss_axes[0].set_yscale("log")
                 loss_axes[0].set_xscale("log")
                 loss_axes[0].set_xlabel("Steps")
                 loss_axes[0].set_ylabel("Loss")
                 loss_axes[0].grid(True)
 
-                # Plot KL loss
-                loss_axes[1].plot(kl_losses, label="KL Loss", color="red")
-                loss_axes[1].set_title("KL Loss")
+                # Plot LPIPS loss <--- ADDED NEW PLOT
+                loss_axes[1].plot(lpips_losses, label="LPIPS Loss", color="green")
+                loss_axes[1].set_title("LPIPS Loss")
                 loss_axes[1].set_yscale("log")
                 loss_axes[1].set_xscale("log")
                 loss_axes[1].set_xlabel("Steps")
                 loss_axes[1].set_ylabel("Loss")
                 loss_axes[1].grid(True)
+
+                # Plot KL loss (now at index 2) <--- MODIFIED index
+                loss_axes[2].plot(kl_losses, label="KL Loss", color="red")
+                loss_axes[2].set_title("KL Loss")
+                loss_axes[2].set_yscale("log")
+                loss_axes[2].set_xscale("log")
+                loss_axes[2].set_xlabel("Steps")
+                loss_axes[2].set_ylabel("Loss")
+                loss_axes[2].grid(True)
 
                 plt.tight_layout()
                 os.makedirs("images_training", exist_ok=True)
@@ -176,4 +218,4 @@ if __name__=="__main__":
                 vae.save_to_state_dict(f'saved_models/vae_cs_{batch_idx}.pt')
 
     print("Finished Training")
-    # %%
+    #%%
