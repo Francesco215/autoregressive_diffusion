@@ -62,22 +62,37 @@ class GroupNorm3D(nn.GroupNorm):
 class ResBlock(nn.Module):
     def __init__(self, channels: int, kernel=(8,3,3), group_size=1):
         super().__init__()
-        self.norm_0 = GroupNorm3D(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
-        self.norm_1 = GroupNorm3D(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
+        # self.norm_0 = GroupNorm3D(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
+        # self.norm_1 = GroupNorm3D(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
+
+        self.act1 = nn.LeakyReLU(inplace=True)
+        self.act2 = nn.LeakyReLU(inplace=True)
 
         self.conv3d0 = GroupCausal3DConvVAE(channels, channels,  kernel, group_size, dilation = (1,1,1))
         self.conv3d1 = nn.Conv3d(channels, channels, kernel_size=(1,3,3), padding = (0,1,1))
+        self.conv3d2 = nn.Conv3d(channels, channels, kernel_size=(1,3,3), padding = (0,1,1))
+
+        scaling_factor = 4 ** -.25
+        nn.init.kaiming_uniform_(self.conv3d0.weight)
+        nn.init.zeros_(self.conv3d0.bias)
+        self.conv3d0.weight.data *= scaling_factor
+
+        nn.init.kaiming_uniform_(self.conv3d1.weight)
+        nn.init.zeros_(self.conv3d1.bias)
+        self.conv3d1.weight.data *= scaling_factor
+
+        nn.init.zeros_(self.conv3d2.weight)
 
     def forward(self, x, cache = None):
         if cache is None: cache = {}
 
-        y = self.norm_0(x)
-        y = mp_silu(y)
         y, cache['conv3d_res0'] = self.conv3d0(y, cache=cache.get('conv3d_res0', None))
+        y = self.act1(y)
 
-        y = self.norm_1(y)
-        y = mp_silu(y)
         y = self.conv3d1(y)
+        y = self.act2(y)
+
+        y = self.conv3d2(y)
 
         x = x + y
 
