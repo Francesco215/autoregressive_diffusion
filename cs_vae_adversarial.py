@@ -8,6 +8,7 @@ import torch.optim.lr_scheduler as lr_scheduler
 from torch.optim import AdamW
 
 import os
+import lpips
 from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
@@ -18,25 +19,22 @@ from edm2.cs_dataloading import CsCollate, CsDataset
 from edm2.utils import GaussianLoss
 from edm2.vae import VAE, MixedDiscriminator
 
-# torch.autograd.set_detect_anomaly(True)
-torch._dynamo.config.recompile_limit=100
+torch.autograd.set_detect_anomaly(True)
 if __name__=="__main__":
     clean_stale_shared_memory()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     original_env = "LunarLander-v3"
 
-    batch_size = 1
-    micro_batch_size = 1
-    clip_length = 32
+    batch_size = 8
+    micro_batch_size = 4
+    clip_length = 32 
 
     # Initialize models
-    vae = VAE.from_pretrained('saved_models/vae_cs_18122.pt').requires_grad_(False).to(device)
-    # vae.decoder.encoder_blocks[-2].requires_grad_(True)
+    vae = VAE.from_pretrained('saved_models/vae_cs_10660.pt').requires_grad_(False).to(device)
     vae.decoder.encoder_blocks[-1].requires_grad_(True)
-    vae = torch.compile(vae)
     # Example instantiation
-    discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(64,32)).to(device)
+    discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(32,)).to(device)
     
     dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(clip_length), num_workers=8, shuffle=False)
@@ -52,9 +50,8 @@ if __name__=="__main__":
 
     # Define optimizers
     base_lr = 1e-4
-    vae_training_parameters = (p for p in vae.parameters() if p.requires_grad)
-    optimizer_vae =  AdamW(vae_training_parameters, lr=base_lr, eps=1e-8, betas = (0.99,0.9999))    
-    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr, eps=1e-8, betas = (0.99,0.9999)) 
+    optimizer_vae = AdamW((p for p in vae.parameters() if p.requires_grad), lr=base_lr, eps=1e-8)
+    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr, eps=1e-8)
     optimizer_vae.zero_grad()
     optimizer_disc.zero_grad()
 
@@ -62,83 +59,95 @@ if __name__=="__main__":
     gamma = 0.1 ** (1 / total_number_of_steps)  # Decay factor so lr becomes 0.1 * initial_lr after 40,000 steps
     scheduler_vae = lr_scheduler.ExponentialLR(optimizer_vae, gamma=gamma)
     scheduler_disc = lr_scheduler.ExponentialLR(optimizer_disc, gamma=gamma)
+    losses = []
+    lpips_loss_fn = lpips.LPIPS(net='alex')
+    if torch.cuda.is_available():
+        lpips_loss_fn.cuda()
 
 
-    losses, recon_losses, disc_losses, adversarial_losses= [], [], [], []
+    recon_losses, disc_losses, adversarial_losses= [], [], []
 
     #%%
     # Training loop
-  
-    # --- Training loop ---
-    for epoch in range(10):
-        pbar = tqdm(dataloader)
-        for batch_idx, micro_batch in enumerate(pbar):
-            frames, _ = micro_batch
-            frames = frames.float() / 127.5 - 1
-            frames = einops.rearrange(frames, 'b t h w c -> b c t h w').to(device)
+    for _ in range(10):
+        pbar = tqdm(enumerate(dataloader), total=total_number_of_steps)
+        for batch_idx, micro_batch in pbar:
+            with torch.no_grad():
+                frames, _ = micro_batch  # Ignore actions and reward for this VggAE training
+                frames = frames.float() / 127.5 - 1  # Normalize to [-1, 1]
+                frames = einops.rearrange(frames, 'b t h w c-> b c t h w').to(device)
 
-            optimizer_vae.zero_grad()
-
-            # VAE forward pass to get reconstructed frames
+            # VAE forward pass
+            # r_mean (reconstruction mean): This is your hat_x
+            # r_logvar (reconstruction log variance): Used for GaussianLoss
+            # mean (latent mean), logvar (latent log variance): For KL divergence
             r_mean, r_logvar, mean, logvar, _ = vae(frames)
 
-            # 1. Reconstruction Loss (e.g., L1 loss)
+            # in theory the mean should be only with respect to the batch size
+            kl_loss = -0.5 * (1 + logvar - mean.pow(2) - logvar.exp()).sum(dim=1).mean()
+
+            # VAE losses
             gaussian_loss = GaussianLoss(r_mean, r_logvar, frames)
-            recon_loss = F.l1_loss(r_mean, frames)
+            l1_loss = F.l1_loss(r_mean, frames)
 
-            # 2. Adversarial Loss for the VAE
-            # We want the VAE to fool the discriminator.
-            # DO NOT detach `recon` here, so gradients can flow to the VAE.
-            with torch.no_grad():
-                logits_real_for_vae = discriminator(frames) # Detach since we don't need grads wrt D
-            logits_fake_for_vae = discriminator(r_mean)
-        
-            # Generator wants to minimize the difference, which is the negative of the discriminator's objective
-            vae_adv_loss = torch.log(1 + torch.exp(-logits_real_for_vae + logits_fake_for_vae)).mean()
-        
-            # Total VAE loss
-            vae_total_loss = gaussian_loss + vae_adv_loss*0.1 # You might want to weight the adv_loss
+            # --- MODIFIED LPIPS Calculation ---
+            # Reshape frames and r_mean from [B, C, T, H, W] to [B*T, C, H, W]
+            # so that LPIPS can process them as individual images.
+            # Your frames are C=3, and T=32, so we need to flatten T into the batch dimension.
+            frames_flat = torch.clip(einops.rearrange(frames, 'b c t h w -> (b t) c h w'), -1, 1)
+            r_mean_flat = torch.clip(einops.rearrange(r_mean, 'b c t h w -> (b t) c h w'), -1, 1)
 
-            # Backpropagate and update the VAE
-            vae_total_loss.backward()
-            nn.utils.clip_grad_norm_(vae_training_parameters, 1) # Clipping can still be useful
-            optimizer_vae.step()
-            scheduler_vae.step()
+            # Calculate LPIPS loss for each frame and then take the mean
+            lpips_loss = lpips_loss_fn(r_mean_flat, frames_flat).mean()
+            # --- END MODIFIED LPIPS Calculation ---
 
-            # ===================================
-            #      TRAIN THE DISCRIMINATOR
-            # ===================================
-            optimizer_disc.zero_grad()
-        
-            # We can reuse `recon` from the VAE step, but we MUST detach it now.
-            recon_detached = r_mean.detach()
-        
-            # 1. Adversarial Loss for the Discriminator
-            logits_real = discriminator(frames)
-            logits_fake = discriminator(recon_detached)
-        
-            # Discriminator wants to maximize the difference
-            disc_adv_loss = torch.log(1 + torch.exp(logits_real - logits_fake)).mean()
 
-            # Total discriminator loss
-            disc_total_loss = disc_adv_loss 
-        
-            # Backpropagate and update the discriminator
-            disc_total_loss.backward()
-            nn.utils.clip_grad_norm_(discriminator.parameters(), 1)
-            optimizer_disc.step()
-            scheduler_disc.step()
-        
-            pbar.set_postfix_str(f"Epoch {epoch+1}, VAE Loss: {recon_loss.item():.4f}, Disc Loss: {disc_total_loss.item():.4f}")
+            # Define the loss components
+            lpips_weight = 0.1
+            kl_weight = 1e-4
 
-            recon_losses.append(recon_loss.item())
-            disc_losses.append(disc_total_loss.item())
-            adversarial_losses.append(vae_adv_loss.item())
+            main_loss = gaussian_loss + kl_weight * kl_loss + lpips_weight * lpips_loss
+            logits = discriminator(r_mean)
+            targets = torch.ones(logits.shape[0], *logits.shape[2:], device=device, dtype=torch.long)
+
+            adversarial_loss = F.cross_entropy(logits, targets)/np.log(2)
+
+            # Define the loss components
+            loss = gaussian_loss + kl_weight * kl_loss + lpips_weight * lpips_loss + adversarial_loss*1e-1
+            loss.backward()
+
+
+            if batch_idx % (batch_size//micro_batch_size) == 0:
+                nn.utils.clip_grad_norm_(vae.parameters(), 1)
+                optimizer_vae.step()
+                scheduler_vae.step()
+                optimizer_vae.zero_grad()
+
+
+            logits_real = discriminator(frames.detach())
+            logits_fake = discriminator(r_mean.detach())
+            loss_disc_real = F.cross_entropy(logits_real, torch.ones_like (targets))/np.log(2)
+            loss_disc_fake = F.cross_entropy(logits_fake, torch.zeros_like(targets))/np.log(2)
+            loss_disc = (loss_disc_real + loss_disc_fake)/2
+
+            loss_disc.backward()
+            # Update discriminator
+            if batch_idx % (batch_size//micro_batch_size) == 0:
+                nn.utils.clip_grad_norm_(discriminator.parameters(), 1)
+                optimizer_disc.step()
+                scheduler_disc.step()
+                optimizer_disc.zero_grad()
+            
+            pbar.set_postfix_str(f"recon loss: {l1_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}, Adversarial Loss: {adversarial_loss.mean().item():.4f}")
+            recon_losses.append(l1_loss.item())
+            adversarial_losses.append(adversarial_loss.mean().item())
+            disc_losses.append(loss_disc.item())
+
             # if batch_idx == 500:
             #     adv_multiplier = 5e-2
 
             # Visualization every 100 steps
-            if batch_idx % 100 == 0 and batch_idx > 0:
+            if batch_idx % 1000 == 0 and batch_idx > 0:
                 # Create a figure with a custom layout: 3 sections (2 rows for frames, 2x2 grid for losses)
                 fig = plt.figure(figsize=(15, 12))
 
