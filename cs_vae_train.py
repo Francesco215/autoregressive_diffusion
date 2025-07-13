@@ -1,4 +1,3 @@
-#%%
 import einops
 import torch
 from torch import nn
@@ -13,13 +12,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Import LPIPS
-import lpips # <--- ADDED
+import lpips 
 
 from edm2.cs_dataloading import CsCollate, CsDataset
 from edm2.vae import VAE, MixedDiscriminator
 from edm2.utils import GaussianLoss
 
-torch.autograd.set_detect_anomaly(True)
+# torch.autograd.set_detect_anomaly(True)
 if __name__=="__main__":
     device = "cuda"
     original_env = "LunarLander-v3"
@@ -34,9 +33,9 @@ if __name__=="__main__":
     channels = [3, 16, 64, 256, latent_channels]
 
     # Initialize models
-    vae = VAE(channels = channels, n_res_blocks=n_res_blocks, spatial_compressions=[1,2,2,2], time_compressions=[1,2,2,1], logvar_mode=0.1).to(device)
-    vae = torch.compile(vae)
-    # Example instantiation
+    # vae = VAE(channels = channels, n_res_blocks=n_res_blocks, spatial_compressions=[1,2,2,2], time_compressions=[1,2,2,1], logvar_mode=0.1).to(device)
+    vae = VAE.from_pretrained('saved_models/vae_cs_15990.pt').to(device)
+    # vae = torch.compile(vae)
     #%%
 
     dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
@@ -136,16 +135,17 @@ if __name__=="__main__":
             kl_losses.append(kl_loss.item())
 
 
-            if batch_idx % 100 == 0 and batch_idx > 0:
-                fig = plt.figure(figsize=(15, 12)) # <--- Increased figure size for 3 plots
+            if batch_idx % 10 == 0 and batch_idx > 0:
+                fig = plt.figure(figsize=(15, 18)) # <--- Increased figure height for the new row
 
-                # Top section: 2 rows for original and reconstructed frames
-                gs_top = plt.GridSpec(2, 5, figure=fig, top=0.95, bottom=0.6, left=0.1, right=0.9) # <--- Adjusted bottom margin
+                # Top section: 3 rows for original, reconstructed (mean), and uncertainty heatmaps
+                gs_top = plt.GridSpec(3, 5, figure=fig, top=0.95, bottom=0.5, left=0.1, right=0.9) # <--- Adjusted bottom margin
                 orig_axes = [fig.add_subplot(gs_top[0, i]) for i in range(5)]
-                recon_axes = [fig.add_subplot(gs_top[1, i]) for i in range(5)]
+                recon_mean_axes = [fig.add_subplot(gs_top[1, i]) for i in range(5)] # New row for mean
+                uncertainty_axes = [fig.add_subplot(gs_top[2, i]) for i in range(5)] # New row for uncertainty
 
                 # Bottom section: 1x3 for loss plots <--- MODIFIED (was 1x2)
-                gs_bottom = plt.GridSpec(1, 3, figure=fig, top=0.5, bottom=0.1, left=0.05, right=0.95, hspace=0.4, wspace=0.3) # <--- Adjusted wspace
+                gs_bottom = plt.GridSpec(1, 3, figure=fig, top=0.45, bottom=0.1, left=0.05, right=0.95, hspace=0.4, wspace=0.3) # <--- Adjusted wspace
                 loss_axes = [
                     fig.add_subplot(gs_bottom[0, 0]),
                     fig.add_subplot(gs_bottom[0, 1]),
@@ -154,40 +154,64 @@ if __name__=="__main__":
 
                 # Frame visualization
                 with torch.no_grad():
-                    # Your current denormalization (frames.cpu() + 1) / 2 assumes input was in [-1, 1].
-                    # This is correct given your `frames = frames.float() / 127.5 - 1` line.
                     frames_denorm = (frames.cpu() + 1) / 2
-                    # When visualizing reconstructed frames, if r_mean is the predicted mean and r_logvar is variance,
-                    # sampling from the Gaussian might give a better sense of generated image diversity,
-                    # but for pure reconstruction quality visualization, just using r_mean is often clearer.
-                    # I'm keeping your current sampling here for consistency.
-                    recon_denorm = ((r_mean + torch.randn_like(r_mean) * torch.exp(0.5 * r_logvar)).cpu() + 1) / 2
-
+                    recon_mean_denorm = (r_mean.cpu() + 1) / 2 # Plotting the mean directly
+                    
+                    # Calculate uncertainty (variance)
+                    uncertainty = torch.exp(r_logvar).cpu() # Variance
+                    
+                    # We take the mean across the channel dimension for visualization
+                    uncertainty_to_plot = torch.mean(uncertainty, dim=1, keepdim=True) # Mean over channels
+                    
+                    # Ensure all tensors are clamped to [0, 1] for plotting, except for uncertainty which should reflect its true range
                     frames_denorm = torch.clamp(frames_denorm[0], 0, 1) # (c, t, h, w)
-                    recon_denorm = torch.clamp(recon_denorm[0], 0, 1)
+                    recon_mean_denorm = torch.clamp(recon_mean_denorm[0], 0, 1) # (c, t, h, w)
+                    uncertainty_to_plot = uncertainty_to_plot[0] # Select the first batch item (1, t, h, w)
+
 
                     frames_denorm = einops.rearrange(frames_denorm, 'c t h w -> t h w c')
-                    recon_denorm = einops.rearrange(recon_denorm, 'c t h w -> t h w c')
+                    recon_mean_denorm = einops.rearrange(recon_mean_denorm, 'c t h w -> t h w c')
+                    uncertainty_to_plot = einops.rearrange(uncertainty_to_plot, 'c t h w -> t h w c') # Now (t, h, w, 1)
+                    
+                    t_idx = frames_denorm.shape[0]
+                    indices = np.linspace(0, t_idx - 1, 5, dtype=int)
 
-                    t = frames_denorm.shape[0]
-                    indices = np.linspace(0, t - 1, 5, dtype=int)
+                    # Calculate global min/max for uncertainty across the displayed batch for consistent colorbar
+                    global_min_uncertainty = uncertainty_to_plot.min().item()
+                    global_max_uncertainty = uncertainty_to_plot.max().item()
 
                     for i, idx in enumerate(indices):
+                        # Original Frames
                         orig_axes[i].imshow(frames_denorm[idx])
                         orig_axes[i].set_title(f"Orig t={idx}")
                         orig_axes[i].axis('off')
 
-                        recon_axes[i].imshow(recon_denorm[idx])
-                        recon_axes[i].set_title(f"Recon t={idx}")
-                        recon_axes[i].axis('off')
+                        # Reconstructed Mean
+                        recon_mean_axes[i].imshow(recon_mean_denorm[idx])
+                        recon_mean_axes[i].set_title(f"Recon Mean t={idx}")
+                        recon_mean_axes[i].axis('off')
+
+                        # Uncertainty Heatmap
+                        uncertainty_axes[i].imshow(recon_mean_denorm[idx]) # Display the mean image
+                        # Overlay heatmap. Squeeze the channel dimension for imshow.
+                        im = uncertainty_axes[i].imshow(uncertainty_to_plot[idx].squeeze(-1), cmap='viridis', alpha=0.6,
+                                                         vmin=global_min_uncertainty, vmax=global_max_uncertainty)
+                        uncertainty_axes[i].set_title(f"Uncertainty Heatmap t={idx}")
+                        uncertainty_axes[i].axis('off')
+                        # Add a colorbar for the first uncertainty plot
+                        if i == 0:
+                            fig.colorbar(im, ax=uncertainty_axes[i], orientation='vertical', fraction=0.046, pad=0.04)
+
 
                 # Plot Gaussian Reconstruction loss (formerly "Recon Loss")
-                loss_axes[0].plot(l1_recon_losses, label="L1 Recon Loss", color="blue") # <--- MODIFIED
-                loss_axes[0].set_title("Gaussian Recon Loss") # <--- MODIFIED
+                loss_axes[0].plot(gaussian_recon_losses, label="Gaussian Recon Loss", color="orange") # Plot Gaussian Loss
+                loss_axes[0].plot(l1_recon_losses, label="L1 Recon Loss", color="blue") # Plot L1 Loss
+                loss_axes[0].set_title("Reconstruction Losses") # Modified title to reflect both
                 loss_axes[0].set_yscale("log")
                 loss_axes[0].set_xscale("log")
                 loss_axes[0].set_xlabel("Steps")
                 loss_axes[0].set_ylabel("Loss")
+                loss_axes[0].legend() # Add legend
                 loss_axes[0].grid(True)
 
                 # Plot LPIPS loss <--- ADDED NEW PLOT
