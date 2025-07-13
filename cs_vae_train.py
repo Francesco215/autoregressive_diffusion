@@ -33,9 +33,8 @@ if __name__=="__main__":
     channels = [3, 16, 64, 256, latent_channels]
 
     # Initialize models
-    # vae = VAE(channels = channels, n_res_blocks=n_res_blocks, spatial_compressions=[1,2,2,2], time_compressions=[1,2,2,1], logvar_mode=0.1).to(device)
-    vae = VAE.from_pretrained('saved_models/vae_cs_15990.pt').to(device)
-    # vae = torch.compile(vae)
+    vae = VAE(channels = channels, n_res_blocks=n_res_blocks, spatial_compressions=[1,2,2,2], time_compressions=[1,2,2,1], logvar_mode=0.1).to(device)
+    vae = torch.compile(vae)
     #%%
 
     dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
