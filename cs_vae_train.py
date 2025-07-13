@@ -33,7 +33,8 @@ if __name__=="__main__":
     channels = [3, 16, 64, 256, latent_channels]
 
     # Initialize models
-    vae = VAE(channels = channels, n_res_blocks=n_res_blocks, spatial_compressions=[1,2,2,2], time_compressions=[1,2,2,1], logvar_mode=0.1).to(device)
+    vae = VAE(channels = channels, n_res_blocks=n_res_blocks, spatial_compressions=[1,2,2,2], time_compressions=[1,2,2,1]).to(device)
+    # vae = VAE.from_pretrained('saved_models/vae_cs_15990.pt').to(device)
     vae = torch.compile(vae)
     #%%
 
@@ -47,7 +48,7 @@ if __name__=="__main__":
     sigma_data = 1.
 
     # Define optimizers
-    base_lr = 3e-4
+    base_lr = 1e-4
     optimizer_vae = AdamW(vae.parameters(), lr=base_lr, eps=1e-8)
     optimizer_vae.zero_grad()
 
@@ -76,7 +77,7 @@ if __name__=="__main__":
         lpips_loss_fn.cuda()
 
     # Store losses
-    gaussian_recon_losses, l1_recon_losses, lpips_losses, kl_losses = [], [], [], [] # <--- MODIFIED
+    gaussian_recon_losses, l1_recon_losses, lpips_losses = [], [], [] # <--- MODIFIED
 
     #%%
     # Training loop
@@ -92,10 +93,7 @@ if __name__=="__main__":
             # r_mean (reconstruction mean): This is your hat_x
             # r_logvar (reconstruction log variance): Used for GaussianLoss
             # mean (latent mean), logvar (latent log variance): For KL divergence
-            r_mean, r_logvar, mean, logvar, _ = vae(frames)
-
-            # in theory the mean should be only with respect to the batch size
-            kl_loss = -0.5 * (1 + logvar - mean.pow(2) - logvar.exp()).sum(dim=1).mean()
+            r_mean, r_logvar, mean, _ = vae(frames)
 
             # VAE losses
             gaussian_loss = GaussianLoss(r_mean, r_logvar, frames)
@@ -115,26 +113,24 @@ if __name__=="__main__":
 
             # Define the loss components
             lpips_weight = 0.1
-            kl_weight = 1e-4
 
-            main_loss = gaussian_loss + kl_weight * kl_loss + lpips_weight * lpips_loss
+            main_loss = gaussian_loss + lpips_weight * lpips_loss
             main_loss.backward()
 
             if batch_idx % (batch_size//micro_batch_size) == 0 and batch_idx!=0:
-                nn.utils.clip_grad_norm_(vae.parameters(), 1)
+                nn.utils.clip_grad_norm_(vae.parameters(), 0.5)
                 optimizer_vae.step()
                 scheduler_vae.step()
                 optimizer_vae.zero_grad()
 
             # Update tqdm progress bar <--- MODIFIED
-            pbar.set_postfix_str(f"gaussian_recon: {gaussian_loss.item():.4f}, l1_recon: {l1_loss.item():.4f}, lpips: {lpips_loss.item():.4f}, KL: {kl_loss.item():.4f}, current_lr: {optimizer_vae.param_groups[0]['lr']:.4f}")
+            pbar.set_postfix_str(f"gaussian_recon: {gaussian_loss.item():.4f}, l1_recon: {l1_loss.item():.4f}, lpips: {lpips_loss.item():.4f}, current_lr: {optimizer_vae.param_groups[0]['lr']:.4f}")
             gaussian_recon_losses.append(gaussian_loss.item()) # Store all loss components for plotting
             l1_recon_losses.append(l1_loss.item())
             lpips_losses.append(lpips_loss.item()) # <--- ADDED
-            kl_losses.append(kl_loss.item())
 
 
-            if batch_idx % 10 == 0 and batch_idx > 0:
+            if batch_idx % 100 == 0 and batch_idx > 0:
                 fig = plt.figure(figsize=(15, 18)) # <--- Increased figure height for the new row
 
                 # Top section: 3 rows for original, reconstructed (mean), and uncertainty heatmaps
@@ -148,7 +144,6 @@ if __name__=="__main__":
                 loss_axes = [
                     fig.add_subplot(gs_bottom[0, 0]),
                     fig.add_subplot(gs_bottom[0, 1]),
-                    fig.add_subplot(gs_bottom[0, 2]) # <--- ADDED for LPIPS loss
                 ]
 
                 # Frame visualization
@@ -203,7 +198,6 @@ if __name__=="__main__":
 
 
                 # Plot Gaussian Reconstruction loss (formerly "Recon Loss")
-                loss_axes[0].plot(gaussian_recon_losses, label="Gaussian Recon Loss", color="orange") # Plot Gaussian Loss
                 loss_axes[0].plot(l1_recon_losses, label="L1 Recon Loss", color="blue") # Plot L1 Loss
                 loss_axes[0].set_title("Reconstruction Losses") # Modified title to reflect both
                 loss_axes[0].set_yscale("log")
@@ -221,15 +215,6 @@ if __name__=="__main__":
                 loss_axes[1].set_xlabel("Steps")
                 loss_axes[1].set_ylabel("Loss")
                 loss_axes[1].grid(True)
-
-                # Plot KL loss (now at index 2) <--- MODIFIED index
-                loss_axes[2].plot(kl_losses, label="KL Loss", color="red")
-                loss_axes[2].set_title("KL Loss")
-                loss_axes[2].set_yscale("log")
-                loss_axes[2].set_xscale("log")
-                loss_axes[2].set_xlabel("Steps")
-                loss_axes[2].set_ylabel("Loss")
-                loss_axes[2].grid(True)
 
                 plt.tight_layout()
                 os.makedirs("images_training", exist_ok=True)

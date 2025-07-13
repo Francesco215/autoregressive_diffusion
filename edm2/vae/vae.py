@@ -164,16 +164,15 @@ class UpDownBlock:
 
 
 class EncoderDecoder(nn.Module):
-    def __init__(self, channels = [3, 32, 32, 8], n_res_blocks = 2, time_compressions = [1,2,2], spatial_compressions = [1,2,2], type='encoder', logvar_mode='learned'):
+    def __init__(self, channels, n_res_blocks, time_compressions , spatial_compressions, type, learned_logvar):
         super().__init__()
         assert type in ['encoder', 'decoder', 'discriminator'], 'Invalid type, expected encoder, decoder or discriminator'
-        assert logvar_mode in ['learned', 'learned_constant'] or isinstance(logvar_mode, float), 'Invalid logvar_mode, expected learned or learned_constant or a float'
         assert len(channels) -1 == len(time_compressions) == len(spatial_compressions)
 
         self.time_compressions = time_compressions
         self.spatial_compressions = spatial_compressions
         self.encoding_type = type
-        self.logvar_mode = logvar_mode
+        self.learned_logvar = learned_logvar
 
         channels = channels.copy()
         group_sizes = np.cumprod(time_compressions)
@@ -183,15 +182,8 @@ class EncoderDecoder(nn.Module):
         elif type=='decoder':
             channels = channels[::-1]
 
-        if logvar_mode == 'learned':
+        if learned_logvar:
             self.logvar_multiplier = nn.Parameter(torch.tensor(-2.))
-        elif logvar_mode == 'learned_constant':
-            self.logvar_multiplier = nn.Parameter(torch.tensor(-2.))
-        else:
-            self.logvar_multiplier = nn.Parameter(torch.tensor(logvar_mode), requires_grad=False)
-
-        
-        if logvar_mode=='learned':
             channels[-1] = channels[-1] * 2  
 
         in_channels, out_channels = channels[:-1], channels[1:]
@@ -205,30 +197,28 @@ class EncoderDecoder(nn.Module):
         for i, block in enumerate(self.encoder_blocks):
             x, cache[f'encoder_block_{i}'] = block(x, cache.get(f'encoder_block_{i}', None))
 
-        # Different logvar calculation methods
-        if self.logvar_mode == 'learned_constant' or isinstance(self.logvar_mode, float):
-            return x, torch.ones_like(x)*self.logvar_multiplier, cache
-        else:  # learned
-            mean, logvar = x.split(split_size=x.shape[1]//2, dim=1)
-            logvar = logvar*torch.exp(self.logvar_multiplier)
-            return mean, logvar, cache
+        if not self.learned_logvar:
+            return x, cache
+
+        mean, logvar = x.split(split_size=x.shape[1]//2, dim=1)
+        logvar = logvar*torch.exp(self.logvar_multiplier)
+        return mean, logvar, cache
 
 
 
 class VAE(BetterModule):
-    def __init__(self, channels, n_res_blocks, time_compressions=[1, 2, 2], spatial_compressions=[1, 2, 2], logvar_mode='learned', std=None):
+    def __init__(self, channels, n_res_blocks, time_compressions=[1, 2, 2], spatial_compressions=[1, 2, 2], std=None):
         super().__init__()
         
         self.latent_channels = channels[-1]
-        self.encoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='encoder', logvar_mode=logvar_mode)
-        self.decoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='decoder', logvar_mode='learned')
+        self.encoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='encoder', learned_logvar=False)
+        self.decoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='decoder', learned_logvar=True)
 
         self.time_compression = np.prod(time_compressions)
         self.spatial_compression = np.prod(spatial_compressions)
 
         # self.std=1.68 # this is when i pass z
         self.std=std #TODO put this as an argument, when it's untrained it should be none, but it must be specified when loading_from_pretrained
-
 
         # is it possible to put this inside of the super() class and avoid having it here?
         frame = inspect.currentframe()
@@ -238,21 +228,17 @@ class VAE(BetterModule):
     def forward(self, x, cache=None):
         if cache is None: cache = {}
 
-        z, mean, logvar, cache['encoder'] = self.encode(x, cache.get('encoder', None))
-        
+        mean, cache['encoder'] = self.encode(x, cache.get('encoder', None))
         # Decode latent vector to reconstruct input
+        noise_level = 0.1
+        z = mean*(1-noise_level) + torch.randn_like(mean)*noise_level
         r_mean, r_logvar, cache['decoder'] = self.decode(z, cache.get('decoder', None))
 
-        return r_mean, r_logvar, mean, logvar, cache
+        return r_mean, r_logvar, mean, cache
     
     def encode(self, x, cache=None):
-        mean, logvar, cache = self.encoder(x, cache)
-        
-        std = torch.exp(0.5 * logvar)  
-        eps = torch.randn_like(std)    
-        z = mean + eps * std           
-
-        return z, mean, logvar, cache
+        mean, cache = self.encoder(x, cache)
+        return mean, cache
     
     def decode(self, z, cache=None):
         r_mean, r_logvar, cache = self.decoder(z, cache)
