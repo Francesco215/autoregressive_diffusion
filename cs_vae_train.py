@@ -131,7 +131,7 @@ if __name__=="__main__":
 
             if batch_idx % 1000 == 0 and batch_idx > 0:
                 fig = plt.figure(figsize=(15, 18)) # <--- Increased figure height for the new row
-
+                fig.suptitle(f"VAE Training Progress - VAE Parameters: {vae_params//1e6}M", fontsize=16)
                 # Top section: 3 rows for original, reconstructed (mean), and uncertainty heatmaps
                 gs_top = plt.GridSpec(3, 5, figure=fig, top=0.95, bottom=0.5, left=0.1, right=0.9) # <--- Adjusted bottom margin
                 orig_axes = [fig.add_subplot(gs_top[0, i]) for i in range(5)]
@@ -203,16 +203,16 @@ if __name__=="__main__":
                 loss_axes[0].set_xscale("log")
                 loss_axes[0].set_xlabel("Steps")
                 loss_axes[0].set_ylabel("Loss")
-                loss_axes[0].legend() # Add legend
+                # loss_axes[0].legend() # Add legend
                 loss_axes[0].grid(True)
 
                 loss_axes[1].plot(l1_recon_losses, label="L1 Recon Loss", color="blue") # Plot L1 Loss
-                loss_axes[1].set_title("Reconstruction Losses") # Modified title to reflect both
+                loss_axes[1].set_title("L1 Reconstruction Losses") # Modified title to reflect both
                 loss_axes[1].set_yscale("log")
                 loss_axes[1].set_xscale("log")
                 loss_axes[1].set_xlabel("Steps")
                 loss_axes[1].set_ylabel("Loss")
-                loss_axes[1].legend() # Add legend
+                # loss_axes[1].legend() # Add legend
                 loss_axes[1].grid(True)
 
                 # Plot LPIPS loss <--- ADDED NEW PLOT
