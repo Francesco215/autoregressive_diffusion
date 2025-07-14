@@ -25,6 +25,7 @@ dependencies = [
     "h5py",
     "mosaicml-streaming",
     # "cosmos_tokenizer @ git+https://github.com/NVIDIA/Cosmos-Tokenizer",
+    "lpips",
     "av"
 ]
 

@@ -129,7 +129,7 @@ if __name__=="__main__":
             lpips_losses.append(lpips_loss.item()) # <--- ADDED
 
 
-            if batch_idx % 1000 == 0 and batch_idx > 0:
+            if batch_idx % 100 == 0 and batch_idx > 0:
                 fig = plt.figure(figsize=(15, 18)) # <--- Increased figure height for the new row
                 fig.suptitle(f"VAE Training Progress - VAE Parameters: {vae_params//1e6}M", fontsize=16)
                 # Top section: 3 rows for original, reconstructed (mean), and uncertainty heatmaps
@@ -198,30 +198,34 @@ if __name__=="__main__":
 
 
                 # Plot Gaussian Reconstruction loss (formerly "Recon Loss")
-                loss_axes[0].plot(gaussian_recon_losses, label="Gaussian Loss", color="orange") # Plot gaussian losses
+                loss_axes[0].plot(gaussian_recon_losses, label="Gaussian Loss\n(we optimize for this)", color="orange") # Plot gaussian losses
                 loss_axes[0].set_title("Gaussian Losses") # Modified title to reflect both
                 loss_axes[0].set_xscale("log")
                 loss_axes[0].set_xlabel("Steps")
                 loss_axes[0].set_ylabel("Loss")
+                loss_axes[0].set_ybound(upper = 1.)
+                loss_axes[0].set_xbound(lower = 95)
                 # loss_axes[0].legend() # Add legend
                 loss_axes[0].grid(True)
 
-                loss_axes[1].plot(l1_recon_losses, label="L1 Recon Loss", color="blue") # Plot L1 Loss
+                loss_axes[1].plot(l1_recon_losses, label="L1 Recon Loss\n(we don't optimize for this)", color="blue") # Plot L1 Loss
                 loss_axes[1].set_title("L1 Reconstruction Losses") # Modified title to reflect both
                 loss_axes[1].set_yscale("log")
                 loss_axes[1].set_xscale("log")
                 loss_axes[1].set_xlabel("Steps")
                 loss_axes[1].set_ylabel("Loss")
+                loss_axes[1].set_xbound(lower = 95)
                 # loss_axes[1].legend() # Add legend
                 loss_axes[1].grid(True)
 
                 # Plot LPIPS loss <--- ADDED NEW PLOT
-                loss_axes[2].plot(lpips_losses, label="LPIPS Loss", color="green")
+                loss_axes[2].plot(lpips_losses, label="LPIPS Loss\n(we optimize for this)", color="green")
                 loss_axes[2].set_title("LPIPS Loss")
                 loss_axes[2].set_yscale("log")
                 loss_axes[2].set_xscale("log")
                 loss_axes[2].set_xlabel("Steps")
                 loss_axes[2].set_ylabel("Loss")
+                loss_axes[2].set_xbound(lower = 95)
                 loss_axes[2].grid(True)
 
                 plt.tight_layout()

@@ -10,7 +10,7 @@ from torch.nn import functional as F
 import einops
 import numpy as np
 
-from ..utils import BetterModule, mp_silu
+from ..utils import BetterModule, MPFourier, bmult
 
 
 
@@ -51,48 +51,45 @@ class GroupCausal3DConvVAE(torch.nn.Module):
 
 
 
-class GroupNorm3D(nn.GroupNorm):
-    def forward(self, input):
-        batch_size = input.shape[0]
-        input = einops.rearrange(input, "b c t h w -> (b t) c h w")
-        output = super().forward(input)
-        output = einops.rearrange(output, "(b t) c h w -> b c t h w", b=batch_size)
-        return output
-
 class ResBlock(nn.Module):
-    def __init__(self, channels: int, kernel=(8,3,3), group_size=1):
+    def __init__(self, channels: int, kernel=(8,3,3), group_size=1, t_cond=False):
         super().__init__()
-        # self.norm_0 = GroupNorm3D(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
-        # self.norm_1 = GroupNorm3D(num_groups=1,num_channels=channels,eps=1e-6,affine=True)
-
-        self.act1 = nn.LeakyReLU(inplace=True)
-        self.act2 = nn.LeakyReLU(inplace=True)
+        self.act1 = nn.SiLU(inplace=True)
+        self.act2 = nn.SiLU(inplace=True)
 
         self.conv3d0 = GroupCausal3DConvVAE(channels, channels,  kernel, group_size, dilation = (1,1,1))
         self.conv3d1 = nn.Conv3d(channels, channels, kernel_size=(1,3,3), padding = (0,1,1))
-        self.conv3d2 = nn.Conv3d(channels, channels, kernel_size=(1,3,3), padding = (0,1,1))
 
-        scaling_factor = 4 ** -.25
         nn.init.kaiming_uniform_(self.conv3d0.conv3d.weight)
         nn.init.zeros_(self.conv3d0.conv3d.bias)
-        self.conv3d0.conv3d.weight.data *= scaling_factor
+        # scaling_factor = 4 ** -.25
+        # self.conv3d0.conv3d.weight.data *= scaling_factor
 
-        nn.init.kaiming_uniform_(self.conv3d1.weight)
+        nn.init.zeros_(self.conv3d1.weight)
         nn.init.zeros_(self.conv3d1.bias)
-        self.conv3d1.weight.data *= scaling_factor
 
-        nn.init.zeros_(self.conv3d2.weight)
+        if t_cond:
+            self.fourier_cond = MPFourier(channels*2)
+            self.t_cond = nn.Linear(channels*2, channels*2)
+            nn.init.zeros_(self.t_cond.weight)
+            nn.init.zeros_(self.t_cond.bias)
 
-    def forward(self, x, cache = None):
+    def forward(self, x, t = None, cache = None):
         if cache is None: cache = {}
 
-        y, cache['conv3d_res0'] = self.conv3d0(x, cache=cache.get('conv3d_res0', None))
+        y = x / torch.sqrt(torch.mean(x**2, dim=1, keepdim=True) + 1e-4)
+        if t is not None:
+            fourier_t = self.fourier_cond(t)
+            t_emb = self.t_cond(fourier_t)[..., None, None, None]
+            scale, shift = t_emb.split(split_size=y.shape[1], dim = 1)
+            y = y*(1+scale) + shift
+
         y = self.act1(y)
+        y, cache['conv3d_res0'] = self.conv3d0(y, cache=cache.get('conv3d_res0', None))
 
-        y = self.conv3d1(y)
+        y = y / torch.sqrt(torch.mean(y**2, dim=1, keepdim=True) + 1e-4)
         y = self.act2(y)
-
-        y = self.conv3d2(y)
+        y = self.conv3d1(y)
 
         x = x + y
 
@@ -108,9 +105,9 @@ class EncoderDecoderBlock(nn.Module):
         self.decompression_block = nn.Conv3d(in_channels, out_channels*total_compression, kernel_size=(1,1,1)) if type=='decoder' else None
         self.compression_block  =  nn.Conv3d(in_channels*total_compression, out_channels, kernel_size=(1,1,1)) if type in ['encoder', 'discriminator'] else None
 
-        self.res_blocks = nn.ModuleList([ResBlock(out_channels, kernel, group_size) for _ in range(n_res_blocks)])
+        self.res_blocks = nn.ModuleList([ResBlock(out_channels, kernel, group_size, t_cond=type=='decoder') for _ in range(n_res_blocks)])
 
-    def forward(self,x, cache=None):
+    def forward(self, x, t=None, cache=None):
         if cache is None: cache = {}
         res = x.clone()
 
@@ -128,7 +125,7 @@ class EncoderDecoderBlock(nn.Module):
 
         
         for i, res_block in enumerate(self.res_blocks):
-            x, cache[f'res_block_{i}'] = res_block(x, cache.get(f'res_block_{i}', None))
+            x, cache[f'res_block_{i}'] = res_block(x, t, cache.get(f'res_block_{i}', None))
 
         return x, cache
 
@@ -164,15 +161,14 @@ class UpDownBlock:
 
 
 class EncoderDecoder(nn.Module):
-    def __init__(self, channels, n_res_blocks, time_compressions , spatial_compressions, type, learned_logvar):
+    def __init__(self, channels, n_res_blocks, time_compressions , spatial_compressions, type):
         super().__init__()
-        assert type in ['encoder', 'decoder', 'discriminator'], 'Invalid type, expected encoder, decoder or discriminator'
+        assert type in ['encoder', 'decoder'], 'Invalid type, expected encoder, decoder or discriminator'
         assert len(channels) -1 == len(time_compressions) == len(spatial_compressions)
 
         self.time_compressions = time_compressions
         self.spatial_compressions = spatial_compressions
         self.encoding_type = type
-        self.learned_logvar = learned_logvar
 
         channels = channels.copy()
         group_sizes = np.cumprod(time_compressions)
@@ -181,8 +177,6 @@ class EncoderDecoder(nn.Module):
             group_sizes = group_sizes[::-1]
         elif type=='decoder':
             channels = channels[::-1]
-
-        if learned_logvar:
             self.logvar_multiplier = nn.Parameter(torch.tensor(-2.))
             channels[-1] = channels[-1] * 2  
 
@@ -191,13 +185,13 @@ class EncoderDecoder(nn.Module):
         
         self.encoder_blocks = nn.ModuleList([EncoderDecoderBlock(in_channels[i], out_channels[i], time_compressions[i], spatial_compressions[i], kernels[i], group_sizes[i], n_res_blocks, type) for i in range(len(group_sizes))])
 
-    def forward(self, x:Tensor, cache = None):
+    def forward(self, x:Tensor, t = None, cache = None):
         if cache is None: cache = {}
 
         for i, block in enumerate(self.encoder_blocks):
-            x, cache[f'encoder_block_{i}'] = block(x, cache.get(f'encoder_block_{i}', None))
+            x, cache[f'encoder_block_{i}'] = block(x, t, cache.get(f'encoder_block_{i}', None))
 
-        if not self.learned_logvar:
+        if self.encoding_type=='encoder':
             return x, cache
 
         mean, logvar = x.split(split_size=x.shape[1]//2, dim=1)
@@ -211,8 +205,8 @@ class VAE(BetterModule):
         super().__init__()
         
         self.latent_channels = channels[-1]
-        self.encoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='encoder', learned_logvar=False)
-        self.decoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='decoder', learned_logvar=True)
+        self.encoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='encoder')
+        self.decoder = EncoderDecoder(channels, n_res_blocks, time_compressions, spatial_compressions, type='decoder')
 
         self.time_compression = np.prod(time_compressions)
         self.spatial_compression = np.prod(spatial_compressions)
@@ -225,14 +219,14 @@ class VAE(BetterModule):
         args, _, _, values = inspect.getargvalues(frame)
         self.kwargs = {arg: values[arg] for arg in args if arg != "self"}
 
-    def forward(self, x, cache=None):
+    def forward(self, x, t=0.2, cache=None):
         if cache is None: cache = {}
 
         mean, cache['encoder'] = self.encode(x, cache.get('encoder', None))
         # Decode latent vector to reconstruct input
-        noise_level = 0.1
-        z = mean*(1-noise_level) + torch.randn_like(mean)*noise_level
-        r_mean, r_logvar, cache['decoder'] = self.decode(z, cache.get('decoder', None))
+        t = torch.rand(x.shape[0], device = x.device)*t
+        z = bmult(mean,1-t) + bmult(torch.randn_like(mean),t)
+        r_mean, r_logvar, cache['decoder'] = self.decode(z, t, cache.get('decoder', None))
 
         return r_mean, r_logvar, mean, cache
     
@@ -240,8 +234,8 @@ class VAE(BetterModule):
         mean, cache = self.encoder(x, cache)
         return mean, cache
     
-    def decode(self, z, cache=None):
-        r_mean, r_logvar, cache = self.decoder(z, cache)
+    def decode(self, z, t, cache=None):
+        r_mean, r_logvar, cache = self.decoder(z, t, cache)
         return r_mean, r_logvar, cache
     
 
