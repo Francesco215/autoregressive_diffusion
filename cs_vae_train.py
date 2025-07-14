@@ -21,7 +21,6 @@ from edm2.utils import GaussianLoss
 # torch.autograd.set_detect_anomaly(True)
 if __name__=="__main__":
     device = "cuda"
-    original_env = "LunarLander-v3"
 
     batch_size = 4
     micro_batch_size = 4
@@ -130,7 +129,7 @@ if __name__=="__main__":
             lpips_losses.append(lpips_loss.item()) # <--- ADDED
 
 
-            if batch_idx % 100 == 0 and batch_idx > 0:
+            if batch_idx % 1000 == 0 and batch_idx > 0:
                 fig = plt.figure(figsize=(15, 18)) # <--- Increased figure height for the new row
 
                 # Top section: 3 rows for original, reconstructed (mean), and uncertainty heatmaps
@@ -144,6 +143,7 @@ if __name__=="__main__":
                 loss_axes = [
                     fig.add_subplot(gs_bottom[0, 0]),
                     fig.add_subplot(gs_bottom[0, 1]),
+                    fig.add_subplot(gs_bottom[0, 2]),
                 ]
 
                 # Frame visualization
@@ -198,23 +198,31 @@ if __name__=="__main__":
 
 
                 # Plot Gaussian Reconstruction loss (formerly "Recon Loss")
-                loss_axes[0].plot(l1_recon_losses, label="L1 Recon Loss", color="blue") # Plot L1 Loss
-                loss_axes[0].set_title("Reconstruction Losses") # Modified title to reflect both
-                loss_axes[0].set_yscale("log")
+                loss_axes[0].plot(gaussian_recon_losses, label="Gaussian Loss", color="orange") # Plot gaussian losses
+                loss_axes[0].set_title("Gaussian Losses") # Modified title to reflect both
                 loss_axes[0].set_xscale("log")
                 loss_axes[0].set_xlabel("Steps")
                 loss_axes[0].set_ylabel("Loss")
                 loss_axes[0].legend() # Add legend
                 loss_axes[0].grid(True)
 
-                # Plot LPIPS loss <--- ADDED NEW PLOT
-                loss_axes[1].plot(lpips_losses, label="LPIPS Loss", color="green")
-                loss_axes[1].set_title("LPIPS Loss")
+                loss_axes[1].plot(l1_recon_losses, label="L1 Recon Loss", color="blue") # Plot L1 Loss
+                loss_axes[1].set_title("Reconstruction Losses") # Modified title to reflect both
                 loss_axes[1].set_yscale("log")
                 loss_axes[1].set_xscale("log")
                 loss_axes[1].set_xlabel("Steps")
                 loss_axes[1].set_ylabel("Loss")
+                loss_axes[1].legend() # Add legend
                 loss_axes[1].grid(True)
+
+                # Plot LPIPS loss <--- ADDED NEW PLOT
+                loss_axes[2].plot(lpips_losses, label="LPIPS Loss", color="green")
+                loss_axes[2].set_title("LPIPS Loss")
+                loss_axes[2].set_yscale("log")
+                loss_axes[2].set_xscale("log")
+                loss_axes[2].set_xlabel("Steps")
+                loss_axes[2].set_ylabel("Loss")
+                loss_axes[2].grid(True)
 
                 plt.tight_layout()
                 os.makedirs("images_training", exist_ok=True)
