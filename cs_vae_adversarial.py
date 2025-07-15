@@ -20,6 +20,7 @@ from edm2.utils import GaussianLoss
 from edm2.vae import VAE, MixedDiscriminator
 
 # torch.autograd.set_detect_anomaly(True)
+torch._dynamo.config.recompile_limit = 100
 if __name__=="__main__":
     clean_stale_shared_memory()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -32,10 +33,10 @@ if __name__=="__main__":
 
     # Initialize models
     vae = VAE.from_pretrained('saved_models/vae_cs_23452.pt').requires_grad_(False).to(device)
-    vae.decoder.requires_grad_(True)
+    vae.decoder.encoder_blocks[-1:].requires_grad_(True)
     vae=torch.compile(vae)
     # Example instantiation
-    discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(32,)).to(device)
+    discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(64,128,64)).to(device)
     
     dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(clip_length), num_workers=8, shuffle=False)
@@ -52,14 +53,29 @@ if __name__=="__main__":
     # Define optimizers
     base_lr = 1e-4
     optimizer_vae = AdamW((p for p in vae.parameters() if p.requires_grad), lr=base_lr, eps=1e-8)
-    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr, eps=1e-8)
+    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*10, eps=1e-8)
     optimizer_vae.zero_grad()
     optimizer_disc.zero_grad()
 
     # Add exponential decay schedule
-    gamma = 0.1 ** (1 / total_number_of_steps)  # Decay factor so lr becomes 0.1 * initial_lr after 40,000 steps
-    scheduler_vae = lr_scheduler.ExponentialLR(optimizer_vae, gamma=gamma)
-    scheduler_disc = lr_scheduler.ExponentialLR(optimizer_disc, gamma=gamma)
+    warmup_steps = 1000
+    decay_factor = 0.4 # The factor by which the LR will be decayed
+
+    # Calculate gamma for the exponential decay part of the schedule
+    # This ensures the LR decays to `decay_factor` * `base_lr` over the steps following the warmup
+    gamma = decay_factor ** (1 / (total_number_of_steps - warmup_steps))
+
+    # Define the learning rate schedule function
+    def lr_lambda(current_step):
+        if current_step < warmup_steps:
+            return float(current_step) / float(max(1, warmup_steps))
+        else:
+            # The decay starts after the warmup is complete
+            return gamma ** (current_step - warmup_steps)
+
+    # Add the combined warmup and decay schedule
+    scheduler_vae = lr_scheduler.LambdaLR(optimizer_vae, lr_lambda)
+    # scheduler_disc = lr_scheduler.ExponentialLR(optimizer_disc, gamma=gamma)
     losses = []
     lpips_loss_fn = lpips.LPIPS(net='alex')
     if torch.cuda.is_available():
@@ -108,7 +124,7 @@ if __name__=="__main__":
             adversarial_loss = F.cross_entropy(logits, targets)/np.log(2)
 
             # Define the loss components
-            loss = gaussian_loss + lpips_loss*1e-1 + adversarial_loss*1e-1
+            loss = gaussian_loss + lpips_loss*1e-1 + adversarial_loss + 3e-1
             loss.backward()
 
 
@@ -130,7 +146,7 @@ if __name__=="__main__":
             if batch_idx % (batch_size//micro_batch_size) == 0:
                 nn.utils.clip_grad_norm_(discriminator.parameters(), 1)
                 optimizer_disc.step()
-                scheduler_disc.step()
+                # scheduler_disc.step()
                 optimizer_disc.zero_grad()
             
             pbar.set_postfix_str(f"recon loss: {l1_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}, Adversarial Loss: {adversarial_loss.mean().item():.4f}")
@@ -226,7 +242,7 @@ if __name__=="__main__":
                     loss_axes[min(i,3)].plot(loss_data[i], color=loss_colors[i], label=labels[i])
                     loss_axes[min(i,3)].set_title(loss_titles[i])
                     loss_axes[min(i,3)].set_xlabel('Steps')
-                    loss_axes[min(i,3)].set_xlim(left=95)
+                    # loss_axes[min(i,3)].set_xlim(left=95)
                     loss_axes[min(i,3)].set_ylabel('Loss')
                     loss_axes[min(i,3)].grid(True, linestyle='--', alpha=0.7)
                     loss_axes[min(i,3)].set_xscale('log')  
@@ -234,7 +250,7 @@ if __name__=="__main__":
                         loss_axes[min(i,3)].set_yscale('log')  
 
                     
-                    if i==2:
+                    if i==(len(loss_data)-1):
                         loss_axes[min(i,3)].legend()
 
                 # Adjust layout to fit everything nicely
