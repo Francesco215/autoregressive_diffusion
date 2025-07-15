@@ -28,7 +28,7 @@ if __name__=="__main__":
     original_env = "LunarLander-v3"
 
     batch_size = 4
-    micro_batch_size = 4
+    micro_batch_size = 2
     clip_length = 32 
 
     # Initialize models
@@ -36,7 +36,8 @@ if __name__=="__main__":
     vae.decoder.encoder_blocks[-1:].requires_grad_(True)
     vae=torch.compile(vae)
     # Example instantiation
-    discriminator = MixedDiscriminator(in_channels = 3, block_out_channels=(64,128,64)).to(device)
+    discriminator = MixedDiscriminator(in_channels = 6, block_out_channels=(64,128,64)).to(device)
+    discriminator = torch.compile(discriminator)
     
     dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(clip_length), num_workers=8, shuffle=False)
@@ -53,7 +54,7 @@ if __name__=="__main__":
     # Define optimizers
     base_lr = 1e-4
     optimizer_vae = AdamW((p for p in vae.parameters() if p.requires_grad), lr=base_lr, eps=1e-8)
-    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*10, eps=1e-8)
+    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr, eps=1e-8)
     optimizer_vae.zero_grad()
     optimizer_disc.zero_grad()
 
@@ -118,13 +119,9 @@ if __name__=="__main__":
 
             # Define the loss components
 
-            logits = discriminator(r_mean)
-            targets = torch.ones(logits.shape[0], *logits.shape[2:], device=device, dtype=torch.long)
-
-            adversarial_loss = F.cross_entropy(logits, targets)/np.log(2)
-
+            adversarial_loss = discriminator.vae_loss(frames,r_mean)
             # Define the loss components
-            loss = gaussian_loss + lpips_loss*1e-1 + adversarial_loss + 3e-1
+            loss = gaussian_loss + lpips_loss*1e-1 + adversarial_loss *0.4
             loss.backward()
 
 
@@ -135,12 +132,7 @@ if __name__=="__main__":
                 optimizer_vae.zero_grad()
 
 
-            logits_real = discriminator(frames.detach())
-            logits_fake = discriminator(r_mean.detach())
-            loss_disc_real = F.cross_entropy(logits_real, torch.ones_like (targets))/np.log(2)
-            loss_disc_fake = F.cross_entropy(logits_fake, torch.zeros_like(targets))/np.log(2)
-            loss_disc = (loss_disc_real + loss_disc_fake)/2
-
+            loss_disc = discriminator.discriminator_loss(frames, r_mean)
             loss_disc.backward()
             # Update discriminator
             if batch_idx % (batch_size//micro_batch_size) == 0:
