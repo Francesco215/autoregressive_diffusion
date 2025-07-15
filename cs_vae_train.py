@@ -123,7 +123,7 @@ if __name__=="__main__":
                 optimizer_vae.zero_grad()
 
             # Update tqdm progress bar <--- MODIFIED
-            pbar.set_postfix_str(f"gaussian_recon: {gaussian_loss.item():.4f}, l1_recon: {l1_loss.item():.4f}, lpips: {lpips_loss.item():.4f}, current_lr: {optimizer_vae.param_groups[0]['lr']:.4f}")
+            pbar.set_postfix_str(f"gaussian_recon: {gaussian_loss.item():.4f}, l1_recon: {l1_loss.item():.4f}, lpips: {lpips_loss.item():.4f}, current_lr: {optimizer_vae.param_groups[0]['lr']:.6f}")
             gaussian_recon_losses.append(gaussian_loss.item()) # Store all loss components for plotting
             l1_recon_losses.append(l1_loss.item())
             lpips_losses.append(lpips_loss.item()) # <--- ADDED
@@ -203,7 +203,7 @@ if __name__=="__main__":
                 loss_axes[0].set_xscale("log")
                 loss_axes[0].set_xlabel("Steps")
                 loss_axes[0].set_ylabel("Loss")
-                loss_axes[0].set_ybound(upper = 1.)
+                loss_axes[0].set_ybound(upper = gaussian_recon_losses[95])
                 loss_axes[0].set_xbound(lower = 95)
                 # loss_axes[0].legend() # Add legend
                 loss_axes[0].grid(True)
@@ -214,6 +214,7 @@ if __name__=="__main__":
                 loss_axes[1].set_xscale("log")
                 loss_axes[1].set_xlabel("Steps")
                 loss_axes[1].set_ylabel("Loss")
+                loss_axes[1].set_ybound(upper = l1_recon_losses[95])
                 loss_axes[1].set_xbound(lower = 95)
                 # loss_axes[1].legend() # Add legend
                 loss_axes[1].grid(True)
@@ -225,6 +226,7 @@ if __name__=="__main__":
                 loss_axes[2].set_xscale("log")
                 loss_axes[2].set_xlabel("Steps")
                 loss_axes[2].set_ylabel("Loss")
+                loss_axes[2].set_ybound(upper = lpips_losses[95])
                 loss_axes[2].set_xbound(lower = 95)
                 loss_axes[2].grid(True)
 

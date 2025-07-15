@@ -49,8 +49,6 @@ class GroupCausal3DConvVAE(torch.nn.Module):
         return x, cache
 
 
-
-
 class ResBlock(nn.Module):
     def __init__(self, channels: int, kernel=(8,3,3), group_size=1, t_cond=False):
         super().__init__()
@@ -62,8 +60,8 @@ class ResBlock(nn.Module):
 
         nn.init.kaiming_uniform_(self.conv3d0.conv3d.weight)
         nn.init.zeros_(self.conv3d0.conv3d.bias)
-        # scaling_factor = 4 ** -.25
-        # self.conv3d0.conv3d.weight.data *= scaling_factor
+        scaling_factor = 24 ** -.25
+        self.conv3d0.conv3d.weight.data *= scaling_factor
 
         nn.init.zeros_(self.conv3d1.weight)
         nn.init.zeros_(self.conv3d1.bias)
