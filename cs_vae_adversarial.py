@@ -27,13 +27,14 @@ if __name__=="__main__":
 
     original_env = "LunarLander-v3"
 
-    batch_size = 4
+    batch_size = 2
     micro_batch_size = 2
-    clip_length = 32 
+    clip_length = 16 
 
     # Initialize models
-    vae = VAE.from_pretrained('saved_models/vae_cs_23452.pt').requires_grad_(False).to(device)
-    vae.decoder.encoder_blocks[-1:].requires_grad_(True)
+    vae = VAE.from_pretrained('saved_models/vae_cs_23452.pt').to(device)
+    # vae.encoder.requires_grad_(False)
+    # vae.decoder.encoder_blocks[:-2].requires_grad_(False)
     vae=torch.compile(vae)
     # Example instantiation
     discriminator = MixedDiscriminator(in_channels = 6, block_out_channels=(64,128,64)).to(device)
@@ -52,9 +53,9 @@ if __name__=="__main__":
     sigma_data = 1.
 
     # Define optimizers
-    base_lr = 1e-4
-    optimizer_vae = AdamW((p for p in vae.parameters() if p.requires_grad), lr=base_lr, eps=1e-8)
-    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr, eps=1e-8)
+    base_lr = 1e-5
+    optimizer_vae = AdamW((p for p in vae.parameters() if p.requires_grad), lr=base_lr, eps=1e-8, betas = (0.99,0.9999))
+    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*1e1, eps=1e-8, betas = (0.99,0.9999))
     optimizer_vae.zero_grad()
     optimizer_disc.zero_grad()
 
@@ -121,15 +122,17 @@ if __name__=="__main__":
 
             adversarial_loss = discriminator.vae_loss(frames,r_mean)
             # Define the loss components
-            loss = gaussian_loss + lpips_loss*1e-1 + adversarial_loss *0.4
+            loss = gaussian_loss + lpips_loss*0.1 + adversarial_loss*0.1
             loss.backward()
 
 
             if batch_idx % (batch_size//micro_batch_size) == 0:
+                assert micro_batch_size==batch_size, f"for now the code does not support different microbatches than batches, ykwim"
                 nn.utils.clip_grad_norm_(vae.parameters(), 1)
                 optimizer_vae.step()
                 scheduler_vae.step()
                 optimizer_vae.zero_grad()
+                optimizer_disc.zero_grad()
 
 
             loss_disc = discriminator.discriminator_loss(frames, r_mean)
