@@ -22,8 +22,8 @@ from edm2.utils import GaussianLoss
 if __name__=="__main__":
     device = "cuda"
 
-    batch_size = 4
-    micro_batch_size = 4
+    batch_size = 2
+    micro_batch_size = 2
     clip_length = 32
 
     # Hyperparameters
@@ -129,7 +129,7 @@ if __name__=="__main__":
             lpips_losses.append(lpips_loss.item()) # <--- ADDED
 
 
-            if batch_idx % 100 == 0 and batch_idx > 0:
+            if batch_idx % 1000 == 0 and batch_idx > 0:
                 fig = plt.figure(figsize=(15, 18)) # <--- Increased figure height for the new row
                 fig.suptitle(f"VAE Training Progress - VAE Parameters: {vae_params//1e6}M", fontsize=16)
                 # Top section: 3 rows for original, reconstructed (mean), and uncertainty heatmaps

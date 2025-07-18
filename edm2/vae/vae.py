@@ -100,30 +100,37 @@ class EncoderDecoderBlock(nn.Module):
         self.updown_block = UpDownBlock(time_compression, spatial_compression, 'up' if type=='decoder' else 'down')
         total_compression = self.updown_block.total_compression
 
-        self.decompression_block = nn.Conv3d(in_channels, out_channels*total_compression, kernel_size=(1,1,1)) if type=='decoder' else None
+        self.decompression_block = nn.Conv3d(in_channels, in_channels*total_compression, kernel_size=(1,1,1)) if type=='decoder' else None
         self.compression_block  =  nn.Conv3d(in_channels*total_compression, out_channels, kernel_size=(1,1,1)) if type in ['encoder', 'discriminator'] else None
 
-        self.res_blocks = nn.ModuleList([ResBlock(out_channels, kernel, group_size, t_cond=type=='decoder') for _ in range(n_res_blocks)])
+        self.res_blocks = nn.ModuleList([ResBlock(in_channels if type=="decoder" else out_channels, kernel, group_size, t_cond=type=='decoder') for _ in range(n_res_blocks)])
 
-    def forward(self, x, t=None, cache=None):
+        self.final_conv = nn.Conv3d(in_channels, out_channels, kernel_size=(1,1,1)) if type=='decoder' else None
+
+    def forward(self,x, t, cache=None):
+        #TODO: rewrite this code, it's horrible
         if cache is None: cache = {}
-        res = x.clone()
 
         if self.decompression_block:
             x = self.decompression_block(x)
-            res = interpolate_channels(res, x.shape[1])
 
-        x, res = self.updown_block(x), self.updown_block(res)
+        x = self.updown_block(x)
 
         if self.compression_block:
+            res = x.clone()
             x = self.compression_block(x)
             res = interpolate_channels(res, x.shape[1])
-
-        x = x + res
+            x = x + res
 
         
         for i, res_block in enumerate(self.res_blocks):
             x, cache[f'res_block_{i}'] = res_block(x, t, cache.get(f'res_block_{i}', None))
+
+        if self.decompression_block:
+            res = x.clone()
+            x = self.final_conv(x)
+            res = interpolate_channels(res, x.shape[1])
+            x = x+res
 
         return x, cache
 
@@ -217,7 +224,7 @@ class VAE(BetterModule):
         args, _, _, values = inspect.getargvalues(frame)
         self.kwargs = {arg: values[arg] for arg in args if arg != "self"}
 
-    def forward(self, x, t=0.2, cache=None):
+    def forward(self, x, t=0.1, cache=None):
         if cache is None: cache = {}
 
         mean, cache['encoder'] = self.encode(x, cache.get('encoder', None))
