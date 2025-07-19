@@ -286,8 +286,8 @@ class Discriminator3D(nn.Module):
 class MixedDiscriminator(nn.Module):
     def __init__(self, in_channels = 6, block_out_channels = (64,32)):
         super().__init__()
-        self.discriminator2d = Discriminator2D(in_channels, (64,64,64))
-        self.discriminator3d = Discriminator3D(in_channels, (64,64))
+        self.discriminator2d = Discriminator2D(in_channels, (32,32,32))
+        self.discriminator3d = Discriminator3D(in_channels, (32,32))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # it should return 1 if he thinks that the frames are in the first 3 channels, else, 0

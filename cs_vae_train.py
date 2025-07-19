@@ -24,7 +24,7 @@ if __name__=="__main__":
 
     batch_size = 2
     micro_batch_size = 2
-    clip_length = 32
+    clip_length = 24
 
     # Hyperparameters
     latent_channels = 8
@@ -34,22 +34,24 @@ if __name__=="__main__":
     # Initialize models
     vae = VAE(channels = channels, n_res_blocks=n_res_blocks, spatial_compressions=[1,2,2,2], time_compressions=[1,2,2,1]).to(device)
     # vae = VAE.from_pretrained('saved_models/vae_cs_15990.pt').to(device)
-    vae = torch.compile(vae)
-    #%%
+    discriminator = MixedDiscriminator().to(device)
+    vae, discriminator = torch.compile(vae), torch.compile(discriminator)
 
     dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(clip_length), num_workers=8, shuffle=False)
     total_number_of_steps = len(dataloader)//micro_batch_size
 
     vae_params = sum(p.numel() for p in vae.parameters())
+    discriminator_params = sum(p.numel() for p in discriminator.parameters())
     print(f"Number of vae parameters: {vae_params//1e3}K")
-    # sigma_data = 0.434
-    sigma_data = 1.
+    print(f"Number of discriminator parameters: {discriminator_params//1e3}K")
 
     # Define optimizers
-    base_lr = 1e-4
-    optimizer_vae = AdamW(vae.parameters(), lr=base_lr, eps=1e-8)
+    base_lr = 1e-5
+    optimizer_vae = AdamW((p for p in vae.parameters() if p.requires_grad), lr=base_lr, eps=1e-8)
+    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*1e1, eps=1e-8)
     optimizer_vae.zero_grad()
+    optimizer_disc.zero_grad()
 
     # --- Scheduler Definition ---
     warmup_steps = 100
@@ -69,6 +71,7 @@ if __name__=="__main__":
 
     # Add the combined warmup and decay schedule
     scheduler_vae = lr_scheduler.LambdaLR(optimizer_vae, lr_lambda)
+    scheduler_disc = lr_scheduler.LambdaLR(optimizer_disc, lr_lambda)
 
     # Initialize LPIPS loss function <--- ADDED
     lpips_loss_fn = lpips.LPIPS(net='alex')
@@ -76,7 +79,7 @@ if __name__=="__main__":
         lpips_loss_fn.cuda()
 
     # Store losses
-    gaussian_recon_losses, l1_recon_losses, lpips_losses = [], [], [] # <--- MODIFIED
+    gaussian_recon_losses, l1_recon_losses, lpips_losses, adversarial_losses, discriminator_losses = [], [], [], [], []
 
     #%%
     # Training loop
@@ -107,13 +110,10 @@ if __name__=="__main__":
 
             # Calculate LPIPS loss for each frame and then take the mean
             lpips_loss = lpips_loss_fn(r_mean_flat, frames_flat).mean()
-            # --- END MODIFIED LPIPS Calculation ---
+            adversarial_loss = discriminator.vae_loss(frames,r_mean)
 
 
-            # Define the loss components
-            lpips_weight = 0.1
-
-            main_loss = gaussian_loss + lpips_weight * lpips_loss
+            main_loss = gaussian_loss + lpips_loss*0.1 + adversarial_loss*0.05
             main_loss.backward()
 
             if batch_idx % (batch_size//micro_batch_size) == 0 and batch_idx!=0:
@@ -121,12 +121,25 @@ if __name__=="__main__":
                 optimizer_vae.step()
                 scheduler_vae.step()
                 optimizer_vae.zero_grad()
+                optimizer_disc.zero_grad()
 
-            # Update tqdm progress bar <--- MODIFIED
-            pbar.set_postfix_str(f"gaussian_recon: {gaussian_loss.item():.4f}, l1_recon: {l1_loss.item():.4f}, lpips: {lpips_loss.item():.4f}, current_lr: {optimizer_vae.param_groups[0]['lr']:.6f}")
+            loss_disc = discriminator.discriminator_loss(frames, r_mean)
+            loss_disc.backward()
+
+            # Update discriminator
+            if batch_idx % (batch_size//micro_batch_size) == 0:
+                nn.utils.clip_grad_norm_(discriminator.parameters(), 1)
+                optimizer_disc.step()
+                # scheduler_disc.step()
+                optimizer_disc.zero_grad()
+
+
+            pbar.set_postfix_str(f"gaussian_recon: {gaussian_loss.item():.4f}, l1_recon: {l1_loss.item():.4f}, lpips: {lpips_loss.item():.4f}, disc_loss: {loss_disc.item():.4f} current_lr: {optimizer_vae.param_groups[0]['lr']:.6f}")
             gaussian_recon_losses.append(gaussian_loss.item()) # Store all loss components for plotting
             l1_recon_losses.append(l1_loss.item())
-            lpips_losses.append(lpips_loss.item()) # <--- ADDED
+            lpips_losses.append(lpips_loss.item()) 
+            adversarial_losses.append(adversarial_loss.item()) 
+            discriminator_losses.append(loss_disc.item()) 
 
 
             if batch_idx % 1000 == 0 and batch_idx > 0:
@@ -139,11 +152,12 @@ if __name__=="__main__":
                 uncertainty_axes = [fig.add_subplot(gs_top[2, i]) for i in range(5)] # New row for uncertainty
 
                 # Bottom section: 1x3 for loss plots <--- MODIFIED (was 1x2)
-                gs_bottom = plt.GridSpec(1, 3, figure=fig, top=0.45, bottom=0.1, left=0.05, right=0.95, hspace=0.4, wspace=0.3) # <--- Adjusted wspace
+                gs_bottom = plt.GridSpec(2, 2, figure=fig, top=0.45, bottom=0.1, left=0.05, right=0.95, hspace=0.4, wspace=0.3) # <--- Adjusted wspace
                 loss_axes = [
                     fig.add_subplot(gs_bottom[0, 0]),
                     fig.add_subplot(gs_bottom[0, 1]),
-                    fig.add_subplot(gs_bottom[0, 2]),
+                    fig.add_subplot(gs_bottom[1, 0]),
+                    fig.add_subplot(gs_bottom[1, 1]),
                 ]
 
                 # Frame visualization
@@ -229,6 +243,18 @@ if __name__=="__main__":
                 loss_axes[2].set_ybound(upper = lpips_losses[95])
                 loss_axes[2].set_xbound(lower = 95)
                 loss_axes[2].grid(True)
+
+                loss_axes[3].plot(adversarial_losses, label="Adversarial losses", color="orange")
+                loss_axes[3].plot(discriminator_losses, label="Discriminator loss", color="red")
+                loss_axes[3].set_title("GAN loss")
+                loss_axes[3].set_yscale("log")
+                loss_axes[3].set_xscale("log")
+                loss_axes[3].set_xlabel("Steps")
+                loss_axes[3].set_ylabel("Loss")
+                loss_axes[3].set_xbound(lower = 95)
+                loss_axes[3].grid(True)
+                loss_axes[3].legend() # Add legend
+                # loss_axes[1].legend() # Add legend
 
                 plt.tight_layout()
                 os.makedirs("images_training", exist_ok=True)
