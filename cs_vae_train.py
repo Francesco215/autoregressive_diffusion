@@ -22,9 +22,9 @@ from edm2.utils import GaussianLoss
 if __name__=="__main__":
     device = "cuda"
 
-    batch_size = 2
-    micro_batch_size = 2
-    clip_length = 24
+    batch_size = 1
+    micro_batch_size = 1
+    clip_length = 32
 
     # Hyperparameters
     latent_channels = 8
@@ -47,15 +47,15 @@ if __name__=="__main__":
     print(f"Number of discriminator parameters: {discriminator_params//1e3}K")
 
     # Define optimizers
-    base_lr = 1e-5
+    base_lr = 1e-4
     optimizer_vae = AdamW((p for p in vae.parameters() if p.requires_grad), lr=base_lr, eps=1e-8)
-    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*1e1, eps=1e-8)
+    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr, eps=1e-8)
     optimizer_vae.zero_grad()
     optimizer_disc.zero_grad()
 
     # --- Scheduler Definition ---
     warmup_steps = 100
-    decay_factor = 0.1 # The factor by which the LR will be decayed
+    decay_factor = 0.4 # The factor by which the LR will be decayed
 
     # Calculate gamma for the exponential decay part of the schedule
     # This ensures the LR decays to `decay_factor` * `base_lr` over the steps following the warmup
@@ -113,7 +113,7 @@ if __name__=="__main__":
             adversarial_loss = discriminator.vae_loss(frames,r_mean)
 
 
-            main_loss = gaussian_loss + lpips_loss*0.1 + adversarial_loss*0.05
+            main_loss = gaussian_loss + lpips_loss*0.1 + adversarial_loss*0.05*min(1,batch_idx/total_number_of_steps)
             main_loss.backward()
 
             if batch_idx % (batch_size//micro_batch_size) == 0 and batch_idx!=0:
@@ -130,7 +130,7 @@ if __name__=="__main__":
             if batch_idx % (batch_size//micro_batch_size) == 0:
                 nn.utils.clip_grad_norm_(discriminator.parameters(), 1)
                 optimizer_disc.step()
-                # scheduler_disc.step()
+                scheduler_disc.step()
                 optimizer_disc.zero_grad()
 
 
@@ -219,7 +219,6 @@ if __name__=="__main__":
                 loss_axes[0].set_ylabel("Loss")
                 loss_axes[0].set_ybound(upper = gaussian_recon_losses[95])
                 loss_axes[0].set_xbound(lower = 95)
-                # loss_axes[0].legend() # Add legend
                 loss_axes[0].grid(True)
 
                 loss_axes[1].plot(l1_recon_losses, label="L1 Recon Loss\n(we don't optimize for this)", color="blue") # Plot L1 Loss
@@ -230,7 +229,6 @@ if __name__=="__main__":
                 loss_axes[1].set_ylabel("Loss")
                 loss_axes[1].set_ybound(upper = l1_recon_losses[95])
                 loss_axes[1].set_xbound(lower = 95)
-                # loss_axes[1].legend() # Add legend
                 loss_axes[1].grid(True)
 
                 # Plot LPIPS loss <--- ADDED NEW PLOT
@@ -254,11 +252,10 @@ if __name__=="__main__":
                 loss_axes[3].set_xbound(lower = 95)
                 loss_axes[3].grid(True)
                 loss_axes[3].legend() # Add legend
-                # loss_axes[1].legend() # Add legend
 
                 plt.tight_layout()
                 os.makedirs("images_training", exist_ok=True)
-                plt.savefig(f"images_training/combined_step_cs_{batch_idx}.png")
+                plt.savefig(f"images_training/{batch_idx}.png")
                 plt.close()
 
             if batch_idx % (total_number_of_steps // 10) == 0 and batch_idx != 0:
