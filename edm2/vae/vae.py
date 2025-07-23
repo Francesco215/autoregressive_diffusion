@@ -107,12 +107,20 @@ class EncoderDecoderBlock(nn.Module):
 
         self.final_conv = nn.Conv3d(in_channels, out_channels, kernel_size=(1,1,1)) if type=='decoder' else None
 
+        for layer in [self.compression_block, self.decompression_block, self.final_conv]:
+            if layer is not None:
+                nn.init.zeros_(layer.weight)
+                nn.init.zeros_(layer.bias)
+
     def forward(self,x, t, cache=None):
         #TODO: rewrite this code, it's horrible
         if cache is None: cache = {}
 
         if self.decompression_block:
+            res = x.clone()
             x = self.decompression_block(x)
+            res = interpolate_channels(res, x.shape[1])
+            x = x+res
 
         x = self.updown_block(x)
 

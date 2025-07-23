@@ -31,16 +31,16 @@ if __name__=="__main__":
 
     # Hyperparameters
     latent_channels = 8
-    n_res_blocks = 6 #3 before
+    n_res_blocks = 5
     channels = [3, 32, 128, 512, latent_channels]
 
     # Initialize models
     vae = VAE(channels = channels, n_res_blocks=n_res_blocks, spatial_compressions=[1,2,2,2], time_compressions=[1,2,2,1]).to(device)
-    vae = vae.to(torch.float16)
+    #vae = vae.to(torch.float16)
     # vae = VAE.from_pretrained('saved_models/vae_cs_15990.pt').to(device)
     #discriminator = MixedDiscriminator().to(device)
     #vae, discriminator = torch.compile(vae), torch.compile(discriminator)
-    # vae = torch.compile(vae)
+    vae = torch.compile(vae)
     dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/mnt/mnemo9/mpelus/experiments/autoregressive_diffusion/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(clip_length), num_workers=8, shuffle=False)
@@ -79,7 +79,7 @@ if __name__=="__main__":
     #scheduler_disc = lr_scheduler.LambdaLR(optimizer_disc, lr_lambda)
 
     # Initialize LPIPS loss function 
-    lpips_loss_fn = lpips.LPIPS(net='alex').to(torch.float16)
+    lpips_loss_fn = lpips.LPIPS(net='alex')#.to(torch.float16)
     if torch.cuda.is_available():
         lpips_loss_fn.cuda()
 
@@ -96,7 +96,7 @@ if __name__=="__main__":
                 frames = frames.float() / 127.5 - 1 # Normalize to [-1, 1]
                 
                 frames = einops.rearrange(frames, 'b t h w c-> b c t h w').to(device)
-                frames = frames.to(torch.float16)
+                #frames = frames.to(torch.float16)
 
             # VAE forward pass
             # r_mean (reconstruction mean): This is your hat_x
