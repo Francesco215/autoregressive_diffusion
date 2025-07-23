@@ -168,7 +168,7 @@ if __name__=="__main__":
                     fig.add_subplot(gs_bottom[0, 0]),
                     fig.add_subplot(gs_bottom[0, 1]),
                     fig.add_subplot(gs_bottom[1, 0]),
-                    fig.add_subplot(gs_bottom[1, 1]),
+                    #fig.add_subplot(gs_bottom[1, 1]),
                 ]
 
                 # Frame visualization
