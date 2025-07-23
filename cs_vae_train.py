@@ -18,6 +18,8 @@ from edm2.cs_dataloading import CsCollate, CsDataset
 from edm2.vae import VAE, MixedDiscriminator
 from edm2.utils import GaussianLoss
 
+os.environ['TORCHINDUCTOR_CACHE_DIR'] = '/mnt/mnemo9/mpelus/experiments/autoregressive_diffusion/.torchinductor_cache'
+
 # torch.autograd.set_detect_anomaly(True)
 if __name__=="__main__":
     device = "cuda"
@@ -37,7 +39,7 @@ if __name__=="__main__":
     discriminator = MixedDiscriminator().to(device)
     vae, discriminator = torch.compile(vae), torch.compile(discriminator)
 
-    dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
+    dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/mnt/mnemo9/mpelus/experiments/autoregressive_diffusion/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(clip_length), num_workers=8, shuffle=False)
     total_number_of_steps = len(dataloader)//micro_batch_size
 
@@ -109,11 +111,14 @@ if __name__=="__main__":
             r_mean_flat = torch.clip(einops.rearrange(r_mean, 'b c t h w -> (b t) c h w'), -1, 1)
 
             # Calculate LPIPS loss for each frame and then take the mean
-            lpips_loss = lpips_loss_fn(r_mean_flat, frames_flat).mean()
+            raw_lpips_per_frame = lpips_loss_fn(r_mean_flat, frames_flat)  # Shape: [B*T]
+            eps = 1e-8
+            log_lpips_per_frame = torch.log(raw_lpips_per_frame + eps)
+            lpips_loss = log_lpips_per_frame.mean()
             adversarial_loss = discriminator.vae_loss(frames,r_mean)
 
 
-            main_loss = gaussian_loss + lpips_loss*0.1 + adversarial_loss*0.05*min(1,batch_idx/total_number_of_steps)
+            main_loss = gaussian_loss + lpips_loss*0.1 + adversarial_loss*0.01 #*0.05*min(1,batch_idx/total_number_of_steps)
             main_loss.backward()
 
             if batch_idx % (batch_size//micro_batch_size) == 0 and batch_idx!=0:
@@ -234,12 +239,12 @@ if __name__=="__main__":
                 # Plot LPIPS loss <--- ADDED NEW PLOT
                 loss_axes[2].plot(lpips_losses, label="LPIPS Loss\n(we optimize for this)", color="green")
                 loss_axes[2].set_title("LPIPS Loss")
-                loss_axes[2].set_yscale("log")
+                #loss_axes[2].set_yscale("log")
                 loss_axes[2].set_xscale("log")
                 loss_axes[2].set_xlabel("Steps")
                 loss_axes[2].set_ylabel("Loss")
-                loss_axes[2].set_ybound(upper = lpips_losses[95])
-                loss_axes[2].set_xbound(lower = 95)
+                # loss_axes[2].set_ybound(upper = lpips_losses[95])
+                # loss_axes[2].set_xbound(lower = 95)
                 loss_axes[2].grid(True)
 
                 loss_axes[3].plot(adversarial_losses, label="Adversarial losses", color="orange")

@@ -19,6 +19,8 @@ from edm2.cs_dataloading import CsCollate, CsDataset
 from edm2.utils import GaussianLoss
 from edm2.vae import VAE, MixedDiscriminator
 
+os.environ['TORCHINDUCTOR_CACHE_DIR'] = '/mnt/mnemo9/mpelus/experiments/autoregressive_diffusion/.torchinductor_cache'
+
 # torch.autograd.set_detect_anomaly(True)
 torch._dynamo.config.recompile_limit = 100
 if __name__=="__main__":
@@ -31,16 +33,23 @@ if __name__=="__main__":
     micro_batch_size = 2
     clip_length = 16 
 
+    # Hyperparameters
+    latent_channels = 8
+    n_res_blocks = 2
+    channels = [3, 32, 32, latent_channels]
+
     # Initialize models
-    vae = VAE.from_pretrained('saved_models/vae_cs_23452.pt').to(device)
+    # vae = VAE.from_pretrained('saved_models/vae_cs_23452.pt').to(device)
+    # vae = VAE.from_pretrained('s3://autoregressive-diffusion/saved_models/big_vae_gaussian_1.pt').to(device)
     # vae.encoder.requires_grad_(False)
     # vae.decoder.encoder_blocks[:-2].requires_grad_(False)
+    vae = VAE(channels = channels, n_res_blocks=n_res_blocks).to(device)
     vae=torch.compile(vae)
     # Example instantiation
     discriminator = MixedDiscriminator(in_channels = 6, block_out_channels=(64,128,64)).to(device)
     discriminator = torch.compile(discriminator)
     
-    dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
+    dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/mnt/mnemo9/mpelus/experiments/autoregressive_diffusion/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(clip_length), num_workers=8, shuffle=False)
     total_number_of_steps = len(dataloader)//micro_batch_size
 
@@ -114,7 +123,9 @@ if __name__=="__main__":
             r_mean_flat = torch.clip(einops.rearrange(r_mean, 'b c t h w -> (b t) c h w'), -1, 1)
 
             # Calculate LPIPS loss for each frame and then take the mean
-            lpips_loss = lpips_loss_fn(r_mean_flat, frames_flat).mean()
+            lpips_loss = lpips_loss_fn(r_mean_flat, frames_flat)
+            log_lpips = lpips_loss.log().mean()  # Calculate log before mean
+            lpips_loss = lpips_loss.mean()
             # --- END MODIFIED LPIPS Calculation ---
 
 
@@ -122,7 +133,7 @@ if __name__=="__main__":
 
             adversarial_loss = discriminator.vae_loss(frames,r_mean)
             # Define the loss components
-            loss = gaussian_loss + lpips_loss*0.1 + adversarial_loss*0.1
+            loss = gaussian_loss + log_lpips*0.1 + adversarial_loss*0.1
             loss.backward()
 
 
@@ -149,7 +160,7 @@ if __name__=="__main__":
             adversarial_losses.append(adversarial_loss.mean().item())
             disc_losses.append(loss_disc.item())
             gaussian_recon_losses.append(gaussian_loss.item()) # Store all loss components for plotting
-            lpips_losses.append(lpips_loss.item()) # <--- ADDED
+            lpips_losses.append(log_lpips.item())
 
             # if batch_idx == 500:
             #     adv_multiplier = 5e-2
