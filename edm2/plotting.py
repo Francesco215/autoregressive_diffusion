@@ -167,7 +167,7 @@ def plot_training_dashboard(
     # context = einops.rearrange(context, 'b t (c hs ws) h w -> b t c (h hs) (w ws) ', hs=2, ws=2)
     frames = autoencoder.latents_to_frames(context)
 
-    x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=8).to("cpu").detach().numpy()
+    x = einops.rearrange(frames, 'b (t1 t2) h w c -> b (t1 h) (t2 w) c', t2=8)
     #set high resolution
     ax4.imshow(x[0])
     ax4.axis('off')

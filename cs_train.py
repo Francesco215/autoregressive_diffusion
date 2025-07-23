@@ -21,6 +21,7 @@ from edm2.cs_dataloading import CsCollate, CsDataset, CsVaeCollate, CsVaeDataset
 from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.phema import PowerFunctionEMA
+from edm2.vae import VAE
 import torch._dynamo.config
 
 torch._dynamo.config.cache_size_limit = 100
@@ -28,11 +29,21 @@ torch._dynamo.config.cache_size_limit = 100
 
         
 def train(device, local_rank=0):
-    vae = StabilityVAEEncoder().to(device)
-    unet = UNet.from_pretrained("edm2.pt").to(device)
-    for name, module in unet.named_modules():
-        if isinstance(module, MPConv):
-            module.requires_grad_(False)
+    vae = VAE.from_pretrained('s3://autoregressive-diffusion/saved_models/vae_cs_102354.pt').to(device)
+    vae.mean=vae.mean.to(device)
+    vae.std=vae.std.to(device)
+    unet = UNet(img_resolution=32, # Match your latent resolution
+                img_channels=8, # Match your latent channels
+                label_dim = 4,
+                model_channels=128,
+                channel_mult=[1,2,4,4],
+                channel_mult_noise=None,
+                channel_mult_emb=None,
+                num_blocks=2,
+                video_attn_resolutions=[4],
+                frame_attn_resolutions=[8],
+                )
+
     resume_training=False
     unet_params = sum(p.numel() for p in unet.parameters())
     if resume_training:
@@ -50,7 +61,7 @@ def train(device, local_rank=0):
     accumulation_steps = batch_size//micro_batch_size
     clip_length = 16
     # training_steps = total_number_of_steps * batch_size
-    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed_stable_diff', local = f'/data/streaming_dataset/cs_vae_sd', batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
+    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/vae_40M/', local = f'/data/streaming_dataset/cs_diff', batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsVaeCollate(), pin_memory=True, num_workers=4, shuffle=False)
     steps_per_epoch = len(dataset)//micro_batch_size
     n_epochs = 10
@@ -59,7 +70,7 @@ def train(device, local_rank=0):
 
 
     # sigma_data = 0.434
-    sigma_data = .5
+    sigma_data = 1.
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
     loss_fn = EDM2Loss(P_mean=0.9,P_std=1.0, sigma_data=sigma_data, context_noise_reduction=0.1)
 
@@ -85,11 +96,11 @@ def train(device, local_rank=0):
         pbar = tqdm(enumerate(dataloader, start=steps_taken),total=steps_per_epoch) if local_rank==0 else enumerate(dataloader)
         for i, batch in pbar:
             with torch.no_grad():
-                means, logvars, _ = batch
-                means, logvars = means.to(device), logvars.to(device)
-                latents = vae.encode_latents(means, logvars)
+                means, _ = batch
+                means= means.to(device)
+                # print(means.shape)
+                latents = (means-vae.mean[:,None,None])/vae.std[:,None,None]
                 actions = None
-
 
             # Calculate loss    
             loss, un_weighted_loss = loss_fn(precond, latents, actions, just_2d=i%4==0)
@@ -116,7 +127,7 @@ def train(device, local_rank=0):
                     g['lr'] = current_lr
 
             # Save model checkpoint (optional)
-            if i % 500 * accumulation_steps == 0 and i!=0:
+            if i % 5 * accumulation_steps == 0 and i!=0:
                 precond.noise_weight.fit_loss_curve()
                 if local_rank==0:
                     plot_training_dashboard(

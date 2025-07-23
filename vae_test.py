@@ -1,7 +1,9 @@
 #%%
 import torch
+from edm2.cs_dataloading import CsVaeCollate, CsVaeDataset
 from edm2.vae import VAE
-#%%
+from torch.utils.data import DataLoader
+import einops
 device = "cuda"
 # Hyperparameters
 latent_channels = 8
@@ -9,9 +11,20 @@ n_res_blocks = 3
 channels = [3, 16, 64, 256, latent_channels]
 
 # Initialize models
-vae = VAE(channels = channels, n_res_blocks=n_res_blocks, spatial_compressions=[1,2,2,2], time_compressions=[1,2,2,1], logvar_mode=0.1).to(device)
-#%%
-x = torch.randn(2, 3, 32, 16, 16, device= "cuda")
-vae(x)[0].shape
+vae = VAE.from_pretrained('s3://autoregressive-diffusion/saved_models/vae_cs_102354.pt').to(device)
 
+clip_length = 16
+micro_batch_size = 2
+dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/vae_40M/', local = f'/data/streaming_dataset/cs_diff', batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
+dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsVaeCollate(), pin_memory=True, num_workers=4, shuffle=False)
+means = next(iter(dataloader))[0]
+
+# %%
+with torch.no_grad():
+    pixels = vae.decode(means[:,:8].to("cuda").to(torch.float).transpose(1,2), t=torch.tensor([0.1,0.1],device="cuda"))[0]
+    pixels = einops.rearrange(pixels, 'b c t h w-> b t h w c')
+# %%
+from matplotlib import pyplot as plt
+
+plt.imshow(pixels.detach().cpu()[0,0])
 # %%

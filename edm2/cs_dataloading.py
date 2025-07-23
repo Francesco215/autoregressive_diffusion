@@ -59,15 +59,15 @@ class CsVaeDataset(StreamingDataset):
     def __iter__(self) -> Any:
 
         for example in super().__iter__():
-            means, logvars, actions = torch.tensor(example['mean']), torch.tensor(example['logvar']), torch.tensor(example['action'])
-            # means = einops.rearrange(means, 'c t h w -> t c h w')
+            means, actions = torch.tensor(example['mean']), torch.tensor(example['action'])
+            means = einops.rearrange(means, 'c t h w -> t c h w')
             # logvars = einops.rearrange(logvars, 'c t h w -> t c h w')
             # actions = einops.rearrange(actions, 'c t -> t c')
 
 
             while(means.shape[0]>=self.clip_size):
-                yield means[:self.clip_size], logvars[:self.clip_size], actions[:self.clip_size]
-                means, logvars, actions = means[self.clip_size:], logvars[self.clip_size:], actions[self.clip_size:]
+                yield means[:self.clip_size], actions[:self.clip_size]
+                means, actions = means[self.clip_size:], actions[self.clip_size:]
     
     def __len__(self):
         return super().__len__()*(1000//self.clip_size)
@@ -76,6 +76,6 @@ class CsVaeDataset(StreamingDataset):
 
 class CsVaeCollate:
     def __call__(self, batch):
-        means, logvars, actions = zip(*batch)
-        means, logvars, actions = torch.stack(means), torch.stack(logvars), torch.stack(actions)
-        return means, logvars, actions
+        means, actions = zip(*batch)
+        means, actions = torch.stack(means), torch.stack(actions)
+        return means, actions

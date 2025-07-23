@@ -224,8 +224,8 @@ class VAE(BetterModule):
         self.time_compression = np.prod(time_compressions)
         self.spatial_compression = np.prod(spatial_compressions)
 
-        self.mean=mean
-        self.std=std 
+        self.mean=torch.tensor(mean)
+        self.std=torch.tensor(std)
 
         # is it possible to put this inside of the super() class and avoid having it here?
         frame = inspect.currentframe()
@@ -306,14 +306,14 @@ class VAE(BetterModule):
                 - The frames are rearranged and clipped to the range [0, 255] before being converted to a numpy array.
         """
         batch_size = latents.shape[0]
+        # latents = (latents * self.std[:,None,None].to(latents.device)) +self.mean[:,None,None].to(latents.device)
         latents = einops.rearrange(latents, 'b t c h w -> b c t h w')
 
-        latents = latents * self.std
 
         #split the conversion to not overload the GPU RAM
         split_size = 16
         for i in range (0, latents.shape[0], split_size):
-            l, _ = self.decode(latents[i:i+split_size])
+            l, _, _ = self.decode(latents[i:i+split_size], t=0.1*torch.ones(latents.shape[0], device=latents.device))
             if i == 0:
                 frames = l
             else:
