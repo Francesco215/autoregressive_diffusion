@@ -206,7 +206,7 @@ class EncoderDecoder(nn.Module):
 
 
 class VAE(BetterModule):
-    def __init__(self, channels, n_res_blocks, time_compressions=[1, 2, 2], spatial_compressions=[1, 2, 2], std=None):
+    def __init__(self, channels, n_res_blocks, time_compressions=[1, 2, 2], spatial_compressions=[1, 2, 2], mean=None, std=None):
         super().__init__()
         
         self.latent_channels = channels[-1]
@@ -216,8 +216,8 @@ class VAE(BetterModule):
         self.time_compression = np.prod(time_compressions)
         self.spatial_compression = np.prod(spatial_compressions)
 
-        # self.std=1.68 # this is when i pass z
-        self.std=std #TODO put this as an argument, when it's untrained it should be none, but it must be specified when loading_from_pretrained
+        self.mean=mean
+        self.std=std 
 
         # is it possible to put this inside of the super() class and avoid having it here?
         frame = inspect.currentframe()
@@ -236,7 +236,7 @@ class VAE(BetterModule):
         return r_mean, r_logvar, mean, cache
     
     def encode(self, x, cache=None):
-        mean, cache = self.encoder(x, cache)
+        mean, cache = self.encoder(x, cache = cache)
         return mean, cache
     
     def decode(self, z, t, cache=None):
@@ -247,20 +247,15 @@ class VAE(BetterModule):
 
     @torch.no_grad()
     def encode_long_sequence(self, frames, cache=None, split_size=256):
-        assert frames.shape[0]==1
         assert frames.dim()==5
-        mean, logvar = None, None
+        mean = None
         while frames.shape[2]>0:
             f = frames[:,:,:split_size].to(self.device)
-            _,m,l,cache = self.encode(f,cache)
-            if mean is None:
-                mean, logvar = m, l
-            else:
-                mean = torch.cat((mean, m), dim = 2)
-                logvar = torch.cat((logvar, l), dim = 2)
+            m, cache = self.encode(f, cache = cache)
+            mean = m if mean is None else torch.cat((mean, m), dim = 2)
             frames = frames[:,:,split_size:]
 
-        return mean, logvar
+        return mean
             
 
     # TODO: substitute this with encode_long_sequence. make sure it's also efficient
