@@ -20,6 +20,7 @@ from edm2.utils import GaussianLoss
 
 # os.environ['TORCHINDUCTOR_CACHE_DIR'] = '/mnt/mnemo9/mpelus/experiments/autoregressive_diffusion/.torchinductor_cache'
 
+torch._dynamo.config.recompile_limit = 64
 # torch.autograd.set_detect_anomaly(True)
 if __name__=="__main__":
     device = "cuda"
@@ -91,6 +92,7 @@ if __name__=="__main__":
             with torch.no_grad():
                 frames, _ = micro_batch # Ignore actions and reward for this VggAE training
                 frames = frames.float() / 127.5 - 1 # Normalize to [-1, 1]
+                
                 frames = einops.rearrange(frames, 'b t h w c-> b c t h w').to(device)
 
             # VAE forward pass
@@ -107,6 +109,7 @@ if __name__=="__main__":
             # Reshape frames and r_mean from [B, C, T, H, W] to [B*T, C, H, W]
             # so that LPIPS can process them as individual images.
             # Your frames are C=3, and T=32, so we need to flatten T into the batch dimension.
+           
             frames_flat = torch.clip(einops.rearrange(frames, 'b c t h w -> (b t) c h w'), -1, 1)
             r_mean_flat = torch.clip(einops.rearrange(r_mean, 'b c t h w -> (b t) c h w'), -1, 1)
 

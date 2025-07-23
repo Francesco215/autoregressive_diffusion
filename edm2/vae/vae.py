@@ -32,6 +32,9 @@ class GroupCausal3DConvVAE(torch.nn.Module):
         dt, dw, dh = dilation
         self.image_padding = (dh * (kh//2), dh * (kh//2), dw * (kw//2), dw * (kw//2))
         self.time_padding_size = kt+(kt-1)*(dt-1)-self.group_size
+        
+        self.register_buffer('group_size_tensor', torch.tensor(group_size), persistent=False)
+
 
     def forward(self, x, gain=1, cache=None):
         x = F.pad(x, pad = self.image_padding, mode="constant", value = 0)
@@ -44,8 +47,8 @@ class GroupCausal3DConvVAE(torch.nn.Module):
 
         x = self.conv3d(x)
 
-        x = einops.rearrange(x, 'b (c g) t h w -> b c (t g) h w', g=self.group_size)
-
+        x = einops.rearrange(x, 'b (c g) t h w -> b c (t g) h w',g=self.group_size_tensor.item())
+       
         return x, cache
 
 
@@ -92,7 +95,6 @@ class ResBlock(nn.Module):
         x = x + y
 
         return x, cache
-
 
 class EncoderDecoderBlock(nn.Module):
     def __init__(self, in_channels, out_channels, time_compression, spatial_compression, kernel, group_size, n_res_blocks, type='encoder'):
