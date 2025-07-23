@@ -231,7 +231,7 @@ class VAE(BetterModule):
 
         mean, cache['encoder'] = self.encode(x, cache.get('encoder', None))
         # Decode latent vector to reconstruct input
-        t = torch.rand(x.shape[0], device = x.device)*t
+        t = torch.rand(x.shape[0], device = x.device, dtype=x.dtype)*t
         z = bmult(mean,1-t) + bmult(torch.randn_like(mean),t)
         r_mean, r_logvar, cache['decoder'] = self.decode(z, t, cache.get('decoder', None))
 
