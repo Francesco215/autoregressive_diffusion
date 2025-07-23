@@ -23,9 +23,12 @@ class GroupCausal3DConvVAE(torch.nn.Module):
         self.dilation = dilation
         # self.weight = NormalizedWeight(in_channels, out_channels*group_size, kernel, bias = True)
         self.conv3d = nn.Conv3d(in_channels, out_channels*group_size, kernel, dilation=dilation, stride=(group_size, 1, 1), bias=True)
+        nn.init.kaiming_uniform_(self.conv3d.weight)
+        nn.init.zeros_(self.conv3d.bias)
         with torch.no_grad():
             w = self.conv3d.weight
             w[:,:,:-group_size] = 0
+            w = w * 32**-.25
             self.conv3d.weight.copy_(w)
 
         kt, kw, kh = kernel
@@ -60,11 +63,6 @@ class ResBlock(nn.Module):
 
         self.conv3d0 = GroupCausal3DConvVAE(channels, channels,  kernel, group_size, dilation = (1,1,1))
         self.conv3d1 = nn.Conv3d(channels, channels, kernel_size=(1,3,3), padding = (0,1,1))
-
-        nn.init.kaiming_uniform_(self.conv3d0.conv3d.weight)
-        nn.init.zeros_(self.conv3d0.conv3d.bias)
-        scaling_factor = 24 ** -.25
-        self.conv3d0.conv3d.weight.data *= scaling_factor
 
         nn.init.zeros_(self.conv3d1.weight)
         nn.init.zeros_(self.conv3d1.bias)
