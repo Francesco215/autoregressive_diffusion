@@ -1,3 +1,4 @@
+#%%
 import einops
 import torch
 from torch import nn
@@ -7,57 +8,68 @@ import torch.optim.lr_scheduler as lr_scheduler
 from torch.optim import AdamW
 
 import os
+import lpips
 from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
+from streaming.base.util import clean_stale_shared_memory
 
-# Import LPIPS
-import lpips 
 
 from edm2.cs_dataloading import CsCollate, CsDataset
-from edm2.vae import VAE, MixedDiscriminator
 from edm2.utils import GaussianLoss
+from edm2.vae import VAE, MixedDiscriminator
 
-# os.environ['TORCHINDUCTOR_CACHE_DIR'] = '/mnt/mnemo9/mpelus/experiments/autoregressive_diffusion/.torchinductor_cache'
+os.environ['TORCHINDUCTOR_CACHE_DIR'] = '/mnt/mnemo9/mpelus/experiments/autoregressive_diffusion/.torchinductor_cache'
 
-torch._dynamo.config.recompile_limit = 64
 # torch.autograd.set_detect_anomaly(True)
+torch._dynamo.config.recompile_limit = 100
 if __name__=="__main__":
-    device = "cuda"
+    clean_stale_shared_memory()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    batch_size = 1
-    micro_batch_size = 1
-    clip_length = 16
+    original_env = "LunarLander-v3"
+
+    batch_size = 2
+    micro_batch_size = 2
+    clip_length = 16 
 
     # Hyperparameters
     latent_channels = 8
-    n_res_blocks = 5
-    channels = [3, 32, 128, 512, latent_channels]
+    n_res_blocks = 2
+    channels = [3, 32, 32, latent_channels]
 
     # Initialize models
-    # vae = VAE(channels = channels, n_res_blocks=n_res_blocks, spatial_compressions=[1,2,2,2], time_compressions=[1,2,2,1]).to(device)
-    vae = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_cs_102354.pt").to("cuda")
-    discriminator = MixedDiscriminator().to(device)
-    # vae, discriminator = torch.compile(vae), torch.compile(discriminator)
-
-    dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
+    # vae = VAE.from_pretrained('saved_models/vae_cs_23452.pt').to(device)
+    # vae = VAE.from_pretrained('s3://autoregressive-diffusion/saved_models/big_vae_gaussian_1.pt').to(device)
+    # vae.encoder.requires_grad_(False)
+    # vae.decoder.encoder_blocks[:-2].requires_grad_(False)
+    vae = VAE(channels = channels, n_res_blocks=n_res_blocks).to(device)
+    vae=torch.compile(vae)
+    # Example instantiation
+    discriminator = MixedDiscriminator(in_channels = 6, block_out_channels=(64,128,64)).to(device)
+    discriminator = torch.compile(discriminator)
+    
+    dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/mnt/mnemo9/mpelus/experiments/autoregressive_diffusion/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(clip_length), num_workers=8, shuffle=False)
     total_number_of_steps = len(dataloader)//micro_batch_size
 
+
     vae_params = sum(p.numel() for p in vae.parameters())
-    #discriminator_params = sum(p.numel() for p in discriminator.parameters())
+    discriminator_params = sum(p.numel() for p in discriminator.parameters())
     print(f"Number of vae parameters: {vae_params//1e3}K")
-    #print(f"Number of discriminator parameters: {discriminator_params//1e3}K")
+    print(f"Number of discriminator parameters: {discriminator_params//1e3}K")
+    # sigma_data = 0.434
+    sigma_data = 1.
 
     # Define optimizers
-    base_lr = 1e-4
-    optimizer_vae = AdamW((p for p in vae.parameters() if p.requires_grad), lr=base_lr, eps=1e-8)
-    #optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr, eps=1e-8)
+    base_lr = 1e-5
+    optimizer_vae = AdamW((p for p in vae.parameters() if p.requires_grad), lr=base_lr, eps=1e-8, betas = (0.99,0.9999))
+    optimizer_disc = AdamW(discriminator.parameters(), lr=base_lr*1e1, eps=1e-8, betas = (0.99,0.9999))
     optimizer_vae.zero_grad()
-    #optimizer_disc.zero_grad()
+    optimizer_disc.zero_grad()
 
-    # --- Scheduler Definition ---
-    warmup_steps = 100
+    # Add exponential decay schedule
+    warmup_steps = 1000
     decay_factor = 0.4 # The factor by which the LR will be decayed
 
     # Calculate gamma for the exponential decay part of the schedule
@@ -74,15 +86,14 @@ if __name__=="__main__":
 
     # Add the combined warmup and decay schedule
     scheduler_vae = lr_scheduler.LambdaLR(optimizer_vae, lr_lambda)
-    #scheduler_disc = lr_scheduler.LambdaLR(optimizer_disc, lr_lambda)
-
-    # Initialize LPIPS loss function 
-    lpips_loss_fn = lpips.LPIPS(net='alex')#.to(torch.float16)
+    # scheduler_disc = lr_scheduler.ExponentialLR(optimizer_disc, gamma=gamma)
+    losses = []
+    lpips_loss_fn = lpips.LPIPS(net='alex')
     if torch.cuda.is_available():
         lpips_loss_fn.cuda()
 
-    # Store losses
-    gaussian_recon_losses, l1_recon_losses, lpips_losses, adversarial_losses, discriminator_losses = [], [], [], [], []
+
+    recon_losses, disc_losses, adversarial_losses, gaussian_recon_losses, lpips_losses= [], [], [], [], []
 
     #%%
     # Training loop
@@ -90,11 +101,9 @@ if __name__=="__main__":
         pbar = tqdm(enumerate(dataloader), total=total_number_of_steps)
         for batch_idx, micro_batch in pbar:
             with torch.no_grad():
-                frames, _ = micro_batch # Ignore actions and reward for this VggAE training
-                frames = frames.float() / 127.5 - 1 # Normalize to [-1, 1]
-                
+                frames, _ = micro_batch  # Ignore actions and reward for this VggAE training
+                frames = frames.float() / 127.5 - 1  # Normalize to [-1, 1]
                 frames = einops.rearrange(frames, 'b t h w c-> b c t h w').to(device)
-                #frames = frames.to(torch.float16)
 
             # VAE forward pass
             # r_mean (reconstruction mean): This is your hat_x
@@ -110,48 +119,54 @@ if __name__=="__main__":
             # Reshape frames and r_mean from [B, C, T, H, W] to [B*T, C, H, W]
             # so that LPIPS can process them as individual images.
             # Your frames are C=3, and T=32, so we need to flatten T into the batch dimension.
-           
             frames_flat = torch.clip(einops.rearrange(frames, 'b c t h w -> (b t) c h w'), -1, 1)
             r_mean_flat = torch.clip(einops.rearrange(r_mean, 'b c t h w -> (b t) c h w'), -1, 1)
 
             # Calculate LPIPS loss for each frame and then take the mean
-            raw_lpips_per_frame = lpips_loss_fn(r_mean_flat, frames_flat)  # Shape: [B*T]
-            eps = 1e-8
-            log_lpips_per_frame = torch.log(raw_lpips_per_frame + eps)
-            lpips_loss = log_lpips_per_frame.mean()
-            #adversarial_loss = discriminator.vae_loss(frames,r_mean)
+            lpips_loss = lpips_loss_fn(r_mean_flat, frames_flat)
+            log_lpips = lpips_loss.log().mean()  # Calculate log before mean
+            lpips_loss = lpips_loss.mean()
+            # --- END MODIFIED LPIPS Calculation ---
 
 
-            main_loss = gaussian_loss + lpips_loss*0.1 #+ adversarial_loss*0.01 #*0.05*min(1,batch_idx/total_number_of_steps)
-            main_loss.backward()
+            # Define the loss components
 
-            if batch_idx % (batch_size//micro_batch_size) == 0 and batch_idx!=0:
-                nn.utils.clip_grad_norm_(vae.parameters(), 0.5)
+            adversarial_loss = discriminator.vae_loss(frames,r_mean)
+            # Define the loss components
+            loss = gaussian_loss + log_lpips*0.1 + adversarial_loss*0.1
+            loss.backward()
+
+
+            if batch_idx % (batch_size//micro_batch_size) == 0:
+                assert micro_batch_size==batch_size, f"for now the code does not support different microbatches than batches, ykwim"
+                nn.utils.clip_grad_norm_(vae.parameters(), 1)
                 optimizer_vae.step()
                 scheduler_vae.step()
                 optimizer_vae.zero_grad()
-                #optimizer_disc.zero_grad()
+                optimizer_disc.zero_grad()
 
-            #loss_disc = discriminator.discriminator_loss(frames, r_mean)
-            #loss_disc.backward()
 
+            loss_disc = discriminator.discriminator_loss(frames, r_mean)
+            loss_disc.backward()
             # Update discriminator
-            # if batch_idx % (batch_size//micro_batch_size) == 0:
-            #     nn.utils.clip_grad_norm_(discriminator.parameters(), 1)
-            #     optimizer_disc.step()
-            #     scheduler_disc.step()
-            #     optimizer_disc.zero_grad()
-
-
-            pbar.set_postfix_str(f"gaussian_recon: {gaussian_loss.item():.4f}, l1_recon: {l1_loss.item():.4f}, lpips: {lpips_loss.item():.4f}, current_lr: {optimizer_vae.param_groups[0]['lr']:.6f}")#, disc_loss: {loss_disc.item():.4f}
+            if batch_idx % (batch_size//micro_batch_size) == 0:
+                nn.utils.clip_grad_norm_(discriminator.parameters(), 1)
+                optimizer_disc.step()
+                # scheduler_disc.step()
+                optimizer_disc.zero_grad()
+            
+            pbar.set_postfix_str(f"recon loss: {l1_loss.item():.4f}, Discr Loss: {loss_disc.item():.4f}, Adversarial Loss: {adversarial_loss.mean().item():.4f}")
+            recon_losses.append(l1_loss.item())
+            adversarial_losses.append(adversarial_loss.mean().item())
+            disc_losses.append(loss_disc.item())
             gaussian_recon_losses.append(gaussian_loss.item()) # Store all loss components for plotting
-            l1_recon_losses.append(l1_loss.item())
-            lpips_losses.append(lpips_loss.item()) 
-            # adversarial_losses.append(adversarial_loss.item()) 
-            # discriminator_losses.append(loss_disc.item()) 
+            lpips_losses.append(log_lpips.item())
 
+            # if batch_idx == 500:
+            #     adv_multiplier = 5e-2
 
-            if batch_idx % 1000 == 0:
+            # Visualization every 100 steps
+            if batch_idx % 100 == 0 and batch_idx > 0:
                 fig = plt.figure(figsize=(15, 18)) # <--- Increased figure height for the new row
                 fig.suptitle(f"VAE Training Progress - VAE Parameters: {vae_params//1e6}M", fontsize=16)
                 # Top section: 3 rows for original, reconstructed (mean), and uncertainty heatmaps
@@ -160,15 +175,16 @@ if __name__=="__main__":
                 recon_mean_axes = [fig.add_subplot(gs_top[1, i]) for i in range(5)] # New row for mean
                 uncertainty_axes = [fig.add_subplot(gs_top[2, i]) for i in range(5)] # New row for uncertainty
 
-                # Bottom section: 1x3 for loss plots <--- MODIFIED (was 1x2)
-                gs_bottom = plt.GridSpec(2, 2, figure=fig, top=0.45, bottom=0.1, left=0.05, right=0.95, hspace=0.4, wspace=0.3) # <--- Adjusted wspace
+                # Bottom section: 2x2 grid for loss plots
+                gs_bottom = plt.GridSpec(2, 2, figure=fig, top=0.45, bottom=0.05, left=0.1, right=0.9, hspace = 0.4)
                 loss_axes = [
-                    fig.add_subplot(gs_bottom[0, 0]),
-                    fig.add_subplot(gs_bottom[0, 1]),
-                    fig.add_subplot(gs_bottom[1, 0]),
-                    #fig.add_subplot(gs_bottom[1, 1]),
+                    fig.add_subplot(gs_bottom[0, 0]),  # Top-left: Recon Loss
+                    fig.add_subplot(gs_bottom[0, 1]),  # Top-right: KL Group Loss
+                    fig.add_subplot(gs_bottom[1, 0]),  # Top-right: KL Group Loss
+                    fig.add_subplot(gs_bottom[1, 1]),  # Top-right: KL Group Loss
                 ]
 
+                # --- Video Frames (Top: Original and Reconstructed) ---
                 # Frame visualization
                 with torch.no_grad():
                     frames_denorm = (frames.cpu() + 1) / 2
@@ -220,56 +236,39 @@ if __name__=="__main__":
                             fig.colorbar(im, ax=uncertainty_axes[i], orientation='vertical', fraction=0.046, pad=0.04)
 
 
-                # Plot Gaussian Reconstruction loss (formerly "Recon Loss")
-                loss_axes[0].plot(gaussian_recon_losses, label="Gaussian Loss\n(we optimize for this)", color="orange") # Plot gaussian losses
-                loss_axes[0].set_title("Gaussian Losses") # Modified title to reflect both
-                loss_axes[0].set_xscale("log")
-                loss_axes[0].set_xlabel("Steps")
-                loss_axes[0].set_ylabel("Loss")
-                # loss_axes[0].set_ybound(upper = gaussian_recon_losses[95])
-                # loss_axes[0].set_xbound(lower = 95)
-                loss_axes[0].grid(True)
 
-                loss_axes[1].plot(l1_recon_losses, label="L1 Recon Loss\n(we don't optimize for this)", color="blue") # Plot L1 Loss
-                loss_axes[1].set_title("L1 Reconstruction Losses") # Modified title to reflect both
-                loss_axes[1].set_yscale("log")
-                loss_axes[1].set_xscale("log")
-                loss_axes[1].set_xlabel("Steps")
-                loss_axes[1].set_ylabel("Loss")
-                # loss_axes[1].set_ybound(upper = l1_recon_losses[95])
-                # loss_axes[1].set_xbound(lower = 95)
-                loss_axes[1].grid(True)
+                # --- Loss Plots (Bottom 2x2 Grid) ---
+                # Titles and data for each loss plot
+                loss_data = [gaussian_recon_losses, recon_losses, lpips_losses, disc_losses, adversarial_losses]
+                loss_titles = ['Gaussian Loss', 'L1 Loss', 'LPIPS Loss', 'Discriminator Losses', 'Discriminator Losses']
+                loss_colors = ['orange', 'blue', 'green', 'red', 'orange']
+                labels = [None, None, None, 'Discriminator Loss', 'Adversarial Loss']
 
-                # Plot LPIPS loss <--- ADDED NEW PLOT
-                loss_axes[2].plot(lpips_losses, label="LPIPS Loss\n(we optimize for this)", color="green")
-                loss_axes[2].set_title("LPIPS Loss")
-                #loss_axes[2].set_yscale("log")
-                loss_axes[2].set_xscale("log")
-                loss_axes[2].set_xlabel("Steps")
-                loss_axes[2].set_ylabel("Loss")
-                # loss_axes[2].set_ybound(upper = lpips_losses[95])
-                # loss_axes[2].set_xbound(lower = 95)
-                loss_axes[2].grid(True)
+                for i in range(len(loss_data)):
+                    loss_axes[min(i,3)].plot(loss_data[i], color=loss_colors[i], label=labels[i])
+                    loss_axes[min(i,3)].set_title(loss_titles[i])
+                    loss_axes[min(i,3)].set_xlabel('Steps')
+                    # loss_axes[min(i,3)].set_xlim(left=95)
+                    loss_axes[min(i,3)].set_ylabel('Loss')
+                    loss_axes[min(i,3)].grid(True, linestyle='--', alpha=0.7)
+                    loss_axes[min(i,3)].set_xscale('log')  
+                    if i!=0:
+                        loss_axes[min(i,3)].set_yscale('log')  
 
-                # loss_axes[3].plot(adversarial_losses, label="Adversarial losses", color="orange")
-                # loss_axes[3].plot(discriminator_losses, label="Discriminator loss", color="red")
-                # loss_axes[3].set_title("GAN loss")
-                # loss_axes[3].set_yscale("log")
-                # loss_axes[3].set_xscale("log")
-                # loss_axes[3].set_xlabel("Steps")
-                # loss_axes[3].set_ylabel("Loss")
-                # loss_axes[3].set_xbound(lower = 95)
-                # loss_axes[3].grid(True)
-                # loss_axes[3].legend() # Add legend
+                    
+                    if i==(len(loss_data)-1):
+                        loss_axes[min(i,3)].legend()
 
+                # Adjust layout to fit everything nicely
                 plt.tight_layout()
+
+                # Save the combined plot
                 os.makedirs("images_training", exist_ok=True)
-                plt.savefig(f"images_training/{batch_idx}.png")
+                plt.savefig(f"images_training/adversarial_cs_{batch_idx}.png")
                 plt.close()
+            if batch_idx % (total_number_of_steps//10) == 0 and batch_idx != 0:
+                os.makedirs("saved_models", exist_ok=True)
+                vae.save_to_state_dict(f'saved_models/vae_cs_adv{batch_idx}.pt')
 
-            if batch_idx % (total_number_of_steps // 10) == 0 and batch_idx != 0:
-                # os.makedirs("saved_models", exist_ok=True)
-                vae.save_to_state_dict(f'saved_models/vae_cs_{batch_idx}.pt')
-
-    # print("Finished Training")
-    #%%
+    print("Finished Training")
+    # %%

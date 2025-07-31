@@ -2,7 +2,6 @@ import os
 import inspect
 import tempfile
 from urllib.parse import urlparse
-import boto3
 
 import torch
 from torch import Tensor, nn
@@ -14,6 +13,7 @@ from . import misc
 class BetterModule(nn.Module):
 
     def save_to_state_dict(self, path):
+        import boto3
         data = {"state_dict": self.state_dict(), "kwargs": self.kwargs}
 
         if path.startswith("s3://"):
@@ -35,6 +35,7 @@ class BetterModule(nn.Module):
 
     @classmethod
     def from_pretrained(cls, checkpoint):
+        import boto3
         if isinstance(checkpoint,str):
             if checkpoint.startswith("s3://"):
                 # Parse S3 URL
@@ -43,7 +44,7 @@ class BetterModule(nn.Module):
                 key = parsed.path.lstrip("/")
 
                 # Create /cache directory if not exists
-                cache_dir = "/cache/autoregressive_diffusion_models/"
+                cache_dir = "/tmp/cache/autoregressive_diffusion_models/"
                 os.makedirs(cache_dir, exist_ok=True)
 
                 # Local cache file path
@@ -82,7 +83,7 @@ class BetterModule(nn.Module):
 def normalize(x, dim=None, eps=1e-4):
     if dim is None:
         dim = list(range(1, x.ndim))
-    norm = torch.linalg.vector_norm(x, dim=dim, keepdim=True, dtype=torch.float32)
+    norm = torch.linalg.vector_norm(x.to(torch.float32), dim=dim, keepdim=True, dtype=torch.float32)
     norm = torch.add(eps, norm, alpha=np.sqrt(norm.numel() / x.numel()))
     return x / norm.to(x.dtype)
 
@@ -205,7 +206,9 @@ def nan_inspector(model):
             hook.remove()
 
             
-            
+def GaussianLoss(mean, logvar, target, eps=1e-4):
+    return ((logvar + (mean-target)**2*(torch.exp(-logvar)))*.5+0.918).mean()
+
 
 
 def compare_caches(cache1, cache2, rtol=1e-4, atol=1e-4, verbose=True):

@@ -1,5 +1,6 @@
 from torch import distributed as dist
 from edm2.networks_edm2 import Precond
+from edm2.vae import VAE
 from .sampler import edm_sampler_with_mse
 import matplotlib.pyplot as plt
 import numpy as np
@@ -20,13 +21,14 @@ import os
 def plot_training_dashboard(
     save_path,
     precond:Precond, # precond object which should have precond.noise_weight of type MultiNoiseLoss
-    autoencoder,
+    autoencoder: VAE,
     losses_history,
     current_step,
     micro_batch_size,
     unet_params,
     latents, 
     actions,
+    guidance=1,
     ):
     """
     Generates and saves a consolidated 2x2 plot dashboard for training monitoring.
@@ -110,7 +112,7 @@ def plot_training_dashboard(
     # (Code remains the same as the previous corrected version)
     # Uses latents_viz_orig
     ax3 = axes[1, 0]
-    latents = latents[:,:7]
+    latents = latents[:,:9]
     # latents = batch["latents"][start:start+num_samples].to(device)
     # text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
     context = latents[:, :-1]  # First frames (context)
@@ -123,10 +125,10 @@ def plot_training_dashboard(
     # Run sampler with sigma_max=0.5 for initial noise level
     conditioning = None if actions is None else actions[:,context.shape[1]:context.shape[1]+1]
     sigma_max_val = 3.0   # <- must match the call you make just below
-    sigma_min_val = 0.4
+    sigma_min = 0.01
     rho_val        = 2.0
     num_steps_val  = 32
-    _, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(net=precond, cache=cache, target=target, sigma_max=sigma_max_val, sigma_min=sigma_min_val, num_steps=num_steps_val, conditioning=conditioning, rho = rho_val, guidance = 1, S_churn=20, S_noise=1,
+    _, mse_steps, mse_pred_values, _ = edm_sampler_with_mse(net=precond, cache=cache, target=target, sigma_max=sigma_max_val, sigma_min=sigma_min, num_steps=num_steps_val, conditioning=conditioning, rho = rho_val, guidance = guidance, S_churn=20, S_noise=1,
     )
 
     # Plot results
@@ -144,7 +146,7 @@ def plot_training_dashboard(
     step_idx  = torch.arange(num_steps_val, device=latents.device)
     sigmas_ts = (sigma_max_val ** (1/rho_val)
                 + step_idx / (num_steps_val - 1)
-                * (sigma_min_val ** (1/rho_val) - sigma_max_val ** (1/rho_val))
+                * (sigma_min ** (1/rho_val) - sigma_max_val ** (1/rho_val))
                 ) ** rho_val
     sigmas_ts = torch.cat([sigmas_ts, sigmas_ts.new_zeros(1)])  # final σ = 0
     sigma_lbls = [f'{s.item():.2f}' for s in sigmas_ts]         # or use f'{s:.1e}'
@@ -158,9 +160,9 @@ def plot_training_dashboard(
     # --- Plot 4: Generated Frames (Bottom-Right) ---
     # Replicate the *exact* logic from sampler_training_callback
     ax4 = axes[1, 1]
-    for _ in tqdm(range(6)):
+    for _ in tqdm(range(8)):
         actions = None if actions is None else torch.randint(0,3,(latents.shape[0],1), device=latents.device)
-        x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, conditioning = actions, sigma_max = 80, sigma_min=0.4, num_steps=16, rho=2, guidance=1, S_churn=0.)
+        x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, conditioning = actions, sigma_max = 80, sigma_min=sigma_min, num_steps=16, rho=2, guidance=guidance, S_churn=0.)
         context = torch.cat((context,x),dim=1)
     
     # context = einops.rearrange(context, 'b t (c hs ws) h w -> b t c (h hs) (w ws) ', hs=2, ws=2)

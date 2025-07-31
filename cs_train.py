@@ -14,31 +14,36 @@ import matplotlib.pyplot as plt
 from streaming.base.util import clean_stale_shared_memory
 
 
+from edm2.conv import MPConv
 from edm2.plotting import plot_training_dashboard
-from edm2.vae import VAE
+from edm2.vae.stability import StabilityVAEEncoder
 from edm2.cs_dataloading import CsCollate, CsDataset, CsVaeCollate, CsVaeDataset
 from edm2.networks_edm2 import UNet, Precond
 from edm2.loss import EDM2Loss, learning_rate_schedule
 from edm2.phema import PowerFunctionEMA
+from edm2.vae import VAE
 import torch._dynamo.config
 
-from diffusers import AutoencoderKLLTXVideo
 torch._dynamo.config.cache_size_limit = 100
         
 
         
 def train(device, local_rank=0):
-    unet = UNet(img_resolution=64, # Match your latent resolution
+    vae = VAE.from_pretrained('s3://autoregressive-diffusion/saved_models/vae_cs_102354.pt').to(device)
+    vae.mean=vae.mean.to(device)
+    vae.std=vae.std.to(device)
+    unet = UNet(img_resolution=32, # Match your latent resolution
                 img_channels=8, # Match your latent channels
                 label_dim = 4,
-                model_channels=256,
+                model_channels=128,
                 channel_mult=[1,2,4,4],
                 channel_mult_noise=None,
                 channel_mult_emb=None,
                 num_blocks=2,
-                video_attn_resolutions=[8],
-                frame_attn_resolutions=[16],
+                video_attn_resolutions=[4],
+                frame_attn_resolutions=[8],
                 )
+
     resume_training=False
     unet_params = sum(p.numel() for p in unet.parameters())
     if resume_training:
@@ -48,17 +53,15 @@ def train(device, local_rank=0):
     if dist.is_available() and dist.is_initialized():
         unet = DDP(unet, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
 
-    vae = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_cs.pt").to(device)
-    vae.std = 1.35
     if local_rank==0:
         print(f"Number of UNet parameters: {unet_params//1e6}M")
 
-    micro_batch_size = 1
-    batch_size = 1
+    micro_batch_size = 2
+    batch_size = 8
     accumulation_steps = batch_size//micro_batch_size
     clip_length = 16
     # training_steps = total_number_of_steps * batch_size
-    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/dataset_compressed', local = f'/data/streaming_dataset/cs_vae', batch_size=micro_batch_size, shuffle=False, cache_limit = '200gb')
+    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/vae_40M/', local = f'/data/streaming_dataset/cs_diff', batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsVaeCollate(), pin_memory=True, num_workers=4, shuffle=False)
     steps_per_epoch = len(dataset)//micro_batch_size
     n_epochs = 10
@@ -69,7 +72,7 @@ def train(device, local_rank=0):
     # sigma_data = 0.434
     sigma_data = 1.
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
-    loss_fn = EDM2Loss(P_mean=0.7,P_std=1., sigma_data=sigma_data, context_noise_reduction=0.5)
+    loss_fn = EDM2Loss(P_mean=0.9,P_std=1.0, sigma_data=sigma_data, context_noise_reduction=0.1)
 
     ref_lr = 1e-2
     current_lr = ref_lr
@@ -89,21 +92,18 @@ def train(device, local_rank=0):
         steps_taken = checkpoint['steps_taken']
         print(f"Resuming training from batch {checkpoint['steps_taken']} with loss {losses[-1]:.4f}")
 
-    #%%
     for epoch in range (n_epochs):
         pbar = tqdm(enumerate(dataloader, start=steps_taken),total=steps_per_epoch) if local_rank==0 else enumerate(dataloader)
         for i, batch in pbar:
             with torch.no_grad():
-                means, logvars, _ = batch
-                latents = means.to(device) + torch.randn_like(means, device=device)*torch.exp(logvars.to(device)*.5)
-                latents = latents/vae.std
-                # latents = einops.rearrange(latents, 'b t c (h hs) (w ws) -> b t (c hs ws) h w', hs=2, ws=2)
+                means, _ = batch
+                means= means.to(device)
+                # print(means.shape)
+                latents = (means-vae.mean[:,None,None])/vae.std[:,None,None]
                 actions = None
 
-                
-
             # Calculate loss    
-            loss, un_weighted_loss = loss_fn(precond, latents, actions)
+            loss, un_weighted_loss = loss_fn(precond, latents, actions, just_2d=i%4==0)
             # Backpropagation and optimization
             with (nullcontext() if i % accumulation_steps == 0 else unet.no_sync()):
                 loss.backward()
@@ -162,12 +162,14 @@ def train(device, local_rank=0):
         
         
 if __name__=="__main__":
-    local_rank = int(os.environ["LOCAL_RANK"])
-    torch.cuda.set_device(local_rank)
-    dist.init_process_group(backend="nccl", init_method="env://")
-    device = torch.device("cuda", local_rank)
-
-    # device, local_rank = "cuda", 0
+    if 'LOCAL_RANK' in os.environ:
+        local_rank = int(os.environ["LOCAL_RANK"])
+        torch.cuda.set_device(local_rank)
+        dist.init_process_group(backend="nccl", init_method="env://")
+        device = torch.device("cuda", local_rank)
+    else:
+        device, local_rank = "cuda", 0
 
     clean_stale_shared_memory()
     train(device, local_rank)
+# %%

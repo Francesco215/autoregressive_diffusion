@@ -1,3 +1,4 @@
+import numpy as np
 import math
 import einops
 
@@ -283,20 +284,46 @@ class Discriminator3D(nn.Module):
 
         
 class MixedDiscriminator(nn.Module):
-    def __init__(self, in_channels = 3, block_out_channels = (64,32)):
+    def __init__(self, in_channels = 6, block_out_channels = (64,32)):
         super().__init__()
-        self.discriminator2d = Discriminator2D(in_channels, (32,32,32))
-        self.discriminator3d = Discriminator3D(in_channels, (32,32))
+        self.discriminator2d = Discriminator2D(in_channels, (64,64,64))
+        self.discriminator3d = Discriminator3D(in_channels, (64,64))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # it should return 1 if he thinks that the frames are in the first 3 channels, else, 0
         x_3d = self.discriminator3d(x)
         
         x    = einops.rearrange(x, 'b c t h w -> (b t) c h w')
         x    = self.discriminator2d(x)
         x = einops.rearrange(x, '(b t) c h w -> b c t h w', b=x_3d.shape[0])
 
-        # x_2d.shape = torch.Size([6, 2, 32, 256, 256])
-        # x_3d.shape = torch.Size([6, 2, 16, 128, 128]) 
         x = torch.cat((x, x_3d), dim=2)
 
         return x
+
+    def cross_entropy(self, frames, recon_g, flip):
+
+        # Adversarial loss for VAE/generator
+        frames_recon = torch.cat([frames, recon_g], dim=1)
+        recon_frames = torch.cat([recon_g, frames], dim=1)
+
+        if flip==True:
+            inputs = torch.cat([frames_recon,recon_frames], dim = 0)
+        else:
+            inputs = torch.cat([recon_frames,frames_recon], dim = 0).detach()
+            
+        logits = self(inputs)
+
+        dims = logits.shape[2:]
+        ones =  torch.ones (frames.shape[0], *dims, device=frames.device, dtype=torch.long)
+        zeros = torch.zeros(frames.shape[0], *dims, device=frames.device, dtype=torch.long)
+        targets = torch.cat([zeros, ones], dim = 0)
+            
+        # G wants D to misclassify
+        return F.cross_entropy(logits, targets)/ np.log(2)
+
+    def vae_loss(self, frames, recon_g):
+        return self.cross_entropy(frames, recon_g, flip=True)
+
+    def discriminator_loss(self, frames, recon_g):
+        return self.cross_entropy(frames, recon_g, flip=False)

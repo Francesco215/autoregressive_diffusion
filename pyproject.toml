@@ -4,7 +4,8 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 dependencies = [
-    "torch" ,
+    "torch>=2.7",
+    "triton>=2.3.0",
     "awscli",
     "setuptools",
     "einops",
@@ -24,6 +25,7 @@ dependencies = [
     "h5py",
     "mosaicml-streaming",
     # "cosmos_tokenizer @ git+https://github.com/NVIDIA/Cosmos-Tokenizer",
+    "lpips",
     "av"
 ]
 
@@ -35,7 +37,7 @@ torch = { index = "pytorch" }
 
 [[tool.uv.index]]
 name = "pytorch"
-url = "https://download.pytorch.org/whl/cu126"
+url = "https://download.pytorch.org/whl/cu128"
 
 [tool.uv]
 prerelease = "allow"

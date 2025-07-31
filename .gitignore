@@ -13,3 +13,6 @@ temp_images/
 images_training/
 counter_strike/
 saved_models/
+*.pkl
+.torchinductor_cache
+streaming_dataset

@@ -31,6 +31,7 @@ if __name__=="__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     autoencoder = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_lunar_lander.pt").to(device).requires_grad_(False)
+    autoencoder.std = 1.45
 
     resume_training = True
     unet = UNet(img_resolution=256//autoencoder.spatial_compression, # Match your latent resolution
@@ -52,7 +53,7 @@ if __name__=="__main__":
     print(f"start training with {n_params//1e6}M parameters")
 
     micro_batch_size = 8
-    batch_size = micro_batch_size
+    batch_size = 16
     accumulation_steps = batch_size//micro_batch_size
     state_size = 32 
     total_number_of_steps = 80_000
@@ -92,7 +93,7 @@ if __name__=="__main__":
             latents = autoencoder.frames_to_latents(frames)
 
         # Calculate loss    
-        loss, un_weighted_loss = loss_fn(precond, latents, actions)
+        loss, un_weighted_loss = loss_fn(precond, latents, actions, just_2d = i%4==0)
         losses.append(un_weighted_loss)
         # Backpropagation and optimization
 
@@ -125,6 +126,7 @@ if __name__=="__main__":
                 unet_params=n_params,
                 latents=latents, # Pass the latents from the current batch
                 actions=actions,
+                guidance = 2,
             )
 
         if i % (total_number_of_steps//40) == 0 and i!=0:  # save every 10% of epochs
