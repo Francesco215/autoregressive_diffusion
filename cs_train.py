@@ -127,7 +127,7 @@ def train(device, local_rank=0):
                     g['lr'] = current_lr
 
             # Save model checkpoint (optional)
-            if i % 5 * accumulation_steps == 0 and i!=0:
+            if i % 500 * accumulation_steps == 0 and i!=0:
                 precond.noise_weight.fit_loss_curve()
                 if local_rank==0:
                     plot_training_dashboard(

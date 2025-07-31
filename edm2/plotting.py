@@ -1,5 +1,6 @@
 from torch import distributed as dist
 from edm2.networks_edm2 import Precond
+from edm2.vae import VAE
 from .sampler import edm_sampler_with_mse
 import matplotlib.pyplot as plt
 import numpy as np
@@ -20,7 +21,7 @@ import os
 def plot_training_dashboard(
     save_path,
     precond:Precond, # precond object which should have precond.noise_weight of type MultiNoiseLoss
-    autoencoder,
+    autoencoder: VAE,
     losses_history,
     current_step,
     micro_batch_size,

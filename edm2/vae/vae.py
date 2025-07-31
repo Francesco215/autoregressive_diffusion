@@ -281,7 +281,7 @@ class VAE(BetterModule):
                 latents = torch.cat((latents, l), dim=0)
 
         latents = einops.rearrange(latents, 'b c t h w -> b t c h w', b=batch_size)
-        return latents/self.std
+        latents = (latents - self.mean[:,None,None].to(latents.device)) +self.std[:,None,None].to(latents.device)
 
 
     # TODO: substitute this with decode_long_sequence. make sure it's also efficient
@@ -299,7 +299,7 @@ class VAE(BetterModule):
                 - The frames are rearranged and clipped to the range [0, 255] before being converted to a numpy array.
         """
         batch_size = latents.shape[0]
-        # latents = (latents * self.std[:,None,None].to(latents.device)) +self.mean[:,None,None].to(latents.device)
+        latents = (latents * self.std[:,None,None].to(latents.device)) +self.mean[:,None,None].to(latents.device)
         latents = einops.rearrange(latents, 'b t c h w -> b c t h w')
 
 
@@ -312,6 +312,7 @@ class VAE(BetterModule):
             else:
                 frames = torch.cat((frames, l), dim=0)
 
+        
         frames = einops.rearrange(frames, 'b c t h w -> b t h w c', b=batch_size) 
         frames = torch.clip((frames + 1) * 127.5, 0, 255).cpu().detach().numpy().astype(int)
         return frames
