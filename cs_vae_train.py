@@ -18,7 +18,7 @@ from edm2.cs_dataloading import CsCollate, CsDataset
 from edm2.vae import VAE, MixedDiscriminator
 from edm2.utils import GaussianLoss
 
-os.environ['TORCHINDUCTOR_CACHE_DIR'] = '/mnt/mnemo9/mpelus/experiments/autoregressive_diffusion/.torchinductor_cache'
+# os.environ['TORCHINDUCTOR_CACHE_DIR'] = '/mnt/mnemo9/mpelus/experiments/autoregressive_diffusion/.torchinductor_cache'
 
 torch._dynamo.config.recompile_limit = 64
 # torch.autograd.set_detect_anomaly(True)
@@ -27,7 +27,7 @@ if __name__=="__main__":
 
     batch_size = 1
     micro_batch_size = 1
-    clip_length = 32
+    clip_length = 16
 
     # Hyperparameters
     latent_channels = 8
@@ -35,14 +35,12 @@ if __name__=="__main__":
     channels = [3, 32, 128, 512, latent_channels]
 
     # Initialize models
-    vae = VAE(channels = channels, n_res_blocks=n_res_blocks, spatial_compressions=[1,2,2,2], time_compressions=[1,2,2,1]).to(device)
-    #vae = vae.to(torch.float16)
-    # vae = VAE.from_pretrained('saved_models/vae_cs_15990.pt').to(device)
-    #discriminator = MixedDiscriminator().to(device)
-    #vae, discriminator = torch.compile(vae), torch.compile(discriminator)
-    vae = torch.compile(vae)
-    dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/mnt/mnemo9/mpelus/experiments/autoregressive_diffusion/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
-    
+    # vae = VAE(channels = channels, n_res_blocks=n_res_blocks, spatial_compressions=[1,2,2,2], time_compressions=[1,2,2,1]).to(device)
+    vae = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_cs_102354.pt").to("cuda")
+    discriminator = MixedDiscriminator().to(device)
+    # vae, discriminator = torch.compile(vae), torch.compile(discriminator)
+
+    dataset = CsDataset(clip_size=clip_length, remote='s3://counter-strike-data/original/', local = '/tmp/streaming_dataset/cs_vae',batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(clip_length), num_workers=8, shuffle=False)
     total_number_of_steps = len(dataloader)//micro_batch_size
 
@@ -153,7 +151,7 @@ if __name__=="__main__":
             # discriminator_losses.append(loss_disc.item()) 
 
 
-            if batch_idx % 1000 == 0 and batch_idx > 0:
+            if batch_idx % 1000 == 0:
                 fig = plt.figure(figsize=(15, 18)) # <--- Increased figure height for the new row
                 fig.suptitle(f"VAE Training Progress - VAE Parameters: {vae_params//1e6}M", fontsize=16)
                 # Top section: 3 rows for original, reconstructed (mean), and uncertainty heatmaps
@@ -228,8 +226,8 @@ if __name__=="__main__":
                 loss_axes[0].set_xscale("log")
                 loss_axes[0].set_xlabel("Steps")
                 loss_axes[0].set_ylabel("Loss")
-                loss_axes[0].set_ybound(upper = gaussian_recon_losses[95])
-                loss_axes[0].set_xbound(lower = 95)
+                # loss_axes[0].set_ybound(upper = gaussian_recon_losses[95])
+                # loss_axes[0].set_xbound(lower = 95)
                 loss_axes[0].grid(True)
 
                 loss_axes[1].plot(l1_recon_losses, label="L1 Recon Loss\n(we don't optimize for this)", color="blue") # Plot L1 Loss
@@ -238,8 +236,8 @@ if __name__=="__main__":
                 loss_axes[1].set_xscale("log")
                 loss_axes[1].set_xlabel("Steps")
                 loss_axes[1].set_ylabel("Loss")
-                loss_axes[1].set_ybound(upper = l1_recon_losses[95])
-                loss_axes[1].set_xbound(lower = 95)
+                # loss_axes[1].set_ybound(upper = l1_recon_losses[95])
+                # loss_axes[1].set_xbound(lower = 95)
                 loss_axes[1].grid(True)
 
                 # Plot LPIPS loss <--- ADDED NEW PLOT
@@ -270,8 +268,8 @@ if __name__=="__main__":
                 plt.close()
 
             if batch_idx % (total_number_of_steps // 10) == 0 and batch_idx != 0:
-                os.makedirs("saved_models", exist_ok=True)
+                # os.makedirs("saved_models", exist_ok=True)
                 vae.save_to_state_dict(f'saved_models/vae_cs_{batch_idx}.pt')
 
-    print("Finished Training")
+    # print("Finished Training")
     #%%

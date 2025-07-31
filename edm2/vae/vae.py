@@ -23,8 +23,6 @@ class GroupCausal3DConvVAE(torch.nn.Module):
         self.dilation = dilation
         # self.weight = NormalizedWeight(in_channels, out_channels*group_size, kernel, bias = True)
         self.conv3d = nn.Conv3d(in_channels, out_channels*group_size, kernel, dilation=dilation, stride=(group_size, 1, 1), bias=True)
-        nn.init.kaiming_uniform_(self.conv3d.weight)
-        nn.init.zeros_(self.conv3d.bias)
         with torch.no_grad():
             w = self.conv3d.weight
             w[:,:,:-group_size] = 0
@@ -94,6 +92,7 @@ class ResBlock(nn.Module):
 
         return x, cache
 
+
 class EncoderDecoderBlock(nn.Module):
     def __init__(self, in_channels, out_channels, time_compression, spatial_compression, kernel, group_size, n_res_blocks, type='encoder'):
         super().__init__()
@@ -107,20 +106,12 @@ class EncoderDecoderBlock(nn.Module):
 
         self.final_conv = nn.Conv3d(in_channels, out_channels, kernel_size=(1,1,1)) if type=='decoder' else None
 
-        for layer in [self.compression_block, self.decompression_block, self.final_conv]:
-            if layer is not None:
-                nn.init.zeros_(layer.weight)
-                nn.init.zeros_(layer.bias)
-
     def forward(self,x, t, cache=None):
         #TODO: rewrite this code, it's horrible
         if cache is None: cache = {}
 
         if self.decompression_block:
-            res = x.clone()
             x = self.decompression_block(x)
-            res = interpolate_channels(res, x.shape[1])
-            x = x+res
 
         x = self.updown_block(x)
 
@@ -224,8 +215,10 @@ class VAE(BetterModule):
         self.time_compression = np.prod(time_compressions)
         self.spatial_compression = np.prod(spatial_compressions)
 
-        self.mean=torch.tensor(mean)
-        self.std=torch.tensor(std)
+        if mean is not None:
+            self.register_buffer('mean',torch.tensor(mean),persistent=False)
+            self.register_buffer('std', torch.tensor(std), persistent=False)
+
 
         # is it possible to put this inside of the super() class and avoid having it here?
         frame = inspect.currentframe()
@@ -293,7 +286,7 @@ class VAE(BetterModule):
 
     # TODO: substitute this with decode_long_sequence. make sure it's also efficient
     @torch.no_grad()        
-    def latents_to_frames(self,latents):
+    def latents_to_frames(self, latents, t=0.1):
         """
             Converts latent representations to frames.
             Args:
@@ -313,7 +306,7 @@ class VAE(BetterModule):
         #split the conversion to not overload the GPU RAM
         split_size = 16
         for i in range (0, latents.shape[0], split_size):
-            l, _, _ = self.decode(latents[i:i+split_size], t=0.1*torch.ones(latents.shape[0], device=latents.device))
+            l, _, _ = self.decode(latents[i:i+split_size], t=t*torch.ones(latents.shape[0], device=latents.device))
             if i == 0:
                 frames = l
             else:
