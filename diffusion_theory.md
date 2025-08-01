@@ -5,7 +5,7 @@ Let’s make score-based diffusion modeling more rigorous.
 Suppose we have a dataset made of a single sample $x_0$, and we add noise to this sample as follows:
 
 $$
-x = x_0 + \sigma \cdot \epsilon
+\tilde x = x_0 + \sigma \cdot \epsilon
 $$
 
 This implies that the probability distribution is:
@@ -17,7 +17,7 @@ $$
 **But** what if $x_0$ is itself sampled from a small Gaussian? After all, most VAEs encode images using non-isotropic Gaussians and then the diffusion process adds noise on top. In this case:
 
 $$
-x = x_\textrm{vae} + \sigma_{\text{vae}} \cdot \epsilon + \sigma_{\text{diff}} \cdot \epsilon
+\tilde x = x_\textrm{vae} + \sigma_{\text{vae}} \cdot \epsilon + \sigma_{\text{diff}} \cdot \epsilon
 $$
 
 which gives:
@@ -28,10 +28,10 @@ $$
 
 You might think these two processes need separate treatments, but I’ll show you how to hit two pigeons with one stone.
 
-From now on, we’ll consider the case where:
+From now on, we’ll consider the case where we sampe $\tilde x \sim p(x)$:
 
 $$
-x = x_0 + \sigma \cdot \epsilon
+\tilde x = x_0 + \sigma \cdot \epsilon
 $$
 
 and allow $\sigma$ to be non-isotropic.
@@ -41,16 +41,16 @@ and allow $\sigma$ to be non-isotropic.
 
 How do you choose the loss function? You don’t — nature does it for you.
 
-Given a data point $x$ and known noise level $\sigma^2$, we want to estimate the original distribution of $x_0$. That is, we aim to learn parameters $\mu_\theta$, $\sigma_\phi$ such that:
+Given a data point $x$ and known noise level $\sigma^2$, we want to estimate the original distribution of $x_0$. That is, we aim to learn two functions $\mu_\theta(\tilde x)$, $\sigma_\phi(\tilde x)$ such that:
 
 $$
-q(x_0 \mid x) = \mathcal{N}(x_0 \mid \mu_\theta(x), \sigma_\phi(x)^2)
+q(x \mid \tilde x) = \mathcal{N}(x \mid \mu_\theta, \sigma_\phi^2)
 $$
 
 We then minimize the expected negative log-likelihood:
 
 $$
-L = \mathbb{E}_{x \sim p(x)}\left[-\log q(x_0 \mid x)\right]
+L = \mathbb{E}_{\tilde x \sim p(x)}\left[-\log q(x \mid \tilde x)\right]
 $$
 
 Which decomposes into:
@@ -82,7 +82,7 @@ $$
 \frac{\partial L}{\partial \mu_\theta} = \frac{\mu_\theta - x_0}{\sigma_\phi^2}
 $$
 
-This resembles the gradient of the MSE loss, but weighted by the inverse of the expected prediction error.
+This resembles the gradient of the MSE loss, but weighted by the expected prediction error $\sigma_\phi^2$ (As it should!).
 
 
 ## The Score Function
@@ -96,7 +96,7 @@ $$
 However, since $p(x)$ is typically unknown, what we do instead is simulate samples of the form:
 
 $$
-x = x_0 + \sigma \cdot \epsilon, \quad \epsilon \sim \mathcal{N}(0, I)
+\tilde x = x_0 + \sigma \cdot \epsilon, \quad \epsilon \sim \mathcal{N}(0, I)
 $$
 
 Here, $x_0$ is a clean data sample, and $x$ is a noisy version. Under this assumption, the conditional distribution of $x \mid x_0$ is:
@@ -114,15 +114,15 @@ $$
 So a natural estimator of the **true score** of $p(x)$ is:
 
 $$
-s(x) \approx -\frac{x - x_0}{\sigma^2}
+s(x|x_0) \approx -\frac{x - x_0}{\sigma^2}
 $$
 
-This is the formulation that is used in score matching, after all, the models use only predict $x_0$, so it's "natural" to use this score function
+This is the formulation that is used in score matching, after all, the models use only predict $x_0(\tilde x)$, so it's "natural" to use this score function.
 
 ### The Problem with This Formulation
 
 While the standard derivation is elegant, it has several practical limitations:
-1. **Wrong $\sigma$**: It assumes that the uncertanty of the prediction is equal to $\sigma$which is generally wrong.
+1. **Wrong $\sigma$**: It assumes that the uncertanty of the prediction is equal to $\sigma$ which is generally wrong.
 
 2. **Numerical instability**: As $\sigma \to 0$, the denominator $\sigma^2$ becomes very small, making the score explode in magnitude.
 
@@ -141,14 +141,15 @@ While the standard derivation is elegant, it has several practical limitations:
 We actually can estimate the score with $q$! After all, $q$ is the best approximation of $p$
 
 $$
-s(x) = \nabla_x \log q(x) 
+s(x|\tilde x) = \nabla_x \log q(x|\tilde x) 
 $$
 
+Let's recall that $q(x|\tilde x) = \mathcal N(x, \mu_\theta(\tilde x), \sigma^2_\theta(\tilde x))$
 
 And in the end we get this!
 
 $$
-s(x) = \nabla_x \log q(x) = -\frac{x - \mu_\theta(x)}{\sigma_\phi^2(x)}
+\nabla_x \log q(x|\tilde x) = -\frac{x - \mu_\theta(\tilde x)}{\sigma_\phi^2(\tilde x)}
 $$
 
 This form:
@@ -157,7 +158,35 @@ This form:
 - Remains stable for small $\sigma$
 - Properly incorporates **epistemic uncertainty** (via $\sigma_\phi$) from the learned model
 
+## Preconditioning
+When it comes with writing an implementation one has to be careful, Neural networks don't like really large and really small numbers.
+
+Training a model to predict directly $\mu_\theta$ and $\sigma_\phi$ is far from ideal. For this reason we have to re-parametrize it.
+
+$$
+\begin{cases}
+\mu_\theta(x, \sigma, \sigma_\phi) = c_\textrm{skip}\cdot x + c_\textrm{out}\cdot F_\theta(c_\textrm{in}\cdot x,c_\textrm{noise})\\
+\sigma_\phi(x,\sigma) = \sigma\cdot\exp\left[\frac 12 G_\phi(c_\textrm{in}\cdot x, c_\textrm{noise})\right]
+\end{cases}
+$$
+Where $(F_\theta,G_\phi)$ is the actual neural network output, and 
+$$
+\begin{cases}
+c_\textrm{skip}(\sigma) = \sigma_\textrm{data}/(\sigma^2 + \sigma_\textrm{data}^2)\\
+c_\textrm{out}(\sigma) = \sigma\cdot \sigma_\textrm{data}/\sqrt{\sigma^2 + \sigma_\textrm{data}^2}\\
+c_\textrm{in}(\sigma) = 1/\sqrt{\sigma^2 + \sigma_\textrm{data}^2}\\
+c_\textrm{noise}=\frac 14 \log\sigma
+\end{cases}
+$$
+
+### Simplified Loss
+$$
+L = G_\phi +e^{-G_\phi}\left(1 + \frac{(\mu_\theta-x_0)^2}{\sigma^2}\right) + \log(2\pi\sigma^2)
+$$
+
+
+
+
+
 # Solving the ODE
-TODO
-# Preconditioning
 TODO
