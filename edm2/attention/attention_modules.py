@@ -62,8 +62,8 @@ class VideoAttention(nn.Module):
 
         if self.training:
             n_frames, image_size= x.shape[0]//(batch_size*2), h*w
-            train_mask = make_train_mask(batch_size, self.num_heads, n_frames, image_size)
-            y = compiled_flex_attention(q, k, v, block_mask=train_mask)
+            score_mod, train_mask = make_train_mask(batch_size, self.num_heads, n_frames, image_size)
+            y = compiled_flex_attention(q, k, v, score_mod=score_mod, block_mask=train_mask)
 
         else:
             if q.shape[-2] == h*w: # if only one frame is being generated 
@@ -82,7 +82,7 @@ class VideoAttention(nn.Module):
         return mp_sum(x, y, t=self.attn_balance), cache
     
 # To log all recompilation reasons, use TORCH_LOGS="recompiles" or torch._logging.set_logs(dynamo=logging.INFO)
-@torch.compile
+# @torch.compile
 def compiled_flex_attention(q, k, v, score_mod=None, block_mask=None):
     assert score_mod is not None or block_mask is not None
     return flex_attention(q, k, v, score_mod=score_mod, block_mask=block_mask)

@@ -28,11 +28,13 @@ class TrainingMask:
 def make_train_mask(batch_size, num_heads, n_frames, image_size):
     # image_size is the number of pixels (height x width)
     training_mask = TrainingMask(n_frames, image_size)
-
+    score_mod = None
     if image_size<_DEFAULT_SPARSE_BLOCK_SIZE:
         if n_frames*image_size%_DEFAULT_SPARSE_BLOCK_SIZE!=0:
-            warnings.warn("The image size must be a divisor of the default block size ({_DEFAULT_SPARSE_BLOCK_SIZE}), got image_size:{image_size} and n_frames:{n_frames}\n returning None")
-            return None
+            raise Exception(f"The image size must be a divisor of the default block size ({_DEFAULT_SPARSE_BLOCK_SIZE}), got image_size:{image_size} and n_frames:{n_frames}\n returning None")
+
+        def score_mod(score, b, h, q_idx, kv_idx):
+            return torch.where(training_mask(b, h, q_idx, kv_idx), score, torch.full_like(score, -float('inf')))
 
         n_frames = n_frames*image_size//_DEFAULT_SPARSE_BLOCK_SIZE
         image_size = _DEFAULT_SPARSE_BLOCK_SIZE
@@ -50,7 +52,7 @@ def make_train_mask(batch_size, num_heads, n_frames, image_size):
     col_indices = einops.repeat(col_indices, '... -> b h ...', b=batch_size, h=num_heads).cuda().to(torch.int32)
 
     # return BlockMask.from_kv_blocks(num_blocks_in_row, col_indices, BLOCK_SIZE=image_size)
-    return BlockMask.from_kv_blocks(num_blocks_in_row, col_indices, BLOCK_SIZE=image_size, mask_mod=training_mask)
+    return score_mod, BlockMask.from_kv_blocks(num_blocks_in_row, col_indices, BLOCK_SIZE=image_size, mask_mod=training_mask)
 
 
 class InferenceMask:

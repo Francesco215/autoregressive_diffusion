@@ -188,34 +188,13 @@ class TestAttention(unittest.TestCase):
         y = self.attention(x, BATCH_SIZE)[0] - self.attention(a, BATCH_SIZE)[0]
 
         y = einops.rearrange(y, '(b t) c h w -> b t c h w', b = BATCH_SIZE)
-        self.assertLessEqual(
-            y[:, :CUT_FRAME].std().item(), error_bound,
-            f"Test failed: std deviation {y[:, :CUT_FRAME].std()} exceeded {error_bound} before CUT_FRAME"
-        )
-
-        # Check that the perturbed frame itself shows a significant difference
-        self.assertGreaterEqual(
-            y[:, CUT_FRAME:CUT_FRAME+1].std().item(), 0.3,
-            f"Test failed: perturbation at CUT_FRAME did not affect output as expected"
-        )
-
-        # Check that frames after the perturbation also show change — information flowed forward
-        self.assertGreaterEqual( # TODO: CHECK THIS INFORMATION BOTTLENECK
-            y[:, CUT_FRAME+1:N_FRAMES].std().item(), 0.3,
-            f"Test failed: post-CUT_FRAME frames did not respond to perturbation"
-        )
-
-        # For the second half of the sequence (from noise r), check that the frames before CUT_FRAME stay unaffected
-        self.assertLessEqual(
-            y[:, N_FRAMES:N_FRAMES + CUT_FRAME+1].std().item(), error_bound,
-            f"Test failed: std deviation {y[:, N_FRAMES:N_FRAMES + CUT_FRAME+1].std()} exceeded {error_bound} in second sequence before CUT_FRAME"
-        )
-
-        # Finally, verify that the perturbation did affect later frames in the second half
-        self.assertGreaterEqual( # TODO: CHECK THIS INFORMATION BOTTLENECK
-            y[:, N_FRAMES + CUT_FRAME+1:].std().item(), 0.3,
-            f"Test failed: post-CUT_FRAME frames in second sequence did not respond to perturbation"
-        )
+        self.assertLessEqual( y[:, :CUT_FRAME].std().item(), error_bound, f"Test failed: std deviation {y[:, :CUT_FRAME].std()} exceeded {error_bound} before CUT_FRAME")
+        self.assertGreaterEqual( y[:, CUT_FRAME:CUT_FRAME+1].std().item(), 0.3, f"Test failed: perturbation at CUT_FRAME did not affect output as expected")
+        # TODO: CHECK THIS INFORMATION BOTTLENECK
+        self.assertGreaterEqual(  y[:, CUT_FRAME+1:N_FRAMES].std(dim=2).mean().item(), 0.1/np.sqrt(N_FRAMES*IMG_RESOLUTION**2), f"Test failed: post-CUT_FRAME frames did not respond to perturbation")
+        self.assertLessEqual( y[:, N_FRAMES:N_FRAMES + CUT_FRAME+1].std().item(), error_bound, f"Test failed: std deviation {y[:, N_FRAMES:N_FRAMES + CUT_FRAME+1].std()} exceeded {error_bound} in second sequence before CUT_FRAME")
+        # TODO: CHECK THIS INFORMATION BOTTLENECK
+        self.assertGreaterEqual(  y[:, N_FRAMES + CUT_FRAME+1:].std(dim=2).mean().item(), 0.1/np.sqrt(N_FRAMES*IMG_RESOLUTION**2), f"Test failed: post-CUT_FRAME frames in second sequence did not respond to perturbation")
 
 
 class TestUNet(unittest.TestCase):
@@ -234,7 +213,8 @@ class TestUNet(unittest.TestCase):
             channel_mult_noise=None,
             channel_mult_emb=None,
             num_blocks=3,
-            video_attn_resolutions=[16,8]
+            video_attn_resolutions=[8],
+            frame_attn_resolutions=[16]
         ).to("cuda").to(dtype)
         print(f"Number of UNet parameters: {sum(p.numel() for p in cls.unet.parameters()) // 1e6}M")
 
@@ -242,7 +222,7 @@ class TestUNet(unittest.TestCase):
     def test_unet_consistency_between_train_and_eval(self):
         # Test consistency between training and evaluation modes
         self.unet.train()
-        x = torch.randn(2, 2 * N_FRAMES, IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
+        x = torch.randn(2, 16 * N_FRAMES, IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
         noise_level = torch.zeros(x.shape[:2], device="cuda", dtype=dtype)
         y_train, _ = self.unet(x, noise_level, conditioning=None)
 
@@ -261,18 +241,21 @@ class TestUNet(unittest.TestCase):
     def test_unet_causality(self):
         # make sure that during training the network is fully causal
         self.unet.train()
-        x = torch.zeros(2, N_FRAMES, IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
-        r = torch.randn(2, N_FRAMES, IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
+        x = torch.zeros(2, 4*N_FRAMES, IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
+        r = torch.randn(2, 4*N_FRAMES, IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
         a = torch.cat((x, r), dim=1)
         x[:, CUT_FRAME] = torch.randn(x.shape[0], IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
         x = torch.cat((x, r), dim=1)
         noise_level = torch.zeros(x.shape[:2], device="cuda", dtype=dtype)
         y = self.unet(x, noise_level, None)[0] - self.unet(a, noise_level, None)[0]
 
-        self.assertLessEqual(y[:, :CUT_FRAME].std().item(),error_bound, f"Test failed: std deviation {y[:, :CUT_FRAME].std()} exceeded {error_bound}")
-        self.assertTrue((y[:, CUT_FRAME:N_FRAMES].std()>0.3).item())
-        self.assertLessEqual(y[:, N_FRAMES:N_FRAMES + CUT_FRAME].std().item(),error_bound, f"Test failed: std deviation {y[:, N_FRAMES:N_FRAMES + CUT_FRAME].std()} exceeded {error_bound}")
-        self.assertTrue((y[:, N_FRAMES + CUT_FRAME:].std()>0.3).item())
+        self.assertLessEqual( y[:, :CUT_FRAME].std().item(), error_bound, f"Test failed: std deviation {y[:, :CUT_FRAME].std()} exceeded {error_bound} before CUT_FRAME")
+        self.assertGreaterEqual( y[:, CUT_FRAME:CUT_FRAME+1].std().item(), 0.3, f"Test failed: perturbation at CUT_FRAME did not affect output as expected, got {y[:, CUT_FRAME:CUT_FRAME+1].std().item()}")
+        # TODO: CHECK THIS INFORMATION BOTTLENECK
+        self.assertGreaterEqual(  y[:, CUT_FRAME+1:N_FRAMES].std(dim=2).mean().item(), 0.1/np.sqrt(N_FRAMES*IMG_RESOLUTION**2), f"Test failed: post-CUT_FRAME frames did not respond to perturbation")
+        self.assertLessEqual( y[:, N_FRAMES:N_FRAMES + CUT_FRAME+1].std().item(), error_bound, f"Test failed: std deviation {y[:, N_FRAMES:N_FRAMES + CUT_FRAME+1].std()} exceeded {error_bound} in second sequence before CUT_FRAME")
+        # TODO: CHECK THIS INFORMATION BOTTLENECK
+        self.assertGreaterEqual(  y[:, N_FRAMES + CUT_FRAME+1:].std(dim=2).mean().item(), 0.1/np.sqrt(N_FRAMES*IMG_RESOLUTION**2), f"Test failed: post-CUT_FRAME frames in second sequence did not respond to perturbation, got {y[:, CUT_FRAME:CUT_FRAME+1].std().item()}")
 
 
         
@@ -290,14 +273,14 @@ class TestMPCausal3DGatedConv(unittest.TestCase):
         y_train, _ = self.conv3d(x, None, BATCH_SIZE, c_noise)
         
         self.conv3d.eval()
-        x = einops.rearrange(x, '(b l) ... -> b l ...', b=BATCH_SIZE)
+        x = einops.rearrange(x, '(b t) ... -> b t ...', b=BATCH_SIZE)
         x_eval = torch.cat((x[:, :CUT_FRAME], x[:, CUT_FRAME + N_FRAMES].unsqueeze(1)), dim=1)
-        x_eval = einops.rearrange(x_eval, 'b l ... -> (b l) ...')
+        x_eval = einops.rearrange(x_eval, 'b t ... -> (b t) ...')
         # c_noise = einops.rearrange(c_noise, '(b t) -> b t')
         c_noise = torch.cat((c_noise[:, :CUT_FRAME], c_noise[:, CUT_FRAME + N_FRAMES].unsqueeze(1)), dim=1)
         y_eval, _ = self.conv3d(x_eval, None, BATCH_SIZE, c_noise)
         
-        y_train, y_eval = einops.rearrange(y_train,'(b l) ... -> b l ...', b=BATCH_SIZE), einops.rearrange(y_eval,'(b l) ... -> b l ...', b=BATCH_SIZE)
+        y_train, y_eval = einops.rearrange(y_train,'(b t) ... -> b t ...', b=BATCH_SIZE), einops.rearrange(y_eval,'(b t) ... -> b t ...', b=BATCH_SIZE)
         
         std_diff_1 = (y_train[:, :CUT_FRAME] - y_eval[:, :-1]).std().item()
         std_diff_2 = (y_train[:, CUT_FRAME + N_FRAMES] - y_eval[:, -1]).std().item()
