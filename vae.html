@@ -105,7 +105,8 @@
         function drawVisualization() {
             svg.html('');
             
-            const rowSpacings = [75, 65, 55, 45, 40, 40, 45, 55, 65, 75].reverse();
+            // Increased spacing at the ends of the array for top and bottom layers
+            const rowSpacings = [50, 20, 15, 10, 8, 8, 10, 15, 20, 50].reverse();
             const layerY = {};
             let currentY = PADDING;
             const layerNames = ['d0', 'd1', 'd2', 'd3', 'd4', 'e5', 'e4', 'e3', 'e2', 'e1', 'e0'];
