@@ -3,343 +3,681 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Attention Connectivity: Training to Inference</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Oniris: Interactive Attention Explanation</title>
+    <!-- D3.js library -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- MathJax for LaTeX rendering -->
     <script>
       MathJax = {
-        tex: { /* ... config ... */ inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']], processEscapes: true },
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']],
+          displayMath: [['$$', '$$'], ['\\[', '\\]']],
+          processEscapes: true
+        },
         svg: { fontCache: 'global' },
-        options: { /* ... options ... */ skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'], ignoreHtmlClass: 'tex2jax_ignore', processHtmlClass: 'tex2jax_process' },
+        options: {
+          skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+        },
         startup: {
-            ready: () => { console.log('MathJax is ready!'); MathJax.startup.defaultReady(); }
+          ready: () => {
+            MathJax.startup.defaultReady();
+          }
         }
       };
-      console.log("MathJax config object created.");
     </script>
     <script type="text/javascript" id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
-    <script>
-      if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) { document.documentElement.classList.add('dark'); } else { document.documentElement.classList.remove('dark'); }
-    </script>
     <style>
-        /* Styles remain the same */
-        body { font-family: 'Inter', sans-serif; }
-        svg { user-select: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; transition: background-color 0.3s ease-in-out, border-color 0.3s ease-in-out; display: block; overflow: visible; }
-        rect.box { stroke: #9CA3AF; stroke-width: 1; fill: #F9FAFB; cursor: default; transition: fill 0.2s ease-in-out, stroke 0.2s ease-in-out, opacity var(--fade-duration, 0.8s) ease-in-out; }
-        .dark rect.box { stroke: #4B5563; fill: #374151; }
-        rect.box:not(.faded-out):hover { fill: #E5E7EB; }
-        .dark rect.box:not(.faded-out):hover { fill: #4B5563; }
-        line.connection { stroke-width: 1.5; transition: opacity var(--fade-duration, 0.8s) ease-in-out, stroke 0.2s ease-in-out, stroke-width 0.2s ease-in-out; opacity: 0.8; }
-        line.connection.dimmed { opacity: 0.05; }
-        line.connection.highlighted { opacity: 1; stroke-width: 2.5; }
-        line.connection.default-gray { stroke: #9CA3AF; }
-        .dark line.connection.default-gray { stroke: #6B7280; }
-        .faded-out { opacity: 0 !important; pointer-events: none; }
-        .moving { /* Marker class */ }
-        .legend-x-icon { stroke: #ef4444; transition: stroke 0.2s ease-in-out; }
-        .dark .legend-x-icon { stroke: #f87171; }
-        .math-host-span { font-size: 12px; text-align: center; padding: 2px; transition: color 0.2s ease-in-out, opacity var(--fade-duration, 0.8s) ease-in-out; pointer-events: none; display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; box-sizing: border-box; color: inherit; }
-        .math-host-span mjx-container { color: inherit !important; }
-        foreignObject { transition: opacity var(--fade-duration, 0.8s) ease-in-out; }
-        foreignObject.faded-out { opacity: 0 !important; pointer-events: none; }
-        foreignObject.moving { /* Marker class */ }
-        #mode-indicator { transition: opacity 0.5s ease-in-out; }
+        /* Basic styles for the page and visualization */
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #f9fafb; /* gray-50 */
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+        }
+        #main-container {
+            width: 98vw;
+            height: 98vh;
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            align-items: center;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+        .visualization-container {
+            flex: 1;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        svg {
+            user-select: none;
+            -webkit-user-select: none;
+            display: block;
+            overflow: visible;
+            background-color: white;
+            border: 1px solid #e5e7eb; /* gray-200 */
+            border-radius: 0.75rem; /* Larger border radius */
+            width: 100%;
+            height: 100%;
+        }
+        /* Box styles for the main animation */
+        .box {
+            stroke-width: 1.5; 
+            cursor: default;
+            transition: fill 0.2s ease-in-out, stroke 0.2s ease-in-out, opacity 0.5s ease-in-out;
+        }
+        .box.clean {
+            stroke: #38bdf8; /* sky-400 */
+            fill: #e0f2fe;   /* sky-50 */
+        }
+        .box.noisy {
+            stroke: #2dd4bf; /* teal-400 */
+            fill: #ccfbf1;   /* teal-50 */
+        }
+        .box.noisy:not(.faded-out) {
+            cursor: pointer;
+        }
+        .box:not(.faded-out):hover {
+            fill: #f472b6; /* pink-400 */
+        }
+        .box.related-highlight {
+            fill: #f472b6; /* pink-400, same as hover */
+        }
+        /* Connection line styles */
+        .connection {
+            stroke-width: 2; 
+            transition: opacity 0.5s ease-in-out, stroke 0.2s ease-in-out, stroke-width 0.2s ease-in-out;
+            opacity: 0.8;
+        }
+        .connection.dimmed {
+            opacity: 0.05;
+        }
+        .connection.highlighted {
+            opacity: 1;
+            stroke: #ec4899; /* pink-500 */
+            stroke-width: 3.5; /* Thicker highlight */
+        }
+        .connection.default-gray {
+            stroke: #6b7280; /* gray-500 */
+        }
+        /* MathJax label container styles */
+        .math-host-span {
+            font-size: 16px;
+            text-align: center;
+            padding: 2px;
+            transition: color 0.2s ease-in-out, opacity 0.5s ease-in-out;
+            pointer-events: none;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            height: 100%;
+            box-sizing: border-box;
+            color: #374151; /* gray-700 */
+        }
+        foreignObject {
+            transition: opacity 0.5s ease-in-out;
+        }
+
+        /* Styles for the mask visualization */
+        .mask-cell {
+            stroke: #e5e7eb; /* gray-200 */
+            stroke-width: 0.5;
+            transition: fill 0.2s ease-in-out, opacity 0.8s ease-in-out, stroke 0.2s ease-in-out, stroke-width 0.2s ease-in-out;
+        }
+        .mask-cell.on {
+            fill: var(--cell-color, #38bdf8); /* Use CSS variable for dynamic color */
+        }
+        .mask-cell.off {
+            fill: transparent; /* Make non-connected cells transparent */
+        }
+        .mask-cell.highlighted {
+            stroke: #ec4899; /* pink-500 */
+            stroke-width: 2;
+        }
+        .mask-cell.highlighted.on {
+            fill: #f472b6; /* pink-400 on highlight */
+        }
+        .axis-label {
+            font-size: 18px;
+            font-weight: 500;
+            fill: #495137; /* gray-700 */
+        }
+        .mask-tick .math-host-span {
+            font-size: 14px;
+        }
     </style>
 </head>
-<body class="bg-gray-100 dark:bg-gray-900 p-8 transition-colors duration-300">
-    <div class="max-w-5xl mx-auto bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md transition-colors duration-300">
-        <div class="flex justify-between items-center mb-4">
-            <h1 class="text-2xl font-bold text-gray-800 dark:text-gray-100">Attention: Training to Inference Transition</h1>
-            <div class="flex items-center space-x-2">
-                 <button id="reset-button" class="px-3 py-1.5 text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-600 dark:focus:ring-offset-gray-800 transition-all duration-300"> Reset View </button>
-                 <button id="theme-toggle" class="p-2 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-gray-800 transition-all duration-300">
-                     <svg id="theme-icon-light" class="w-6 h-6 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
-                     <svg id="theme-icon-dark" class="w-6 h-6 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>
-                 </button>
-             </div>
+<body>
+    <div id="main-container">
+        <div class="visualization-container" id="animation-container">
+            <svg id="visualization"></svg>
         </div>
-        <div class="mb-6 flex items-end space-x-4">
-            <div>
-                <label for="n_frames" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Clean Frames (n_frames):</label>
-                <input type="number" id="n_frames" value="5" min="1" max="10" class="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400">
-            </div>
-             <p class="text-sm text-gray-500 dark:text-gray-400 pb-2">Total Training Frames: <span id="total_frames_display" class="font-medium text-gray-700 dark:text-gray-200">10</span> (2 * n_frames)</p>
-        </div>
-         <p class="mb-4 text-sm text-gray-600 dark:text-gray-400"> Click on a noisy query box (<span class="inline-flex items-center align-middle"><svg width="12" height="12" viewBox="0 0 10 10" class="inline-block mr-0.5"><rect x="1" y="1" width="8" height="8" rx="1" ry="1" class="box fill-current text-gray-200 dark:text-gray-600"></rect></svg>$\tilde{Q}_i$</span>) to visualize the transition. Click the background to reset after animation. </p>
-
-        <div id="mode-indicator" class="text-center text-xl font-semibold mb-2 text-gray-800 dark:text-gray-200">
-            Training Mode
-        </div>
-
-        <div class="w-full overflow-x-auto mb-6">
-             <svg id="visualization" width="100%" class="border border-gray-200 dark:border-gray-700 rounded-md bg-gray-50 dark:bg-gray-900"></svg>
-             </div>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="p-4 border border-gray-200 dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700 transition-colors duration-300">
-                <h3 class="text-lg font-semibold mb-2 text-gray-700 dark:text-gray-200">Legend (Hover over boxes)</h3>
-                <div id="legend-content" class="flex flex-col space-y-2 text-gray-600 dark:text-gray-300 text-sm"> </div>
-            </div>
-            <div class="p-4 border border-gray-200 dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm transition-colors duration-300">
-                <h3 class="text-md font-semibold mb-2 text-gray-800 dark:text-gray-100">Training Connectivity Logic</h3>
-                <p>This visualization initially shows the training setup connections (where $i, j$ are $0..n_{\text{frames}}-1$):</p>
-                <ul id="logic-notes-list" class="list-disc list-inside ml-4 mt-1 space-y-1"> </ul>
-                 <p class="mt-2 logic-notes-explanation"> </p>
-                 <p class="mt-3 text-xs italic text-gray-500 dark:text-gray-400"> Note: Clicking $\tilde{Q}_i$ transitions the view to show connections relevant for inferring frame $i$, keeping prior causal history. </p>
-            </div>
+        <div class="visualization-container" id="mask-container">
+            <svg id="mask-visualization"></svg>
         </div>
     </div>
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
-            // --- Initial Log ---
-            console.log("DOMContentLoaded event fired. Initializing script...");
+            // --- D3 Setup and Constants ---
+            const svgAnim = d3.select('#visualization');
+            const svgMask = d3.select('#mask-visualization');
+            const N_FRAMES_DEFAULT = 5; 
 
-            // --- DOM Elements ---
-            const nFramesInput = document.getElementById('n_frames'); const totalFramesDisplay = document.getElementById('total_frames_display'); const svg = document.getElementById('visualization'); const themeToggleButton = document.getElementById('theme-toggle'); const legendContent = document.getElementById('legend-content'); const logicNotesList = document.getElementById('logic-notes-list'); const logicNotesExplanation = document.querySelector('.logic-notes-explanation'); const resetButton = document.getElementById('reset-button');
-            const modeIndicator = document.getElementById('mode-indicator');
-            if (!nFramesInput || !totalFramesDisplay || !svg || !themeToggleButton || !legendContent || !logicNotesList || !resetButton || !modeIndicator) { console.error("Initialization Error: One or more essential DOM elements not found!"); return; }
-            console.log("Essential DOM elements found.");
+            // Animation constants
+            const BOX_SIZE = 60;
+            const BOX_SPACING = 35;
+            const ROW_SPACING = 300;
+            const ANIM_PADDING = 80;
+            const LABEL_FO_WIDTH = 80;
+            const LABEL_FO_HEIGHT = 40;
+            const LABEL_OFFSET_Y_TOP = LABEL_FO_HEIGHT + 15;
+            const LABEL_OFFSET_Y_BOTTOM = 15;
+            
+            // Mask constants
+            const MASK_PADDING = 80;
+            const MASK_LABEL_OFFSET = 60;
+            const MASK_SVG_SIZE = 800; // Fixed size for simplicity
+            const MASK_GRID_SIZE = MASK_SVG_SIZE - MASK_PADDING * 2 - MASK_LABEL_OFFSET;
 
-            // --- Constants ---
-            const BOX_SIZE = 35; const BOX_SPACING = 20; const ROW_SPACING = 180; const PADDING = 50;
-            const LABEL_FO_WIDTH = 55; const LABEL_FO_HEIGHT = 30; const LABEL_OFFSET_Y_TOP = LABEL_FO_HEIGHT + 8; const LABEL_OFFSET_Y_BOTTOM = 8;
-            const FADE_DURATION_MS = 800; const MOVE_DURATION_MS = 800; const STAGGER_DELAY_MS = 150;
-            const SVG_NS = "http://www.w3.org/2000/svg";
+            // General transition constants
+            const FADE_DURATION = 600;
+            const MOVE_DURATION = 800;
+            const STAGGER_DELAY = 100;
 
-            // --- State ---
-            let isAnimating = false; let isAnimationComplete = false; let currentNFrames = -1;
-            let currentAnimationId = null;
+            // --- State Management ---
+            let isAnimating = false;
+            let isAnimationComplete = false;
             let lastAnimatedIndex = null;
-            let originalPositions = {};
+            let currentNFrames = -1;
+            let boxesData = []; 
 
-            // --- Utility Functions ---
-            const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-            function updateAnimationDurations() { document.documentElement.style.setProperty('--fade-duration', `${FADE_DURATION_MS / 1000}s`); }
-            updateAnimationDurations();
-            function easeInOutQuad(t) { return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }
+            // --- Groups for SVG layers ---
+            const linesGroup = svgAnim.append('g').attr('id', 'lines-group');
+            const boxesGroup = svgAnim.append('g').attr('id', 'boxes-group');
+            const animLabelsGroup = svgAnim.append('g').attr('id', 'labels-group');
+            const maskGridGroup = svgMask.append('g').attr('id', 'mask-grid-group');
+            const maskLabelsGroup = svgMask.append('g').attr('id', 'mask-labels-group');
 
-            // --- Update Mode Indicator ---
-            function updateModeIndicator(text) { if (modeIndicator) { modeIndicator.textContent = text; } }
+            // --- Connectivity Logic ---
+            const are_connected_training = (q_idx, k_idx, n) => {
+                const q_is_clean = q_idx < n;
+                const k_is_clean = k_idx < n;
+                const q_eff = q_idx % n;
+                const k_eff = k_idx % n;
 
-            // --- Theme Management ---
-            function applyTheme(isDark) { console.log("Applying theme:", isDark ? "Dark" : "Light"); document.documentElement.classList.toggle('dark', isDark); const themeIconLight = document.getElementById('theme-icon-light'); const themeIconDark = document.getElementById('theme-icon-dark'); if (themeIconLight) themeIconLight.classList.toggle('hidden', !isDark); if (themeIconDark) themeIconDark.classList.toggle('hidden', isDark); localStorage.theme = isDark ? 'dark' : 'light'; renderLegendAndNotes(); }
-            if (themeToggleButton) { themeToggleButton.addEventListener('click', () => { applyTheme(!document.documentElement.classList.contains('dark')); }); }
-            function setInitialThemeIcon() { applyTheme(document.documentElement.classList.contains('dark')); }
+                if (q_is_clean && k_is_clean) return q_eff >= k_eff;
+                if (!q_is_clean && k_is_clean) return q_eff > k_eff;
+                if (!q_is_clean && !k_is_clean) return q_eff === k_eff;
+                return false;
+            };
+
+            const are_connected_inference_anim = (q_idx, k_idx, n, target_eff) => {
+                const q_is_clean = q_idx < n;
+                const k_is_clean = k_idx < n;
+                const q_eff = q_idx % n;
+                const k_eff = k_idx % n;
+                if (!q_is_clean && q_eff === target_eff) {
+                    if (k_is_clean && target_eff > k_eff) return true;
+                    if (!k_is_clean && k_eff === target_eff) return true;
+                }
+                return false;
+            };
 
             // --- Color Palette ---
-             function getColor(index, totalNoisy) { return `hsl(${240 + (totalNoisy > 1 ? index / (totalNoisy - 1) : 0.5) * 60}, 70%, 60%)`;}
+            const getColor = d3.scaleSequential(d3.interpolateCool).domain([0, N_FRAMES_DEFAULT]);
 
-            // --- Connectivity Logic (Training & Inference) ---
-            function are_connected_training(q_frame_idx, k_frame_idx, n_frames) { const q_is_clean = q_frame_idx < n_frames; const k_is_clean = k_frame_idx < n_frames; const q_eff_idx = q_frame_idx % n_frames; const k_eff_idx = k_frame_idx % n_frames; if (q_is_clean && k_is_clean) { return q_eff_idx >= k_eff_idx; } else if (!q_is_clean && k_is_clean) { return q_eff_idx > k_eff_idx; } else if (!q_is_clean && !k_is_clean) { return q_eff_idx === k_eff_idx; } else { return false; } }
-            function are_connected_inference(q_frame_idx, k_frame_idx, n_frames, target_eff_idx) { const q_is_clean = q_frame_idx < n_frames; const k_is_clean = k_frame_idx < n_frames; const q_eff_idx = q_frame_idx % n_frames; const k_eff_idx = k_frame_idx % n_frames; if (!q_is_clean && q_eff_idx === target_eff_idx) { if (k_is_clean && target_eff_idx > k_eff_idx) { return true; } if (!k_is_clean && k_eff_idx === target_eff_idx) { return true; } } return false; }
+            // --- Main Drawing Function ---
+            function initializeVisualizations() {
+                const n_frames = N_FRAMES_DEFAULT;
+                currentNFrames = n_frames;
+                
+                isAnimating = false;
+                isAnimationComplete = false;
+                lastAnimatedIndex = null;
 
-            // --- Typeset Function ---
-            function typesetMathJax(elements) { if (window.MathJax && MathJax.startup?.promise) { console.log("Attempting to typeset MathJax (using startup promise)..."); return MathJax.startup.promise.then(() => { console.log("MathJax ready, calling typesetPromise for:", elements); return MathJax.typesetPromise(elements); }).then(() => { console.log("MathJax typesetting successful for:", elements); }).catch(err => { console.error('MathJax Startup/Typesetting Error:', err, "for elements:", elements); }); } else { console.warn("MathJax or startup promise not available for typesetting."); return Promise.resolve(); } }
+                drawAttentionAnimation(n_frames);
+                drawMaskVisualization('training', { n_frames });
+                
+                typesetMathJax();
+            }
 
-            // --- Legend and Notes Rendering ---
-            function renderLegendAndNotes() { console.log("Rendering legend and notes..."); if (!legendContent || !logicNotesList || !logicNotesExplanation) { console.warn("Legend/Notes elements not found, skipping render."); return; } const isDark = document.documentElement.classList.contains('dark'); const textColor = isDark ? 'text-gray-300' : 'text-gray-600'; const strongColor = isDark ? 'text-red-400' : 'text-red-600'; legendContent.innerHTML = ` <div class="flex items-center space-x-2"> <svg width="15" height="15" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" rx="2" ry="2" class="box fill-current text-blue-100 dark:text-blue-900 stroke-current text-blue-400 dark:text-blue-500"></rect></svg> <span class="${textColor}">Clean Query ($Q_i$) or Key ($K_j$)</span> </div> <div class="flex items-center space-x-2"> <svg width="15" height="15" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" rx="2" ry="2" class="box fill-current text-purple-100 dark:text-purple-900 stroke-current text-purple-400 dark:text-purple-500"></rect></svg> <span class="${textColor}">Noisy Query ($\tilde{Q}_i$) or Key ($\tilde{K}_j$)</span> </div> <div class="flex items-center space-x-2"> <svg width="15" height="15" viewBox="0 0 20 10"> <line x1="0" y1="5" x2="20" y2="5" class="connection default-gray" stroke-width="1.5"></line> </svg> <span class="${textColor}">Connection ($Q_i \to K_j$ or $\tilde{Q}_i \to \tilde{K}_j$)</span> </div> <div class="flex items-center space-x-2"> <svg width="15" height="15" viewBox="0 0 20 10"> <line x1="0" y1="5" x2="20" y2="5" stroke="${getColor(0, 2)}" stroke-width="1.5"></line> </svg> <span class="${textColor}">Connection ($\tilde{Q}_i \to K_j$, colored)</span> </div> <div class="flex items-center space-x-2"> <svg width="15" height="15" viewBox="0 0 10 10" class="inline-block mr-1"> <line x1="1" y1="1" x2="9" y2="9" stroke-width="1.5" class="legend-x-icon"></line> <line x1="1" y1="9" x2="9" y2="1" stroke-width="1.5" class="legend-x-icon"></line> </svg> <span class="${textColor}">No Connection Case ($Q_i \to \tilde{K}_j$)</span> </div> `; logicNotesList.innerHTML = ` <li>$Q_i \\to K_j$ if $i \\ge j$.</li> <li>$\\tilde{Q}_i \\to K_j$ if $i > j$. (Colored lines)</li> <li>$\\tilde{Q}_i \\to \\tilde{K}_j$ if $i = j$.</li> <li>$Q_i \\to \\tilde{K}_j$ is <strong class="${strongColor}">never</strong> allowed.</li> `; logicNotesExplanation.innerHTML = ` The colored connection $\\tilde{Q}_i \\to K_j$ requires the effective index of the noisy query to be strictly greater than the index of the clean key. `; }
+            // --- Attention Animation Drawing ---
+            function drawAttentionAnimation(n_frames) {
+                const total_frames = n_frames * 2;
 
-            // --- Get Center Coordinates ---
-            function getCenterCoords(element) { /* ... */ if (!element) return null; if (element.tagName.toLowerCase() === 'rect') { const x = parseFloat(element.getAttribute('x')); const y = parseFloat(element.getAttribute('y')); const width = parseFloat(element.getAttribute('width')); const height = parseFloat(element.getAttribute('height')); const transform = element.style.transform; let tx = 0; if (transform && transform.includes('translateX')) { const match = transform.match(/translateX\(([^)]+)px\)/); if (match) tx = parseFloat(match[1]); } return { x: x + width / 2 + tx, y: y + height / 2 /*+ ty*/ }; } return null; }
+                const svgWidth = ANIM_PADDING * 2 + total_frames * BOX_SIZE + (total_frames - 1) * BOX_SPACING;
+                const svgHeight = ANIM_PADDING * 2 + ROW_SPACING + BOX_SIZE * 2 + LABEL_OFFSET_Y_TOP + LABEL_OFFSET_Y_BOTTOM;
+                svgAnim.attr('viewBox', `0 0 ${svgWidth} ${svgHeight}`);
 
-            // --- Drawing Function ---
-            function drawVisualization(forceRedraw = false) {
-                 console.log("Starting drawVisualization..."); if (!svg || !nFramesInput || !totalFramesDisplay) { console.error("Cannot draw visualization: Missing essential elements."); return; } try { const n_frames = parseInt(nFramesInput.value, 10); if (isNaN(n_frames) || n_frames < 1 || n_frames > 10) { /* ... validation ... */ return; } if (n_frames === currentNFrames && !forceRedraw) { console.log("n_frames unchanged, skipping full redraw."); return; } currentNFrames = n_frames; const total_frames = n_frames * 2; totalFramesDisplay.textContent = total_frames; svg.innerHTML = ''; originalPositions = {};
+                const topRowY = ANIM_PADDING + LABEL_OFFSET_Y_TOP;
+                const bottomRowY = topRowY + BOX_SIZE + ROW_SPACING;
 
-                 // Define and append the noise filter
-                 const defs = document.createElementNS(SVG_NS, 'defs');
-                 defs.innerHTML = `
-                     <filter id="noiseFilter" filterUnits="objectBoundingBox" x="0" y="0" width="1" height="1">
-                         <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="4" stitchTiles="stitch" result="noise"/>
-                         <feComponentTransfer in="noise" result="transNoise">
-                             <feFuncA type="linear" slope="0.25"/> </feComponentTransfer>
-                         <feColorMatrix in="transNoise" type="saturate" values="0" result="grayscaleTransNoise"/>
-                         <feMerge>
-                             <feMergeNode in="SourceGraphic"/>
-                             <feMergeNode in="grayscaleTransNoise"/>
-                         </feMerge>
-                     </filter>
-                 `;
-                 svg.appendChild(defs);
+                boxesData = []; 
+                const noisyQueryIndices = [];
+                for (let i = 0; i < total_frames; i++) {
+                    const isClean = i < n_frames;
+                    if (!isClean) noisyQueryIndices.push(i);
+                    const eff_idx = i % n_frames;
+                    const x_pos = ANIM_PADDING + i * (BOX_SIZE + BOX_SPACING);
+                    
+                    boxesData.push({ id: `q-${i}`, type: 'q', index: i, eff_idx, isClean, x: x_pos, y: topRowY });
+                    boxesData.push({ id: `k-${i}`, type: 'k', index: i, eff_idx, isClean, x: x_pos, y: bottomRowY });
+                }
 
-                 const svgWidth = PADDING * 2 + total_frames * BOX_SIZE + (total_frames - 1) * BOX_SPACING; const svgHeight = PADDING + LABEL_OFFSET_Y_TOP + BOX_SIZE + ROW_SPACING + BOX_SIZE + LABEL_OFFSET_Y_BOTTOM + LABEL_FO_HEIGHT + PADDING; svg.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`); const startX = PADDING; const topRowY = PADDING + LABEL_OFFSET_Y_TOP; const bottomRowY = topRowY + BOX_SIZE + ROW_SPACING; const boxesData = { top: [], bottom: [] }; const noisyQueryIndices = []; const linesGroup = document.createElementNS(SVG_NS, 'g'); linesGroup.id = 'lines-group'; svg.appendChild(linesGroup); const boxesGroup = document.createElementNS(SVG_NS, 'g'); boxesGroup.id = 'boxes-group'; svg.appendChild(boxesGroup); const labelsGroup = document.createElementNS(SVG_NS, 'g'); labelsGroup.id = 'labels-group'; svg.appendChild(labelsGroup); console.log("Drawing boxes and labels..."); for (let i = 0; i < total_frames; i++) { const x_pos = startX + i * (BOX_SIZE + BOX_SPACING); const x_center = x_pos + BOX_SIZE / 2; const isClean = i < n_frames; const eff_idx = i % n_frames; const latexPrefix = isClean ? "" : "\\tilde"; const boxColorClass = isClean ? 'fill-blue-100 dark:fill-blue-900 stroke-blue-400 dark:stroke-blue-500' : 'fill-purple-100 dark:fill-purple-900 stroke-purple-400 dark:stroke-purple-500'; if (!isClean) noisyQueryIndices.push(i); const topRect = document.createElementNS(SVG_NS, 'rect'); topRect.setAttribute('class', `box ${boxColorClass}`); if (!isClean) { topRect.style.cursor = 'pointer'; topRect.setAttribute('filter', 'url(#noiseFilter)'); } boxesGroup.appendChild(topRect); const topRectId = `q-box-${i}`; topRect.setAttribute('id', topRectId); topRect.setAttribute('data-index', i); topRect.setAttribute('data-eff-index', eff_idx); topRect.setAttribute('data-type', 'q'); topRect.setAttribute('data-is-clean', isClean); topRect.setAttribute('x', x_pos); topRect.setAttribute('y', topRowY); topRect.setAttribute('width', BOX_SIZE); topRect.setAttribute('height', BOX_SIZE); topRect.setAttribute('rx', 4); topRect.setAttribute('ry', 4); boxesData.top[i] = { element: topRect, cx: x_center, cy: topRowY + BOX_SIZE / 2, lineY: topRowY + BOX_SIZE }; originalPositions[topRectId] = { x: x_pos, y: topRowY, width: BOX_SIZE, height: BOX_SIZE }; const topFO = document.createElementNS(SVG_NS, 'foreignObject'); labelsGroup.appendChild(topFO); const topLabelId = `q-label-span-${i}`; const topLabelFOId = `q-label-${i}`; topFO.setAttribute('id', topLabelFOId); topFO.setAttribute('x', x_center - LABEL_FO_WIDTH / 2); topFO.setAttribute('y', topRowY - LABEL_OFFSET_Y_TOP); topFO.setAttribute('width', LABEL_FO_WIDTH); topFO.setAttribute('height', LABEL_FO_HEIGHT); const currentTextClass = document.documentElement.classList.contains('dark') ? 'text-gray-300' : 'text-gray-700'; topFO.innerHTML = `<span id="${topLabelId}" class="math-host-span ${currentTextClass}">$${latexPrefix}{Q}_{${eff_idx}}$</span>`; originalPositions[topLabelFOId] = { x: parseFloat(topFO.getAttribute('x')), y: parseFloat(topFO.getAttribute('y')) }; const bottomRect = document.createElementNS(SVG_NS, 'rect'); bottomRect.setAttribute('class', `box ${boxColorClass}`); if (!isClean) { bottomRect.setAttribute('filter', 'url(#noiseFilter)'); } boxesGroup.appendChild(bottomRect); const bottomRectId = `k-box-${i}`; bottomRect.setAttribute('id', bottomRectId); bottomRect.setAttribute('data-index', i); bottomRect.setAttribute('data-eff-index', eff_idx); bottomRect.setAttribute('data-type', 'k'); bottomRect.setAttribute('data-is-clean', isClean); bottomRect.setAttribute('x', x_pos); bottomRect.setAttribute('y', bottomRowY); bottomRect.setAttribute('width', BOX_SIZE); bottomRect.setAttribute('height', BOX_SIZE); bottomRect.setAttribute('rx', 4); bottomRect.setAttribute('ry', 4); boxesData.bottom[i] = { element: bottomRect, cx: x_center, cy: bottomRowY + BOX_SIZE / 2, lineY: bottomRowY }; originalPositions[bottomRectId] = { x: x_pos, y: bottomRowY, width: BOX_SIZE, height: BOX_SIZE }; const bottomFO = document.createElementNS(SVG_NS, 'foreignObject'); labelsGroup.appendChild(bottomFO); const bottomLabelId = `k-label-span-${i}`; const bottomLabelFOId = `k-label-${i}`; bottomFO.setAttribute('id', bottomLabelFOId); bottomFO.setAttribute('x', x_center - LABEL_FO_WIDTH / 2); bottomFO.setAttribute('y', bottomRowY + BOX_SIZE + LABEL_OFFSET_Y_BOTTOM); bottomFO.setAttribute('width', LABEL_FO_WIDTH); bottomFO.setAttribute('height', LABEL_FO_HEIGHT); bottomFO.innerHTML = `<span id="${bottomLabelId}" class="math-host-span ${currentTextClass}">$${latexPrefix}{K}_{${eff_idx}}$</span>`; originalPositions[bottomLabelFOId] = { x: parseFloat(bottomFO.getAttribute('x')), y: parseFloat(bottomFO.getAttribute('y')) }; } console.log("Finished drawing boxes and labels."); console.log("Drawing connections..."); for (let q_idx = 0; q_idx < total_frames; q_idx++) { for (let k_idx = 0; k_idx < total_frames; k_idx++) { if (are_connected_training(q_idx, k_idx, n_frames)) { const line = document.createElementNS(SVG_NS, 'line'); line.classList.add('connection'); line.setAttribute('data-from-q', q_idx); line.setAttribute('data-to-k', k_idx); const x1 = boxesData.top[q_idx].cx; const y1 = boxesData.top[q_idx].lineY; const x2 = boxesData.bottom[k_idx].cx; const y2 = boxesData.bottom[k_idx].lineY; line.setAttribute('x1', x1); line.setAttribute('y1', y1); line.setAttribute('x2', x2); line.setAttribute('y2', y2); const lineId = `line-${q_idx}-${k_idx}`; line.id = lineId; originalPositions[lineId] = { x1, y1, x2, y2 }; const q_is_clean = q_idx < n_frames; const k_is_clean = k_idx < n_frames; if (!q_is_clean && k_is_clean) { const noisyIndex = noisyQueryIndices.indexOf(q_idx); const color = getColor(noisyIndex, noisyQueryIndices.length); line.setAttribute('stroke', color); } else { line.classList.add('default-gray'); } linesGroup.appendChild(line); } } } console.log("Finished drawing connections."); console.log("drawVisualization finished successfully."); } catch (error) { console.error("Error during drawVisualization:", error); svg.innerHTML = `<text x="50%" y="50%" text-anchor="middle" dominant-baseline="middle" style="fill: red;">Error rendering visualization. Check console.</text>`; }
-             }
+                const linesData = [];
+                for (let q_idx = 0; q_idx < total_frames; q_idx++) {
+                    for (let k_idx = 0; k_idx < total_frames; k_idx++) {
+                        if (are_connected_training(q_idx, k_idx, n_frames)) {
+                            linesData.push({
+                                id: `line-${q_idx}-${k_idx}`,
+                                from_q: q_idx,
+                                to_k: k_idx,
+                            });
+                        }
+                    }
+                }
 
-            // --- Event Handlers for Hover Effects ---
-            function handleMouseOver(event) { /* ... */ if (isAnimating) return; const target = event.target; if (target && target.matches && target.matches('rect.box:not(.faded-out)')) { const index = target.getAttribute('data-index'); const type = target.getAttribute('data-type'); const allLines = svg.querySelectorAll('line.connection:not(.faded-out)'); allLines.forEach(line => line.classList.add('dimmed')); const selector = type === 'q' ? `line.connection[data-from-q="${index}"]:not(.faded-out)` : `line.connection[data-to-k="${index}"]:not(.faded-out)`; const connectedLines = svg.querySelectorAll(selector); connectedLines.forEach(line => { line.classList.remove('dimmed'); line.classList.add('highlighted'); }); } }
-            function handleMouseOut(event) { /* ... */ if (isAnimating) return; const target = event.target; if (target && target.matches && target.matches('rect.box:not(.faded-out)')) { const allLines = svg.querySelectorAll('line.connection:not(.faded-out)'); allLines.forEach(line => { line.classList.remove('dimmed'); line.classList.remove('highlighted'); }); } }
+                boxesGroup.selectAll('rect.box')
+                    .data(boxesData, d => d.id)
+                    .join('rect')
+                    .attr('class', d => `box ${d.isClean ? 'clean' : 'noisy'}`)
+                    .attr('id', d => d.id)
+                    .attr('x', d => d.x)
+                    .attr('y', d => d.y)
+                    .attr('width', BOX_SIZE)
+                    .attr('height', BOX_SIZE)
+                    .attr('rx', 8) 
+                    .attr('ry', 8)
+                    .style('opacity', 1)
+                    .attr('transform', null)
+                    .on('click', handleBoxClick)
+                    .on('mouseover', handleMouseOver)
+                    .on('mouseout', handleMouseOut);
 
-             // --- Staged Forward Animation Function ---
-             async function startTransitionAnimation(clickedNoisyIndex) {
-                 if (isAnimating) return;
-                 console.log(`Starting FORWARD animation for noisy index: ${clickedNoisyIndex}`);
-                 isAnimating = true; isAnimationComplete = false; lastAnimatedIndex = clickedNoisyIndex;
-                 svg.removeEventListener('click', handleSvgResetClick);
-                 if (currentAnimationId) cancelAnimationFrame(currentAnimationId);
+                animLabelsGroup.selectAll('foreignObject')
+                    .data(boxesData, d => d.id)
+                    .join('foreignObject')
+                    .attr('id', d => `label-${d.id}`)
+                    .attr('width', LABEL_FO_WIDTH)
+                    .attr('height', LABEL_FO_HEIGHT)
+                    .html(d => {
+                        const latexPrefix = d.isClean ? "" : "\\tilde";
+                        // Use 1-based indexing for labels
+                        return `<span class="math-host-span">$${latexPrefix}{${d.type.toUpperCase()}}_{${d.eff_idx + 1}}$</span>`;
+                    })
+                    .attr('x', d => d.x + BOX_SIZE / 2 - LABEL_FO_WIDTH / 2)
+                    .attr('y', d => d.type === 'q' ? d.y - LABEL_OFFSET_Y_TOP : d.y + BOX_SIZE + LABEL_OFFSET_Y_BOTTOM)
+                    .style('opacity', 1)
+                    .attr('transform', null);
 
-                 const animationPromise = new Promise(async (resolveAnimation, rejectAnimation) => {
-                     try {
-                         const n_frames = parseInt(nFramesInput.value, 10); const target_eff_idx = clickedNoisyIndex % n_frames; const moving_q = svg.getElementById(`q-box-${clickedNoisyIndex}`); const moving_k = svg.getElementById(`k-box-${clickedNoisyIndex}`); const moving_q_label = svg.getElementById(`q-label-${clickedNoisyIndex}`); const moving_k_label = svg.getElementById(`k-label-${clickedNoisyIndex}`); const target_q_box = svg.getElementById(`q-box-${target_eff_idx}`); const target_k_box = svg.getElementById(`k-box-${target_eff_idx}`); if (!moving_q || !moving_k || !target_q_box || !target_k_box || !moving_q_label || !moving_k_label) { throw new Error("Could not find all necessary elements for animation."); } const allBoxes = svg.querySelectorAll('rect.box'); const allLabels = svg.querySelectorAll('foreignObject'); const allLines = svg.querySelectorAll('line.connection'); const target_q_x_pos = parseFloat(target_q_box.getAttribute('x')); const target_k_x_pos = parseFloat(target_k_box.getAttribute('x')); const current_q_x_pos = parseFloat(moving_q.getAttribute('x')); const current_k_x_pos = parseFloat(moving_k.getAttribute('x')); const translateX = target_q_x_pos - current_q_x_pos; const initial_q_center_x = current_q_x_pos + BOX_SIZE / 2; const initial_k_center_x = current_k_x_pos + BOX_SIZE / 2; const final_q_center_x = target_q_x_pos + BOX_SIZE / 2; const final_k_center_x = target_k_x_pos + BOX_SIZE / 2;
+                linesGroup.selectAll('line.connection')
+                    .data(linesData, d => d.id)
+                    .join('line')
+                    .attr('class', 'connection')
+                    .attr('data-from-q', d => d.from_q)
+                    .attr('data-to-k', d => d.to_k)
+                    .attr('x1', d => boxesData.find(b => b.id === `q-${d.from_q}`).x + BOX_SIZE / 2)
+                    .attr('y1', d => boxesData.find(b => b.id === `q-${d.from_q}`).y + BOX_SIZE)
+                    .attr('x2', d => boxesData.find(b => b.id === `k-${d.to_k}`).x + BOX_SIZE / 2)
+                    .attr('y2', d => boxesData.find(b => b.id === `k-${d.to_k}`).y)
+                    .style('opacity', 0.8)
+                    .attr('stroke', d => {
+                        const q_is_clean = d.from_q < n_frames;
+                        const k_is_clean = d.to_k < n_frames;
+                        if (!q_is_clean && k_is_clean) {
+                            const noisyIndex = noisyQueryIndices.indexOf(d.from_q);
+                            return getColor(noisyIndex);
+                        }
+                        return '#6b7280'; // gray-500
+                    });
+            }
 
-                         // Stage 1: Fade irrelevant lines
-                         console.log("Forward Stage 1: Fading lines...");
-                         allLines.forEach(line => { /* ... fade logic ... */ const fromQ = parseInt(line.getAttribute('data-from-q')); const toK = parseInt(line.getAttribute('data-to-k')); const fromQ_is_clean = fromQ < n_frames; const toK_is_clean = toK < n_frames; const fromQ_eff_idx = fromQ % n_frames; const toK_eff_idx = toK % n_frames; let keepLine = false; if (are_connected_inference(fromQ, toK, n_frames, target_eff_idx)) { keepLine = true; } else if (fromQ_is_clean && toK_is_clean && fromQ_eff_idx < target_eff_idx && toK_eff_idx < target_eff_idx) { if (are_connected_training(fromQ, toK, n_frames)) { keepLine = true; } } if (!keepLine) { line.classList.add('faded-out'); } });
-                         await sleep(FADE_DURATION_MS + STAGGER_DELAY_MS);
+            // --- Mask Visualization Drawing ---
+            function drawMaskVisualization(mode, { n_frames, target_eff_idx = 0 }) {
+                const size = mode === 'training' ? n_frames * 2 : target_eff_idx + 1;
+                
+                svgMask.attr('viewBox', `0 0 ${MASK_SVG_SIZE} ${MASK_SVG_SIZE}`);
 
-                         // Stage 2: Fade irrelevant boxes and labels
-                         console.log("Forward Stage 2: Fading boxes/labels...");
-                         allBoxes.forEach(box => { /* ... fade logic ... */ const index = parseInt(box.getAttribute('data-index')); const isClean = box.getAttribute('data-is-clean') === 'true'; const eff_idx = parseInt(box.getAttribute('data-eff-index')); const type = box.getAttribute('data-type'); let keepBox = false; if (index === clickedNoisyIndex) { keepBox = true; } else if (isClean && eff_idx < target_eff_idx) { keepBox = true; } if (!keepBox) { box.classList.add('faded-out'); const label = svg.getElementById(`${type}-label-${index}`); if (label) label.classList.add('faded-out'); } });
-                         await sleep(FADE_DURATION_MS + STAGGER_DELAY_MS);
+                const cellSize = MASK_GRID_SIZE / size;
 
-                         // Stage 3: Start JS Animation Loop
-                         console.log("Forward Stage 3: Starting JS Animation Loop...");
-                         const linesToAnimate = svg.querySelectorAll(`line.connection:not(.faded-out)`);
-                         const startTime = performance.now();
-                         const moveAnimationPromise = new Promise((resolveLoop) => {
-                              function animationStep(timestamp) { /* ... rAF loop ... */ const elapsed = timestamp - startTime; const rawProgress = Math.min(1, elapsed / MOVE_DURATION_MS); const easedProgress = easeInOutQuad(rawProgress); const currentTranslateX = translateX * easedProgress; const current_q_center_x = initial_q_center_x + currentTranslateX; const current_k_center_x = initial_k_center_x + currentTranslateX; if(moving_q) moving_q.style.transform = `translateX(${currentTranslateX}px)`; if(moving_k) moving_k.style.transform = `translateX(${currentTranslateX}px)`; if(moving_q_label) moving_q_label.style.transform = `translateX(${currentTranslateX}px)`; if(moving_k_label) moving_k_label.style.transform = `translateX(${currentTranslateX}px)`; linesToAnimate.forEach(line => { const fromQ = parseInt(line.getAttribute('data-from-q')); const toK = parseInt(line.getAttribute('data-to-k')); if (fromQ === clickedNoisyIndex) line.setAttribute('x1', current_q_center_x); if (toK === clickedNoisyIndex) line.setAttribute('x2', current_k_center_x); }); if (rawProgress < 1) { currentAnimationId = requestAnimationFrame(animationStep); } else { console.log("JS Forward Animation loop finished."); currentAnimationId = null; resolveLoop(); } } currentAnimationId = requestAnimationFrame(animationStep);
-                          });
+                const maskData = [];
+                const labelData = [];
 
-                         // Stage 4: Wait for JS Animation loop
-                         await moveAnimationPromise;
-                         console.log("JS Forward Move animation promise resolved.");
+                const noisyQueryIndices = [];
+                if (mode === 'training') {
+                    for (let i = n_frames; i < n_frames * 2; i++) {
+                        noisyQueryIndices.push(i);
+                    }
+                }
 
-                         // Stage 5: Finalize
-                         finalizeForwardAnimation(clickedNoisyIndex, target_eff_idx, translateX);
-                         resolveAnimation();
+                for (let q = 0; q < size; q++) {
+                    for (let k = 0; k < size; k++) {
+                        let isOn = false;
+                        if (mode === 'training') {
+                            isOn = are_connected_training(q, k, n_frames);
+                        } else { // inference
+                            isOn = q >= k;
+                        }
 
-                     } catch (error) { console.error("Error during forward animation sequence:", error); isAnimating = false; resetVisualization(); rejectAnimation(error); }
-                 });
-                 animationPromise.catch(err => { console.log("Forward Animation promise rejected."); });
-             }
+                        let cellColor = 'transparent';
+                        if (isOn) {
+                            if (mode === 'training') {
+                                const q_is_clean = q < n_frames;
+                                const k_is_clean = k < n_frames;
+                                if (!q_is_clean && k_is_clean) {
+                                    const noisyIndex = noisyQueryIndices.indexOf(q);
+                                    cellColor = getColor(noisyIndex);
+                                } else {
+                                    cellColor = '#6b7280'; // gray for clean-clean and noisy-noisy
+                                }
+                            } else { // inference mode
+                                cellColor = '#6b7280';
+                            }
+                        }
 
-             // --- Finalize Forward Animation ---
-            function finalizeForwardAnimation(noisyIndex, targetEffIndex, finalTranslateX) {
-                 console.log("Finalizing forward animation...");
-                 try {
-                     const moving_q = svg.getElementById(`q-box-${noisyIndex}`); const moving_k = svg.getElementById(`k-box-${noisyIndex}`); const moving_q_label = svg.getElementById(`q-label-${noisyIndex}`); const moving_k_label = svg.getElementById(`k-label-${noisyIndex}`);
-                     const target_q_box = svg.getElementById(`q-box-${targetEffIndex}`); const target_k_box = svg.getElementById(`k-box-${targetEffIndex}`);
-                     if (!target_q_box || !target_k_box) { throw new Error("Cannot find target boxes for final line setting."); }
-                     const final_q_center_x = parseFloat(target_q_box.getAttribute('x')) + BOX_SIZE / 2; const final_q_line_y = parseFloat(target_q_box.getAttribute('y')) + BOX_SIZE; const final_k_center_x = parseFloat(target_k_box.getAttribute('x')) + BOX_SIZE / 2; const final_k_line_y = parseFloat(target_k_box.getAttribute('y'));
+                        maskData.push({
+                            q, k, isOn, id: `cell-${q}-${k}`, color: cellColor
+                        });
+                    }
+                    // Labels
+                    const isClean = q < n_frames;
+                    const eff_idx = q % n_frames;
+                    const latexPrefix = (mode === 'training' && !isClean) ? "\\tilde" : "";
+                    const label_idx = (mode === 'training') ? eff_idx : q;
+                    // Use 1-based indexing and Q/K for matrix labels
+                    labelData.push({
+                        type: 'q', index: q, label: `$${latexPrefix}{Q}_{${label_idx + 1}}$`
+                    });
+                    labelData.push({
+                        type: 'k', index: q, label: `$${latexPrefix}{K}_{${label_idx + 1}}$`
+                    });
+                }
+                
+                // Remove the main axis labels
+                maskLabelsGroup.selectAll('.axis-label').remove();
 
-                     if(moving_q) moving_q.style.transform = `translateX(${finalTranslateX}px)`; if(moving_k) moving_k.style.transform = `translateX(${finalTranslateX}px)`; if(moving_q_label) moving_q_label.style.transform = `translateX(${finalTranslateX}px)`; if(moving_k_label) moving_k_label.style.transform = `translateX(${finalTranslateX}px)`;
-                     const linesToFinalize = svg.querySelectorAll(`line.connection:not(.faded-out)`);
-                     linesToFinalize.forEach(line => { const fromQ = parseInt(line.getAttribute('data-from-q')); const toK = parseInt(line.getAttribute('data-to-k')); if (fromQ === noisyIndex) { line.setAttribute('x1', final_q_center_x); line.setAttribute('y1', final_q_line_y); } if (toK === noisyIndex) { line.setAttribute('x2', final_k_center_x); line.setAttribute('y2', final_k_line_y); } });
-                     moving_q?.classList.remove('moving'); moving_k?.classList.remove('moving'); moving_q_label?.classList.remove('moving'); moving_k_label?.classList.remove('moving');
+                // Draw Grid
+                maskGridGroup.selectAll('rect.mask-cell')
+                    .data(maskData, d => d.id)
+                    .join(
+                        enter => enter.append('rect')
+                            .attr('class', d => `mask-cell ${d.isOn ? 'on' : 'off'}`)
+                            .attr('x', d => MASK_PADDING + MASK_LABEL_OFFSET + d.k * cellSize)
+                            .attr('y', d => MASK_PADDING + d.q * cellSize)
+                            .attr('width', cellSize)
+                            .attr('height', cellSize)
+                            .style('opacity', 0),
+                        update => update,
+                        exit => exit.transition().duration(FADE_DURATION).style('opacity', 0).remove()
+                    )
+                    .style('--cell-color', d => d.color) // Set CSS variable for color
+                    .transition().duration(FADE_DURATION)
+                    .attr('x', d => MASK_PADDING + MASK_LABEL_OFFSET + d.k * cellSize)
+                    .attr('y', d => MASK_PADDING + d.q * cellSize)
+                    .attr('width', cellSize)
+                    .attr('height', cellSize)
+                    .attr('class', d => `mask-cell ${d.isOn ? 'on' : 'off'}`)
+                    .style('opacity', 1);
 
-                     isAnimating = false; isAnimationComplete = true;
-                     updateModeIndicator(`Inference Mode (Frame ${targetEffIndex})`); // Update indicator text
-                     console.log("Forward Animation finalized. Adding SVG reset listener.");
-                     svg.addEventListener('click', handleSvgResetClick, { once: true });
+                // Draw Tick Labels
+                maskLabelsGroup.selectAll('.mask-tick')
+                    .data(labelData, d => `${d.type}-${d.index}`)
+                    .join(
+                        enter => enter.append('foreignObject')
+                            .attr('class', 'mask-tick')
+                            .attr('width', MASK_LABEL_OFFSET)
+                            .attr('height', cellSize)
+                            .html(d => `<span class="math-host-span">${d.label}</span>`)
+                            .style('opacity', 0),
+                        update => update
+                            .html(d => `<span class="math-host-span">${d.label}</span>`)
+                            .attr('height', cellSize), // FIX: Ensure height is updated on reset
+                        exit => exit.transition().duration(FADE_DURATION).style('opacity', 0).remove()
+                    )
+                    .transition().duration(FADE_DURATION)
+                    .attr('x', d => d.type === 'k' ? MASK_PADDING + MASK_LABEL_OFFSET + d.index * cellSize + cellSize / 2 - MASK_LABEL_OFFSET / 2 : MASK_PADDING)
+                    .attr('y', d => d.type === 'q' ? MASK_PADDING + d.index * cellSize : MASK_SVG_SIZE - MASK_PADDING - MASK_LABEL_OFFSET / 1.5)
+                    .style('opacity', 1);
+                
+                typesetMathJax();
+            }
 
-                     // Retypeset MathJax for the final state
-                     console.log("Retypesetting MathJax after forward animation finalization.");
-                     typesetMathJax([svg, legendContent, logicNotesList, logicNotesExplanation]);
+            // --- Animation Functions ---
+            function startTransitionAnimation(clickedNoisyIndex) {
+                if (isAnimating) return;
+                clearAllHighlights(); // FIX: Clear any active highlights before starting animation
+                isAnimating = true;
+                isAnimationComplete = false;
+                lastAnimatedIndex = clickedNoisyIndex;
 
-                 } catch (error) { console.error("Error during finalizeForwardAnimation:", error); isAnimating = false; }
-             }
+                const n_frames = currentNFrames;
+                const target_eff_idx = clickedNoisyIndex % n_frames;
 
-            // --- Staged Reverse Animation Function ---
-             async function reverseTransitionAnimation(noisyIndex) {
-                 if (isAnimating || noisyIndex === null) return;
-                 console.log(`Starting REVERSE animation for noisy index: ${noisyIndex}`);
-                 isAnimating = true; isAnimationComplete = false;
-                 updateModeIndicator("Training Mode"); // Set indicator back immediately
-                 svg.removeEventListener('click', handleSvgResetClick);
-                 if (currentAnimationId) cancelAnimationFrame(currentAnimationId);
+                // --- Animate Main Graph ---
+                const originalBoxData = boxesData.find(d => d.id === `q-${clickedNoisyIndex}`);
+                const targetBoxData = boxesData.find(d => d.id === `q-${target_eff_idx}`);
+                const translateX = targetBoxData.x - originalBoxData.x;
+                
+                linesGroup.selectAll('line.connection')
+                    .transition().duration(FADE_DURATION)
+                    .style('opacity', d => {
+                        const fromQ = d.from_q;
+                        const toK = d.to_k;
+                        let keepLine = false;
+                        if (are_connected_inference_anim(fromQ, toK, n_frames, target_eff_idx)) {
+                            keepLine = true;
+                        } else if ((fromQ < n_frames) && (toK < n_frames) && (fromQ % n_frames < target_eff_idx) && (toK % n_frames < target_eff_idx)) {
+                            if (are_connected_training(fromQ, toK, n_frames)) {
+                                keepLine = true;
+                            }
+                        }
+                        return keepLine ? 0.8 : 0;
+                    });
+                
+                d3.selectAll('#boxes-group rect, #labels-group foreignObject')
+                    .transition().duration(FADE_DURATION).delay(STAGGER_DELAY)
+                    .style('opacity', d => {
+                        let keepBox = false;
+                        if (d.index === clickedNoisyIndex) keepBox = true;
+                        else if (d.isClean && d.eff_idx < target_eff_idx) keepBox = true;
+                        return keepBox ? 1 : 0;
+                    });
+                
+                d3.selectAll(`#q-${clickedNoisyIndex}, #k-${clickedNoisyIndex}, #label-q-${clickedNoisyIndex}, #label-k-${clickedNoisyIndex}`)
+                    .transition().duration(MOVE_DURATION).delay(FADE_DURATION + STAGGER_DELAY)
+                    .attr('transform', `translate(${translateX}, 0)`)
+                    .on('end', () => {
+                        isAnimating = false;
+                        isAnimationComplete = true;
+                    });
+                
+                linesGroup.selectAll('line.connection')
+                    .filter(d => d.from_q === clickedNoisyIndex || d.to_k === clickedNoisyIndex)
+                    .transition().duration(MOVE_DURATION).delay(FADE_DURATION + STAGGER_DELAY)
+                    .attrTween('x1', function(d) {
+                        if (d.from_q !== clickedNoisyIndex) return null;
+                        const startX = parseFloat(d3.select(this).attr('x1'));
+                        const endX = startX + translateX;
+                        return d3.interpolate(startX, endX);
+                    })
+                    .attrTween('x2', function(d) {
+                        if (d.to_k !== clickedNoisyIndex) return null;
+                        const startX = parseFloat(d3.select(this).attr('x2'));
+                        const endX = startX + translateX;
+                        return d3.interpolate(startX, endX);
+                    });
 
-                 const animationPromise = new Promise(async (resolveAnimation, rejectAnimation) => {
-                     try {
-                         const n_frames = parseInt(nFramesInput.value, 10);
-                         const target_eff_idx = noisyIndex % n_frames;
+                // --- Animate Mask ---
+                const indicesToKeep = new Set();
+                boxesData.forEach(d => {
+                    let keepBox = false;
+                    if (d.index === clickedNoisyIndex) keepBox = true;
+                    else if (d.isClean && d.eff_idx < target_eff_idx) keepBox = true;
+                    if (keepBox) indicesToKeep.add(d.index);
+                });
 
-                         // 1. Identify elements and calculate positions/transforms
-                         const moving_q = svg.getElementById(`q-box-${noisyIndex}`); const moving_k = svg.getElementById(`k-box-${noisyIndex}`); const moving_q_label = svg.getElementById(`q-label-${noisyIndex}`); const moving_k_label = svg.getElementById(`k-label-${noisyIndex}`); const target_q_box = svg.getElementById(`q-box-${target_eff_idx}`); const target_k_box = svg.getElementById(`k-box-${target_eff_idx}`);
-                         const original_q_pos = originalPositions[`q-box-${noisyIndex}`]; const original_k_pos = originalPositions[`k-box-${noisyIndex}`]; const original_q_label_pos = originalPositions[`q-label-${noisyIndex}`]; const original_k_label_pos = originalPositions[`k-label-${noisyIndex}`];
+                maskGridGroup.selectAll('rect.mask-cell')
+                    .transition().duration(FADE_DURATION)
+                    .style('opacity', d => (indicesToKeep.has(d.q) && indicesToKeep.has(d.k)) ? 1 : 0);
 
-                         if (!moving_q || !moving_k || !target_q_box || !target_k_box || !moving_q_label || !moving_k_label || !original_q_pos || !original_k_pos || !original_q_label_pos || !original_k_label_pos) {
-                            console.error("Elements/positions for reverse animation:", {moving_q, moving_k, target_q_box, target_k_box, moving_q_label, moving_k_label, original_q_pos, original_k_pos, original_q_label_pos, original_k_label_pos});
-                            throw new Error("Could not find all necessary elements/original positions for reverse animation.");
-                         }
+                maskLabelsGroup.selectAll('.mask-tick')
+                    .transition().duration(FADE_DURATION)
+                    .style('opacity', d => indicesToKeep.has(d.index) ? 1 : 0)
+                    .on('end', (d, i, nodes) => {
+                        if (i !== nodes.length -1) return; // Run only once at the end
+                        // Compact the remaining cells
+                        const sortedKeptIndices = Array.from(indicesToKeep).sort((a, b) => a - b);
+                        const newSize = sortedKeptIndices.length;
+                        const newCellSize = MASK_GRID_SIZE / newSize;
+                        const indexMap = new Map(sortedKeptIndices.map((oldIndex, newIndex) => [oldIndex, newIndex]));
 
-                         const target_q_x_pos = parseFloat(target_q_box.getAttribute('x'));
-                         const startTranslateX = target_q_x_pos - original_q_pos.x; // How much it *was* translated
-                         const current_q_center_x = target_q_x_pos + BOX_SIZE / 2; const current_k_center_x = parseFloat(target_k_box.getAttribute('x')) + BOX_SIZE / 2;
-                         const final_q_center_x = original_q_pos.x + BOX_SIZE / 2; const final_k_center_x = original_k_pos.x + BOX_SIZE / 2;
+                        maskGridGroup.selectAll('rect.mask-cell')
+                            .filter(d => indicesToKeep.has(d.q) && indicesToKeep.has(d.k))
+                            .transition().duration(MOVE_DURATION)
+                            .attr('x', d => MASK_PADDING + MASK_LABEL_OFFSET + indexMap.get(d.k) * newCellSize)
+                            .attr('y', d => MASK_PADDING + indexMap.get(d.q) * newCellSize)
+                            .attr('width', newCellSize)
+                            .attr('height', newCellSize);
 
-                         // --- Reverse Animation Stages ---
+                        maskLabelsGroup.selectAll('.mask-tick')
+                            .filter(d => indicesToKeep.has(d.index))
+                            .transition().duration(MOVE_DURATION)
+                            .attr('height', newCellSize)
+                            .attr('x', d => {
+                                const newIndex = indexMap.get(d.index);
+                                return d.type === 'k' ? MASK_PADDING + MASK_LABEL_OFFSET + newIndex * newCellSize + newCellSize / 2 - MASK_LABEL_OFFSET / 2 : MASK_PADDING;
+                            })
+                            .attr('y', d => {
+                                const newIndex = indexMap.get(d.index);
+                                return d.type === 'q' ? MASK_PADDING + newIndex * newCellSize : MASK_SVG_SIZE - MASK_PADDING - MASK_LABEL_OFFSET / 1.5;
+                            });
+                    });
+            }
 
-                         // Stage 1: Start JS Animation Loop to Move Back
-                         console.log("Reverse Stage 1: Starting JS Animation Loop (Move Back)...");
-                         const linesToAnimate = svg.querySelectorAll(`line.connection:not(.faded-out)`);
-                         const startTime = performance.now();
-                         const moveBackAnimationPromise = new Promise((resolveLoop) => {
-                             function animationStep(timestamp) { /* ... rAF loop ... */ const elapsed = timestamp - startTime; const rawProgress = Math.min(1, elapsed / MOVE_DURATION_MS); const easedProgress = easeInOutQuad(rawProgress); const currentTranslateX = startTranslateX * (1 - easedProgress); const current_q_line_x = current_q_center_x + (final_q_center_x - current_q_center_x) * easedProgress; const current_k_line_x = current_k_center_x + (final_k_center_x - current_k_center_x) * easedProgress; if(moving_q) moving_q.style.transform = `translateX(${currentTranslateX}px)`; if(moving_k) moving_k.style.transform = `translateX(${currentTranslateX}px)`; if(moving_q_label) moving_q_label.style.transform = `translateX(${currentTranslateX}px)`; if(moving_k_label) moving_k_label.style.transform = `translateX(${currentTranslateX}px)`; linesToAnimate.forEach(line => { const fromQ = parseInt(line.getAttribute('data-from-q')); const toK = parseInt(line.getAttribute('data-to-k')); const lineId = line.id; const origLinePos = originalPositions[lineId]; if (fromQ === noisyIndex) { line.setAttribute('x1', current_q_line_x); if (origLinePos) line.setAttribute('y1', origLinePos.y1); } if (toK === noisyIndex) { line.setAttribute('x2', current_k_line_x); if (origLinePos) line.setAttribute('y2', origLinePos.y2); } }); if (rawProgress < 1) { currentAnimationId = requestAnimationFrame(animationStep); } else { console.log("JS Reverse Animation loop finished."); currentAnimationId = null; resolveLoop(); } } currentAnimationId = requestAnimationFrame(animationStep);
-                         });
+            function reverseTransitionAnimation() {
+                if (isAnimating || lastAnimatedIndex === null) return;
+                isAnimating = true;
+                isAnimationComplete = false;
+                
+                // --- Animate Main Graph Back ---
+                const currentLastAnimatedIndex = lastAnimatedIndex;
+                d3.selectAll(`#q-${currentLastAnimatedIndex}, #k-${currentLastAnimatedIndex}, #label-q-${currentLastAnimatedIndex}, #label-k-${currentLastAnimatedIndex}`)
+                    .transition().duration(MOVE_DURATION)
+                    .attr('transform', `translate(${BOX_SIZE/2}, 0)`) 
+                    .on('end', function() {
+                        d3.select(this).attr('transform', null); 
+                    });
+                
+                linesGroup.selectAll('line.connection')
+                    .filter(d => d.from_q === currentLastAnimatedIndex || d.to_k === currentLastAnimatedIndex)
+                    .transition().duration(MOVE_DURATION)
+                    .attrTween('x1', function(d) {
+                        if (d.from_q !== currentLastAnimatedIndex) return null;
+                        const startX = parseFloat(d3.select(this).attr('x1'));
+                        const endX = boxesData.find(b => b.id === `q-${d.from_q}`).x + BOX_SIZE;
+                        return d3.interpolate(startX, endX);
+                    })
+                    .attrTween('x2', function(d) {
+                        if (d.to_k !== currentLastAnimatedIndex) return null;
+                        const startX = parseFloat(d3.select(this).attr('x2'));
+                        const endX = boxesData.find(b => b.id === `k-${d.to_k}`).x + BOX_SIZE;
+                        return d3.interpolate(startX, endX);
+                    });
 
-                         // Stage 2: Wait for JS Animation loop
-                         await moveBackAnimationPromise;
-                         console.log("JS Reverse Move animation promise resolved.");
-                         await sleep(STAGGER_DELAY_MS);
+                d3.selectAll('#boxes-group rect, #labels-group foreignObject, #lines-group line')
+                    .transition().duration(FADE_DURATION).delay(MOVE_DURATION - 200)
+                    .style('opacity', d => (d && d.from_q !== undefined) ? 0.8 : 1)
+                    .on('end', (d, i, nodes) => {
+                        if (i === nodes.length - 1) {
+                            isAnimating = false;
+                            lastAnimatedIndex = null;
+                            clearAllHighlights(); // FIX: Clear any lingering highlights after reset
+                        }
+                    });
 
-                         // Stage 3: Un-fade boxes and labels
-                         console.log("Reverse Stage 3: Un-fading boxes/labels...");
-                         svg.querySelectorAll('rect.box.faded-out, foreignObject.faded-out').forEach(el => { el.classList.remove('faded-out'); });
-                         await sleep(FADE_DURATION_MS + STAGGER_DELAY_MS);
+                // --- Animate Mask Back ---
+                drawMaskVisualization('training', { n_frames: currentNFrames });
+            }
 
-                         // Stage 4: Un-fade lines
-                         console.log("Reverse Stage 4: Un-fading lines...");
-                         svg.querySelectorAll('line.connection.faded-out').forEach(line => { line.classList.remove('faded-out'); });
-                         await sleep(FADE_DURATION_MS + STAGGER_DELAY_MS);
+            // --- Event Handlers ---
+            function handleBoxClick(event, d) {
+                if (isAnimating || isAnimationComplete) return;
+                if (d.type === 'q' && !d.isClean) {
+                    startTransitionAnimation(d.index);
+                }
+            }
+            
+            function handleMouseOver(event, d) {
+                if (isAnimating || isAnimationComplete) return;
+                
+                // Highlight connection lines in the main animation
+                linesGroup.selectAll('line.connection').classed('dimmed', true);
+                const lineSelector = d.type === 'q' ? `[data-from-q="${d.index}"]` : `[data-to-k="${d.index}"]`;
+                linesGroup.selectAll(lineSelector).classed('dimmed', false).classed('highlighted', true).raise();
 
-                         // Stage 5: Finalize Reset
-                         console.log("Reverse Stage 5: Finalizing reset...");
-                         resetVisualization(); // Call the instant reset to ensure clean state
-                         resolveAnimation();
+                // Highlight connected nodes in the main animation
+                boxesGroup.selectAll('.box').classed('related-highlight', related_d => {
+                    if (d.type === 'q') {
+                        return related_d.type === 'k' && are_connected_training(d.index, related_d.index, currentNFrames);
+                    } else { // d.type === 'k'
+                        return related_d.type === 'q' && are_connected_training(related_d.index, d.index, currentNFrames);
+                    }
+                });
 
-                     } catch (error) { console.error("Error during reverse animation sequence:", error); isAnimating = false; resetVisualization(); rejectAnimation(error); }
-                 });
-                 animationPromise.catch(err => { console.log("Reverse Animation promise rejected."); });
-             }
+                // Highlight mask row OR column based on hover type
+                if (d.type === 'q') {
+                    maskGridGroup.selectAll('rect.mask-cell')
+                        .filter(cell_d => cell_d.q === d.index)
+                        .classed('highlighted', true);
+                } else { // d.type === 'k'
+                    maskGridGroup.selectAll('rect.mask-cell')
+                        .filter(cell_d => cell_d.k === d.index)
+                        .classed('highlighted', true);
+                }
+            }
 
-             // --- Reset Function (Handles Instant Reset) ---
-             function resetVisualization() {
-                 console.log("Resetting visualization to initial state.");
-                 if (currentAnimationId) { cancelAnimationFrame(currentAnimationId); currentAnimationId = null; }
-                 isAnimating = false; isAnimationComplete = false; lastAnimatedIndex = null;
-                 updateModeIndicator("Training Mode");
-                 svg.removeEventListener('click', handleSvgResetClick);
-                 svg.querySelectorAll('.moving, .faded-out').forEach(el => { el.classList.remove('moving', 'faded-out'); el.style.transform = ''; el.style.transition = ''; });
-                 for (const id in originalPositions) { const element = svg.getElementById(id); const pos = originalPositions[id]; if (element && pos) { if ('x1' in pos) { element.setAttribute('x1', pos.x1); element.setAttribute('y1', pos.y1); element.setAttribute('x2', pos.x2); element.setAttribute('y2', pos.y2); } } }
-                 drawVisualization(true); // Force redraw
-                 renderLegendAndNotes(); // Re-render legend/notes
-                 // Typeset AFTER draw and render are complete
-                 typesetMathJax([svg, legendContent, logicNotesList, logicNotesExplanation]);
-             }
+            function handleMouseOut() {
+                if (isAnimating || isAnimationComplete) return;
+                clearAllHighlights();
+            }
 
-             // --- SVG Click Handler for Reset ---
-             function handleSvgResetClick(event) { /* ... */ if (event.target === svg || event.target.id === 'lines-group' || event.target.id === 'boxes-group' || event.target.id === 'labels-group') { console.log("SVG background click detected."); if (isAnimationComplete && !isAnimating && lastAnimatedIndex !== null) { console.log("Triggering reverse animation."); reverseTransitionAnimation(lastAnimatedIndex); } else { console.log("Reverse animation prevented: Not complete, animating, or no index."); if (isAnimationComplete) svg.addEventListener('click', handleSvgResetClick, { once: true }); } } else { console.log("Click on element, re-adding SVG reset listener."); if(isAnimationComplete) svg.addEventListener('click', handleSvgResetClick, { once: true }); } }
+            function clearAllHighlights() {
+                // Un-highlight all elements
+                linesGroup.selectAll('line.connection').classed('dimmed', false).classed('highlighted', false);
+                boxesGroup.selectAll('.box').classed('related-highlight', false);
+                maskGridGroup.selectAll('rect.mask-cell').classed('highlighted', false);
+            }
 
-            // --- Attach Event Listeners ---
-             if (svg) { svg.addEventListener('mouseover', handleMouseOver); svg.addEventListener('mouseout', handleMouseOut); }
-             if (nFramesInput) nFramesInput.addEventListener('input', resetVisualization);
-             if (resetButton) { resetButton.addEventListener('click', () => { console.log("Reset button clicked."); if (isAnimationComplete && !isAnimating && lastAnimatedIndex !== null) { reverseTransitionAnimation(lastAnimatedIndex); } else if (!isAnimating) { resetVisualization(); } else { console.log("Reset prevented: Animating."); } }); }
-             if (svg) { svg.addEventListener('click', (event) => { /* ... animation trigger ... */ if (isAnimating || isAnimationComplete) return; const target = event.target; if (target && target.matches && target.matches('#boxes-group rect.box[data-type="q"]') && target.getAttribute('data-is-clean') === 'false') { console.log("Noisy query box clicked."); const index = parseInt(target.getAttribute('data-index')); startTransitionAnimation(index); } }); }
+            function handleSvgResetClick(event) {
+                if (event.target === svgAnim.node()) {
+                    if (isAnimationComplete && !isAnimating) {
+                        reverseTransitionAnimation();
+                    }
+                }
+            }
 
-            // --- Initial Setup ---
-            setTimeout(() => {
-                console.log("Running delayed initial setup...");
-                setInitialThemeIcon(); // Set theme first
-                renderLegendAndNotes(); // Render notes (NO typesetting yet)
-                drawVisualization(); // Initial draw (NO typesetting yet)
-                // Typeset everything AFTER both draw and notes render are complete
-                typesetMathJax([svg, legendContent, logicNotesList, logicNotesExplanation]);
-                updateModeIndicator("Training Mode"); // Set initial mode text
-                console.log("Initial setup complete.");
-            }, 100);
+            function typesetMathJax() {
+                if (window.MathJax && MathJax.startup?.promise) {
+                    MathJax.startup.promise.then(() => MathJax.typesetPromise());
+                }
+            }
 
-
-        }); // End of DOMContentLoaded listener
+            // --- Initial Setup and Event Listeners ---
+            svgAnim.on('click', handleSvgResetClick);
+            initializeVisualizations();
+        });
     </script>
-
 </body>
 </html>
