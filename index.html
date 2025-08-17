@@ -44,12 +44,13 @@
   <d-byline>
     <div class="byline grid">
       <div class="authors-affiliations grid">
-        <h3>Author</h3>
+        <h3>Authors</h3>
         <h3>Date</h3>
         
           <p class="author"><a class="name" href="https://github.com/Francesco215">Francesco Sacco</a></p>
           <p class="affiliation">August 17th 2025</p>
         
+          <p class="author"><a class="name" href="https://github.com/Francesco215">Matteo Peluso</a></p>
         
         
       </div>
@@ -165,9 +166,9 @@
         <blockquote>
           “What if we only calculate the loss on the top 0.5% of pixels with the highest error?”
         </blockquote>
-        At first, I hesitated — it felt like smuggling knowledge into the loss function. But in the end, the one who needed convincing wasn’t me, it was the computer. So we tried it.<br><br>
+        At first, I hesitated — it felt like smuggling knowledge into the loss function. But in the end, the one who needed convincing wasn’t me, it was the computer. So he tried it.<br><br>
 
-        And it worked! Beautifully!<br>
+        And it worked! Beautifully so!<br>
       </p>
       <figure>
         <img src="website/images/working-VAE.png">
@@ -178,8 +179,69 @@
         <p>
         For the first time, the VAE produced meaningful reconstructions. With that solved, I could finally move on to building the world model.
         </p>
-      <d-section>The World Model</d-section>
       </div>
+      <d-section>The World Model</d-section>
+      <p>
+        With frame compression solved, I needed next-frame generation.<br><br>
+
+        To do next-frame generation I math-ed out what would happen if next-token prediction and diffusion modelling had a child.
+
+        Basically, Diffusion models estimate the score function
+
+        $$
+          \mathbb s(x,\sigma)=-\mathbb\nabla_x \log p(x,\sigma)
+        $$
+
+        and LLMs work estimate the probability of the next token given the past.
+        $$
+          \textrm{LLM}(x_i,\dots,x_0)=-\log p(x_{i+1}|x_i,\dots,x_0)
+        $$
+
+        So to generate videos autoregressively, you estimate the score conditioned on previous frames. It’s essentially image generation conditioned on history.
+
+        $$
+          \mathbb s(x_i,\sigma;x_{i-1},\dots,x_0)=-\mathbb\nabla_x \log p(x_i|\sigma;x_{i-1},\dots,x_0)
+        $$
+      </p>
+
+      <d-subsection>The Real Challange: Sample Efficiency</d-subsection>
+      <div>
+        <figure class="l-side">
+          <img src="website/images/Sample-efficiency-transformer.png">
+          <figcaption>
+          TODO: edit this image and write the caption
+          </figcaption>
+        </figure>
+      <p>
+        The real challenge wasn’t just building the model — it was training it in a sample-efficient way. Without that, there was no chance of scaling to long sequences.<br><br>
+
+        But why does sample efficiency matter?<br><br>
+
+        When I first learned about language modeling, I made a rookie mistake: I trained a model to predict only the last token in a sentence. The result? It was shit. The model didn’t learn a thing.<br><br>
+
+        Why? Because transformers don’t make just one prediction per forward pass — they make one prediction per token. If your sequence has 128 tokens, that’s 128 supervised training signals, not just one. That efficiency is the difference between a working model and a random number generator.<br><br>
+
+        So for Oniris, sample efficiency wasn’t optional — it was non-negotiable.<br><br>
+
+        After some thinking, I figured out "<i>the trick</i>":
+        <ul>
+          <li>Duplicate the sequence.</li>
+
+          <li>Add noise to one copy.</li>
+
+          <li>Keep the other copy clean as context.</li>
+        </ul>
+
+      </p>
+    </div>
+    <figure class="l-page-outset">
+      <svg id="attention-svg"></svg>
+    </figure>
+    <figcaption>
+      This interactive visualization explains the sample-efficient training strategy used in Oniris. Hover over any box to see its connections. Click on a noisy query to see how one step of autoregressive inference works and how it relates with a step in the training mode.
+    </figcaption>
+
+
   </d-article>
   
   
@@ -189,26 +251,6 @@
   <d-appendix>
     <h3>Acknowledgements</h3>
     <p>Thanks to Mikalai Shevko for the help in fixing bugs in the website and for the help in making the animations for the video abstract</p>
-    <h3>
-      Citation
-    </h3>
-    <p>For attribution in academic contexts, please cite this work as</p>
-    <pre class="citation-short">
-      Sacco, et al., "Requirements for self organization", zenodo, 2023
-    </pre>
-    <p>
-      BibTeX citation
-    </p>
-    <pre class="citation-short">
-      @article{sacco2023Requirements
-        author = {Sacco, Francesco and Sakthivadivel, Dalton and Levin, Michael},
-        title= {Requirements for Self Organization},
-        journal = {Zenodo},
-        year = {2023},
-        doi = {10.5281/zenodo.8416764},
-        url = {francesco215.github.io/Language_CA/}
-      }
-    </pre> 
   </d-appendix>
   
   
@@ -216,6 +258,7 @@
   
   <d-bibliography src="website/bibliography.bib"></d-bibliography>
   <script src="website/scripts/VAE.js"></script>
+  <script src="website/scripts/attention.js"></script>
 
   
   <script rel="text/javascript" src="website/sourcecode.js"> </script>
