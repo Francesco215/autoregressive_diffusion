@@ -325,3 +325,12 @@ svg#graph {
 #VAE-svg .connection.highlighted.cross-group {
     stroke: #F97316 !important;
 }
+
+d-article ul {
+  margin-top: 0.0em;
+  margin-bottom: 1.em;
+}
+
+d-article ul li {
+  margin-bottom: 0.0em;
+}

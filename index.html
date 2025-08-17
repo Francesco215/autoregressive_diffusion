@@ -240,6 +240,24 @@
     <figcaption>
       This interactive visualization explains the sample-efficient training strategy used in Oniris. Hover over any box to see its connections. Click on a noisy query to see how one step of autoregressive inference works and how it relates with a step in the training mode.
     </figcaption>
+    <p><br>
+    Using this trick i was able to:
+      <ul>
+        <li>Make the model sample-efficient during training</li>
+        <li>Squeeze every drop of compute out of the GPU during training thanks to Flex-Attention</li>
+        <li>During Inference use a generalized KV-caching to substantially speed up the generation time</li>
+      </ul>
+    But did it work? YES!
+    </p>
+    <p>
+      After ~4h of training I got the model to simulate the lunar lander gym environment!<br><br>
+
+      And with that the Oniris architecture was now ready and tested! I was so excited! I was ready to scale up!<br><br>
+
+      I you want to know more on how it works, check out the repository
+    </p>
+
+
 
 
   </d-article>
