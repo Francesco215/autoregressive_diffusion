@@ -1,0 +1,223 @@
+<!doctype html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=1200">
+    <script src="website/scripts/distill.pub_template.v2.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <link rel="stylesheet" href="website/style.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.13.18/dist/katex.min.css" integrity="sha384-zTROYFVGOfTw7JV7KUu8udsvW2fx4lWOsCEDqhBreBwlHI4ioVRtmIvEThzJHGET" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.13.18/dist/katex.min.js" integrity="sha384-GxNFqL3r9uRJQhR+47eDxuPoNE7yLftQM8LcxzgS4HT73tp970WS/wV5p8UzCOmb" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.13.18/dist/contrib/auto-render.min.js" integrity="sha384-vZTG03m+2yp6N6BNi5iM4rW4oIwk5DfcNdFfxkk9ZWpDriOkXX8voJBFrAO7MpVl" crossorigin="anonymous"></script>
+    <!-- Google tag (gtag.js) -->
+
+    <script >
+        document.addEventListener("DOMContentLoaded", function() {
+            renderMathInElement(document.body, {
+                // customised options
+                // • auto-render specific keys, e.g.:
+                delimiters: [
+                    {left: '$$', right: '$$', display: true},
+                    {left: '$', right: '$', display: false},
+                    {left: '\\(', right: '\\)', display: false},
+                    {left: '\\[', right: '\\]', display: true}
+                ],
+                // • rendering keys, e.g.:
+                throwOnError : false
+            });
+        });
+    </script>
+
+</head>
+
+
+  <d-front-matter>
+    <script type="text/json">{"authors": []}</script>
+  </d-front-matter>
+
+  <d-title> 
+    <h1>Oniris</h1>
+    <p>
+        A small story of a big dream<br>
+    </p>
+    
+  </d-title>
+  <d-byline>
+    <div class="byline grid">
+      <div class="authors-affiliations grid">
+        <h3>Author</h3>
+        <h3>Date</h3>
+        
+          <p class="author"><a class="name" href="https://github.com/Francesco215">Francesco Sacco</a></p>
+          <p class="affiliation">August 17th 2025</p>
+        
+        
+        
+      </div>
+      <div></div>
+      <div>
+        <h3>DOI</h3>
+          <p>None</p>
+      </div>
+    </div>
+  </d-byline>
+
+  <d-article>
+  
+    <div target_audience="n" style="display: block;">
+      <d-section id="abs">Where it all started: The Humble Bee</d-section>
+
+      <p>
+        After leaving my job, I was officially unemployed — but don’t worry, that just gave me more time to train models. I’m already training to be a disappointment, so I figured I might as well train something useful too.
+      </p>
+       <figure class="l-side">
+          <img src="website/images/vr-bee.png">
+          <figcaption>
+            Apis mellifera, also known as honey bee, with a custom made VR headset. It allows our little user to learn how to fly without bumping around.<br><br>
+            A bee brain has less compute than modern smarphone chips. Bees also don’t need extended periods of training. A brief exposure to the environment equips them for life. Even if you assume that part of their ability is encoded in their DNA, it's worth noting that a bee’s genome is equivalent to 1.2 Gb data. That’s not a lot of data.
+          </figcaption>
+        </figure>
+      <p>
+        Originally, I wanted to build an AI for drones that’s as smart as a bee. From first principles, this seemed doable: bees have tiny brains, yet after just a brief exposure to the real world they can navigate reliably without ever getting lost.<br>
+        In ML terms, this problem should require little compute and little data (in principle!).
+      </p>
+      <p>
+        But I needed an environment to train the RL policy in. Smashing real drones wasn’t an option, and there were no good off-the-shelf world models to train in. So I had to make one.<br><br>
+
+        In this blog post, I’ll talk about building that virtual environment. There won’t be any RL yet — the Bee AI has to wait for now.
+      </p>
+    </div>
+
+
+    <d-section>How to build a world model</d-section>
+      <div>
+        <figure class="l-side">
+          <img src="website/images/edm2.png">
+          <figcaption>
+            Graph showing the EDM2 models compared to other models. I didn't have a lot of money and I needed to be really resource efficient, this is why i chose this architecture. Image taken from <d-cite key="karras2024analyzing"></d-cite>
+          </figcaption>
+        </figure>
+        <p>
+          To build a world model you need:
+          <ul>
+            <li>A variational autoencoder (VAE)</li>
+            <li>An autoregressive video diffusion model</li>
+          </ul>
+          The VAE compresses video into a smaller representation, and the autoregressive diffusion model generates the actual video.</p>
+
+        <p>
+          When I started this project (around February), the hottest world modeling papers were DIAMOND<d-cite key="alonso2024diffusion"></d-cite> and GameNGen<d-cite key="valevski2024diffusion"></d-cite>. But both suffered from extreme amnesia, so I decided to try something better.<br><br>
+
+          It wasn’t going to be easy. I knew Google was working on the same problem. I knew I was entering a strength competition against a titan. I knew I would lose — but I also knew I’d come out stronger than when I started.<br><br>
+
+          As a foundation, I chose EDM2<d-cite key="karras2024analyzing"></d-cite>, my favorite image diffusion paper. It dominated the Pareto frontier at the time, and I set out to generalize it into an autoregressive video generator.<br><br>
+
+          Oh, and I needed a name for the project. I called it Oniris.
+        </p>
+      </div>
+
+    <d-section>The first version of the VAE</d-section>
+      <div>
+        <p>
+          I didn’t really want to train a VAE. Ideally, I’d just use an off-the-shelf one and focus on the diffusion part. But most video VAEs I found were… weird. None of them did exactly what I needed.<br><br>
+
+          I needed a VAE that:
+          <ul>
+          <li>Compressed spatially and across channels, similar to the Stable Diffusion VAE</li>
+          <li>Compressed temporally as well</li>
+          <li>Supported activation caching to handle arbitrarily long videos</li>
+          </ul>
+
+          I also came across a paper arguing that video VAEs should be group causal<d-cite key="wu2025improved"></d-cite>. The reason is that you can't really do a fully causal VAE that has non-zero time compression. I have attached below a nice interactive graph showing the difference between a causal VAE and a group casual VAE AHH WRITE THIS BETTER.<br>
+          Problem was, I didn’t like the authors’ code. So, as if the project wasn’t already time-consuming enough, I decided to write my own implementation from scratch.
+        </p>
+        <figure>
+            <svg id="VAE-svg"></svg>
+            <div class="vae-controls">
+                <button id="vae-toggle-button" class="colab-root">Switch to Causal</button>
+            </div>
+          
+            <figcaption>
+              An interactive visualization of the deep, group-causal VAE architecture. The encoder (bottom) compresses the input into a latent space, and the decoder (top) reconstructs it. Hover over any node to see its causal path.<br>
+              Even when the network tries to be fully causal it is unable to do so because of the time-compression. The group-causal VAE is causal in latent space and group-casual in pixel space. 
+            </figcaption>
+          </figure>
+      </div>
+    <div>
+      <figure class="l-side">
+        <img src="website/images/old-lander.png">
+        <figcaption>
+          The fuzzines of the lander seemed impossible to remove. It was present no matter che choice of hyperparameters or the choice of $L_1$ vs $L_2$ loss. It was so frustrating
+        </figcaption>
+      </figure>
+      <d-subsection>Nothing is Ever Simple</d-subsection>
+      <p>
+        I thought it’d be smart to test my world modeling approach on a “simple” environment. So I fired up Gymnasium and tried compressing Lunar Lander videos.<br><br>
+        Yeah, not so simple.<br><br>
+
+        Turns out when your dataset is 98% black background and a white floor, you can get a tiny loss and a bad reconstruction at the same time.
+      </p>
+
+      <d-subsection>The Trick</d-subsection>
+      <p>
+        I spent weeks trying to get it working without any hacks, but the local minima were just too good.<br><br>
+
+        That’s when I met Matteo online. He loved the project and jumped in to help. Unlike me, he wasn’t too bothered by Sutton’s Bitter Lesson<d-cite key="sutton2019bitter"></d-cite> (the idea that brute force often beats clever hacks). Instead, he suggested:
+        <blockquote>
+          “What if we only calculate the loss on the top 0.5% of pixels with the highest error?”
+        </blockquote>
+        At first, I hesitated — it felt like smuggling knowledge into the loss function. But in the end, the one who needed convincing wasn’t me, it was the computer. So we tried it.<br><br>
+
+        And it worked! Beautifully!<br>
+      </p>
+      <figure>
+        <img src="website/images/working-VAE.png">
+        <figcaption>
+          Quality of the VAE reconstruction if we only calculate the loss on the top 0.5% of pixels with the highest error
+        </figcaption>
+      </figure>
+        <p>
+        For the first time, the VAE produced meaningful reconstructions. With that solved, I could finally move on to building the world model.
+        </p>
+      <d-section>The World Model</d-section>
+      </div>
+  </d-article>
+  
+  
+  
+  
+  
+  <d-appendix>
+    <h3>Acknowledgements</h3>
+    <p>Thanks to Mikalai Shevko for the help in fixing bugs in the website and for the help in making the animations for the video abstract</p>
+    <h3>
+      Citation
+    </h3>
+    <p>For attribution in academic contexts, please cite this work as</p>
+    <pre class="citation-short">
+      Sacco, et al., "Requirements for self organization", zenodo, 2023
+    </pre>
+    <p>
+      BibTeX citation
+    </p>
+    <pre class="citation-short">
+      @article{sacco2023Requirements
+        author = {Sacco, Francesco and Sakthivadivel, Dalton and Levin, Michael},
+        title= {Requirements for Self Organization},
+        journal = {Zenodo},
+        year = {2023},
+        doi = {10.5281/zenodo.8416764},
+        url = {francesco215.github.io/Language_CA/}
+      }
+    </pre> 
+  </d-appendix>
+  
+  
+  
+  
+  <d-bibliography src="website/bibliography.bib"></d-bibliography>
+  <script src="website/scripts/VAE.js"></script>
+
+  
+  <script rel="text/javascript" src="website/sourcecode.js"> </script>
+
+</body>
