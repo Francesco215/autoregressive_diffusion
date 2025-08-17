@@ -274,3 +274,54 @@ svg#graph {
   padding-top: 20px ;
   border-radius: 3px;
 }
+
+
+/* Styles for VAE Visualization */
+#VAE-svg {
+    background-color: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+    width: 100%;
+    height: auto;
+    display: block; /* Ensures proper layout */
+}
+
+.vae-controls {
+    display: flex;
+    justify-content: center;
+    margin-top: 1rem;
+}
+
+/* Scoped D3 styles */
+#VAE-svg .box {
+    stroke: #9CA3AF;
+    stroke-width: 1;
+    cursor: pointer;
+    transition: filter 0.2s ease-in-out, stroke 0.2s ease-in-out, stroke-width 0.2s ease-in-out;
+}
+
+#VAE-svg .box.highlighted {
+    filter: brightness(1.15);
+    stroke: #ef4444 !important;
+    stroke-width: 2 !important;
+}
+
+#VAE-svg .connection {
+    stroke-width: 1.5;
+    transition: opacity 0.2s ease-in-out, stroke 0.2s ease-in-out, stroke-width 0.2s ease-in-out;
+    opacity: 0.5;
+}
+
+#VAE-svg .dimmed {
+    opacity: 0.05 !important;
+}
+
+#VAE-svg .connection.highlighted {
+    opacity: 1 !important;
+    stroke-width: 2.5 !important;
+    stroke: #ef4444 !important;
+}
+
+#VAE-svg .connection.highlighted.cross-group {
+    stroke: #F97316 !important;
+}
