@@ -352,7 +352,7 @@
       <figure class="l-side">
         <img src="website/images/shit-vae.png">
         <figcaption>
-          What happened when i tried to train a VAE with 96x compression. Pure garbage.
+          Training results of the VAE with 96x compression. Pure garbage.
         </figcaption>
       </figure>
       <p>
@@ -364,10 +364,42 @@
       <img src="website/images/valley-of-despair.png">
     </figure>
     <figcaption>
-      Above, the commit graph of <b>The Valley of Despair</b>. The sheer amount of dead ends is, frankly, depressing
+      The commit graph during <b>The Valley of Despair</b>. The sheer amount of dead ends is, frankly, defeating.
     </figcaption>
+    <d-subsection>Taking a break</d-subsection>
+    <p>
+      I realised I was going nowhere, and so I chose to take a month of break to reset.<br><br>
+      During that time, Matteo and started a small business called <a href="https://noteician.com/" style="color: teal; font-weight: bold;">Noteician</a>. We even got our first customers (check it out!).<br><br>
+
+      During that month I tried to resist the urge to go back to work on Oniris, but then, one night something surreal pulled me back to the project…
+    </p>
+    <div style="margin-bottom: 10em"></div>
+
+    <d-section>The Dream</d-section>
+    <p>
+      One night, I dreamt of deriving the Mean Squared Error (MSE) loss.<br>
+      In the dream, I saw that its derivation hinged on the assumption of constant data uncertainty, where the only goal is to estimate the mean.<br>
+      Isn't this too restrictive? Why shouldn't our model also account for the uncertainty itself? Surely, there had to be a way.<br><br>
+      Then I remembered that for classification tasks the cross-entropy loss implicitly handles uncertainty. This sparked an idea:
+      <blockquote>
+        Could I achieve the same for regression by calculating the negative log-likelihood of a Gaussian distribution, but with a non-constant standard deviation?
+      </blockquote>
+      When I woke up I jumped to my desk, took pen and paper, wrote the gaussian probability distribution, and calculated the loss function.
+    </p>
+    <d-subsection>The Theory</d-subsection>
+    <p>
+      Suppose you have some datapoints $X_i$ and $Y_i$ we want to predict the ground truth probability $p(Y|X)$.
+
+      
+      $$
+
+      $$
+    </p>
+
+
 
   </d-article>
+
   
   
   
