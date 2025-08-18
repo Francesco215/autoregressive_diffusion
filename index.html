@@ -72,8 +72,8 @@
        <figure class="l-side">
           <img src="website/images/vr-bee.png">
           <figcaption>
-            Apis mellifera, also known as honey bee, with a custom made VR headset. It allows our little user to learn how to fly without bumping around.<br><br>
-            A bee brain has less compute than modern smarphone chips. Bees also don’t need extended periods of training. A brief exposure to the environment equips them for life. Even if you assume that part of their ability is encoded in their DNA, it's worth noting that a bee’s genome is equivalent to 1.2 Gb data. That’s not a lot of data.
+            Apis mellifera, commonly known as honey bee, with a custom made VR headset. It allows our little user to learn how to fly without bumping around.<br><br>
+            A bee brain has less compute than modern smarphone chips. Bees also don’t need extended periods of training. Even if you assume that part of their ability is encoded in their DNA, it's worth noting that a bee’s genome is equivalent to 1.2 Gb data. That’s not a lot of data.
           </figcaption>
         </figure>
       <p>
@@ -81,7 +81,7 @@
         In ML terms, this problem should require little compute and little data (in principle!).
       </p>
       <p>
-        But I needed an environment to train the RL policy in. Smashing real drones wasn’t an option, and there were no good off-the-shelf world models to train in. So I had to make one.<br><br>
+        But I needed an environment to train the RL policy in. Smashing real drones wasn’t an option, and there were no good off-the-shelf world models to train in. So I had to make one.<br><br><br>
 
         In this blog post, I’ll talk about building that virtual environment. There won’t be any RL yet — the Bee AI has to wait for now.
       </p>
@@ -259,7 +259,7 @@
 
       And with that the Oniris architecture was now ready and tested! I was so excited! I was ready to scale up!<br><br>
 
-      I you want to know more on how it works, check out the repository
+      If you want to know more on how it works, check out <a href="https://github.com/Francesco215/autoregressive_diffusion/">the repository</a>
     </p>
 
 
@@ -369,9 +369,9 @@
     <d-subsection>Taking a break</d-subsection>
     <p>
       I realised I was going nowhere, and so I chose to take a month of break to reset.<br><br>
-      During that time, Matteo and started a small business called <a href="https://noteician.com/" style="color: teal; font-weight: bold;">Noteician</a>. We even got our first customers (check it out!).<br><br>
+      During that time, Matteo and I started a small business called <a href="https://noteician.com/" style="color: teal; font-weight: bold;">Noteician</a>. We even got our first customers (check it out!).<br><br>
 
-      During that month I tried to resist the urge to go back to work on Oniris, but then, one night something surreal pulled me back to the project…
+      I tried to resist the urge to go back to work on Oniris, but then, one night something surreal pulled me back to the project…
     </p>
     <div style="margin-bottom: 20em"></div>
 
@@ -388,13 +388,65 @@
     </p>
     <d-subsection>The Theory</d-subsection>
     <p>
-      Suppose you have some datapoints $X_i$ and $Y_i$ we want to predict the ground truth probability $p(Y|X)$.
+      Suppose we have some datapoints $X_i$ and $Y_i$ we want to predict the ground truth probability $p(y|x)$.<br><br>
 
-
+      We don't have direct access to $p$, so we are going to approximate $p(y|x)$ with $q(y|x)$ where is a gaussian where the mean and the variance are learned functions $\mu_\theta(x)$ and $\sigma_\phi(x)$
+      $$
+        q(y|x) = \frac {1}{\sqrt{2 \pi \sigma_\phi^2}} \exp  -\frac{(y-\mu_\theta)^2}{2\sigma_\phi^2}
+      $$
+      The loss is simply going to be the negative log likelyhood of $q(y|x)$
+      $$
+        L = -\log q(y|x)  = -\log\left[\frac {1}{\sqrt{2 \pi \sigma_\phi^2}} \exp  -\frac{(y-\mu_\theta)^2}{2\sigma_\phi^2}\right]
       $$
 
+      Doing some simple calculations, get that the loss is equal to
+
+      $$
+       L = \log \sigma_\phi + \frac{(y-\mu_\theta)^2}{2\sigma_\phi^2} + \textrm{const}
+      $$
+      As a sanity check, you can see that if we consider $\sigma_\phi$ to be a constant, we recover the $L_2$ loss. <br><br>
+
+      Now it comes the interesting part:<br>
+      If we want to find the minimum with respect to $\sigma_\phi$ we just set it's derivative to zero
+      $$
+        \frac{\partial L}{\partial \sigma_\phi} = \frac 1{\sigma_\phi} - \frac {(y-\mu_\theta)^2}{\sigma_\phi^3}=0
+      $$
+      And we get that the loss is at the minimum when
+      $$
+        \sigma_\phi^2 = (y-\mu_\theta)^2
+      $$
+      This means that $\sigma_\phi$ learns to estimate the expected prediction error!
+    <div>
+      On the other end, if we calculate the gradient with respect to $\mu_\theta$ we get
+      $$
+        \frac{\partial L}{\partial \mu_\theta} = \frac{y-\mu_\theta}{\sigma_\phi^2}
       $$
     </p>
+    <figure class="l-side">
+      <img src="website/images/GNLLL.png">
+      <figcaption>
+        Dummy dataset where I tested this loss function. As you can see the model manages to predict perfectly the mean and variance of the datapoints.<br>
+        <a href="https://colab.research.google.com/drive/1PNxZEpsl9OtpUM9nT56ZAEh7bNVtkQiq?usp=sharing">I've written a colab if you want to check it out.</a> Be careful, there are several local minima, so you might need to run the training several times
+
+      </figcaption>
+    </figure> 
+    <p>
+      This means that the gradient to find the expected value of $y$ is exactly the same as the one of the $L_2$ loss, but here each sample is weighted by the expect sample error $\sigma_\phi$ — Which is exactly what you want!<br><br>
+
+
+
+    </p>
+    <d-subsection>Sanity check</d-subsection>
+    <p>
+      To perform a sanity check, I ran a quick linear regression where the standard deviation of the samples was not constant. My goal was to see if a model trained with this new loss function could correctly infer the changing error band. And it did it!<br><br>
+      After some research it seems that this method was already discovered<d-cite key="nix1994estimating"></d-cite> and it even had a <a href="https://docs.pytorch.org/docs/stable/generated/torch.nn.GaussianNLLLoss.html">Pytorch page</a>.<br><br>
+      Curiously, this approach doesn't seem to be used in the image generation literature. I think I'm the first one to try it. With this renewed sense of purpose, I was ready to dive back in.<br><br>
+      I started reading again tons and tons and tons of stuff. At some point I found <a href="https://wayfarerlabs.ai/blog/training-diffusable-autoencoders">this amazing blog post</a> by <a href="https://wayfarerlabs.ai/">OpenWorldLabs</a> that explained how to train diffusable autoencoders.<br>
+      It was a gold mine of information, so I implemented lots of stuff that was in there as well!<d-cite key="chen2024deep, hacohen2024ltx"></d-cite> <br><br>
+      Finally, after blood sweat and tears, I now have a 96x compression VAE and just look at the results:
+    </p>
+    
+    </div>
 
 
 
