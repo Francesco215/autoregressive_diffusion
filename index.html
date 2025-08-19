@@ -49,7 +49,7 @@
           <p class="author"><a class="name" href="https://github.com/Francesco215">Francesco Sacco</a></p>
           <p class="affiliation">August 17th 2025</p>
         
-          <p class="author"><a class="name" href="https://github.com/Francesco215">Matteo Peluso</a></p>
+          <p class="author"><a class="name" href="https://github.com/the-puzzler">Matteo Peluso</a></p>
         
         
       </div>
@@ -404,8 +404,10 @@
       $$
        L = \log \sigma_\phi + \frac{(y-\mu_\theta)^2}{2\sigma_\phi^2} + \textrm{const}
       $$
-      As a sanity check, you can see that if we consider $\sigma_\phi$ to be a constant, we recover the $L_2$ loss. <br><br>
-
+      As a sanity check, you can see that if we consider $\sigma_\phi$ to be a constant, we recover the $L_2$ loss.
+    </p>
+    <d-subsection>Properties of this Loss</d-subsection>
+    <p>
       Now it comes the interesting part:<br>
       If we want to find the minimum with respect to $\sigma_\phi$ we just set it's derivative to zero
       $$
@@ -431,25 +433,56 @@
       </figcaption>
     </figure> 
     <p>
-      This means that the gradient to find the expected value of $y$ is exactly the same as the one of the $L_2$ loss, but here each sample is weighted by the expect sample error $\sigma_\phi$ — Which is exactly what you want!<br><br>
-
-
-
+      This means that the gradient to find the expected value of $y$ is exactly the same as the one of the $L_2$ loss, but here each sample is weighted by the expect sample error $\sigma_\phi$ — Which is exactly what you want!
+      <d-footnote>Small footnote about computational stability:<br><br>The loss function as written like this $$L = \log \sigma_\phi + \frac{(y-\mu_\theta)^2}{2\sigma_\phi^2}$$ can have stability issues because of $\log\sigma$ and $\sigma^{-2}$ terms. This goes away by making the network predict the logvar $l_\phi$ $$l_\phi = \log \sigma^2_\phi$$ Substituiting this into the loss equation we get $$L = l_\phi + (y-\mu_\theta)^2e^{-l_\phi}$$ This is stable both numerically and during training </d-footnote>
     </p>
     <d-subsection>Sanity check</d-subsection>
     <p>
       To perform a sanity check, I ran a quick linear regression where the standard deviation of the samples was not constant. My goal was to see if a model trained with this new loss function could correctly infer the changing error band. And it did it!<br><br>
-      After some research it seems that this method was already discovered<d-cite key="nix1994estimating"></d-cite> and it even had a <a href="https://docs.pytorch.org/docs/stable/generated/torch.nn.GaussianNLLLoss.html">Pytorch page</a>.<br><br>
-      Curiously, this approach doesn't seem to be used in the image generation literature. I think I'm the first one to try it. With this renewed sense of purpose, I was ready to dive back in.<br><br>
+      After some research, it seems that this method was already discovered<d-cite key="nix1994estimating"></d-cite> and it even had a <a href="https://docs.pytorch.org/docs/stable/generated/torch.nn.GaussianNLLLoss.html">Pytorch page</a>.<br><br>
+      Curiously, this approach doesn't seem to be used in the image generation literature. I think I'm the first one to try it! With this renewed sense of purpose, I was ready to dive back in.<br><br>
+    </p>
+    <d-section>Back to the VAE</d-section>
+    <p>
       I started reading again tons and tons and tons of stuff. At some point I found <a href="https://wayfarerlabs.ai/blog/training-diffusable-autoencoders">this amazing blog post</a> by <a href="https://wayfarerlabs.ai/">OpenWorldLabs</a> that explained how to train diffusable autoencoders.<br>
       It was a gold mine of information, so I implemented lots of stuff that was in there as well!<d-cite key="chen2024deep, hacohen2024ltx"></d-cite> <br><br>
-      Finally, after blood sweat and tears, I now have a 96x compression VAE and just look at the results:
+      Finally, after blood sweat and tears, I now have a 96x compression VAE and just look at the results: <i>*dramatic music*</i>
     </p>
-    
     </div>
 
+    <figure>
+      <img src="website/images/logvar-VAE.png">
+      <figcaption>
+        The first row represents the original frames $y$, the second row the reconstructed image $\mu_\theta$ and the third row the uncertainty $\sigma_\phi$.<br>
+        The quality of this new VAE is substantially better! As you can see the areas where the model is less precise (mainly some edges and tree leafs) are highlighed in the uncertanty heatmap
+      </figcaption>
+    </figure> 
+    <p>
+      It’s really good! Moreover the because of the fact that the errors are weighted by the predicted confidence $\sigma_\phi$, the learning process pushes the model to follow more the auxiliary losses (LPIPS and GAN loss) in the areas where there is high uncertainty, and it forces the model to follow the $L_2$ loss when $\sigma_\phi$ is low.
+    </p>
 
+    <d-section>Back to the World Model</d-section>
+    <p>
+      Now that I had a decent VAE I trained the world model with the new latents and...<br>
 
+      It was still shit.
+    </p>
+    <figure>
+      <img src="website/images/training_new_VAE.png">
+      <figcaption>
+        Training dashboard of the world model with the new VAE. The model doesn't seem to learn effectively. It's not pure noise, but clearly something is not working correctly
+      </figcaption>
+    </figure> 
+    <p>
+      Even with the improved latents, it wouldn’t work correctly. I'm still trying to figure out where the problem lies, but for now, the story pauses here. No flashy interactive demo — just lessons learned.<br><br>
+      In the meantime, Google revealed <a href="https://deepmind.google/discover/blog/genie-3-a-new-frontier-for-world-models/">Genie 3</a>. The titan won the strength contest. Their demo is breathtaking — and in many ways, exactly what I wanted to build.<br><br>
+      But this doesn’t discourage me. It only shows what’s possible. If Genie3 proves anything, it’s that this approach is viable. There’s still space to innovate — to build efficient world models that run on consumer hardware.<br><br>
+      So if you’ve got spare GPU hours, a knack for coding, or just a wild idea you want to test — come help.<br>
+      Me and Matteo are building this one piece at a time, and it’s way more fun with company.<br>
+      After all, even bees work best in swarms. 🐝
+
+ 
+    </p>
   </d-article>
 
   
@@ -459,7 +492,7 @@
   
   <d-appendix>
     <h3>Acknowledgements</h3>
-    <p>Thanks to Mikalai Shevko for the help in fixing bugs in the website and for the help in making the animations for the video abstract</p>
+    <p>Thanks to Davide Locatelli for teaching us how to tell good stories with blog posts. <a href="https://derewah.dev/">Check out his blog!</a></p>
   </d-appendix>
   
   
