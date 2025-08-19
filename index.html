@@ -40,26 +40,48 @@
     </p>
     
   </d-title>
-  <d-byline>
+    <d-byline>
     <div class="byline grid">
       <div class="authors-affiliations grid">
         <h3>Authors</h3>
-        <h3>Date</h3>
+        <h3>Affiliations</h3>
         
-          <p class="author"><a class="name" href="https://github.com/Francesco215">Francesco Sacco</a></p>
-          <p class="affiliation">August 17th 2025</p>
+          <p class="author">
+            
+              <a class="name" href="https://github.com/Francesco215">Francesco Sacco</a> (narrator)
+          </p>
+          <p class="affiliation">
+          None
+          </p>
         
-          <p class="author"><a class="name" href="https://github.com/the-puzzler">Matteo Peluso</a></p>
+          <p class="author">
+            
+              <a class="name" href="https://github.com/the-puzzler">Matteo Peluso</a>
+          </p>
+          <p class="affiliation">
+          <a class="affiliation" href="https://www.uzh.ch/en.html">University of Zurich</a>
+          </p>
         
+        
+          <p class="author">
+            
+              <a class="name" href=" "> </a>
+          </p>
+          <p class="affiliation">
+          <a class="affiliation" href=""></a>
+          </p>
         
       </div>
       <div></div>
       <div>
+        <h3>Date</h3>
+        <p>August 20th 2025</p>
         <h3>DOI</h3>
-          <p>None</p>
+        <p>None</p>
       </div>
     </div>
   </d-byline>
+
 
   <d-article>
   
@@ -120,13 +142,14 @@
         I didn’t really want to train a VAE. Ideally, I’d just use an off-the-shelf one and focus on the diffusion part. But most video VAEs I found were… weird. None of them did exactly what I needed.<br><br>
 
         I needed a VAE that:
+      </p>
         <ul>
         <li>Compressed spatially and across channels, similar to the Stable Diffusion VAE</li>
         <li>Compressed temporally as well</li>
         <li>Supported activation caching to handle arbitrarily long videos</li>
         </ul>
-
-        I also came across a paper arguing that video VAEs should be group causal<d-cite key="wu2025improved"></d-cite>. The reason is that you can't really do a fully causal VAE that has non-zero time compression.
+      <p>
+        I also came across a paper arguing that video VAEs should be group causal<d-cite key="wu2025improved"></d-cite>. The reason is that you can't really do a fully causal VAE that has non-zero time compression.<br>
         Problem was, I didn’t like the authors’ code. So, as if the project wasn’t already time-consuming enough, I decided to write my own implementation from scratch.
       </p>
       <figure>
@@ -465,7 +488,7 @@
 
     <d-section>Back to the World Model</d-section>
     <p>
-      Now that I had a decent VAE I trained the world model with the new latents and...<br>
+      Now that I had a decent VAE I was able to train the world model much faster and more efficiently, however...<br><br>
 
       It was still shit.
     </p>
