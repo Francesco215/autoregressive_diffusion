@@ -69,7 +69,7 @@
       <p>
         After leaving my job, I was officially unemployed — but don’t worry, that just gave me more time to train models. I’m already training to be a disappointment, so I figured I might as well train something useful too.
       </p>
-       <figure class="l-side">
+       <figure>
           <img src="website/images/vr-bee.png">
           <figcaption>
             Apis mellifera, commonly known as honey bee, with a custom made VR headset. It allows our little user to learn how to fly without bumping around.<br><br>
@@ -127,20 +127,19 @@
           <li>Supported activation caching to handle arbitrarily long videos</li>
           </ul>
 
-          I also came across a paper arguing that video VAEs should be group causal<d-cite key="wu2025improved"></d-cite>. The reason is that you can't really do a fully causal VAE that has non-zero time compression. I have attached below a nice interactive graph showing the difference between a causal VAE and a group casual VAE AHH WRITE THIS BETTER.<br>
+          I also came across a paper arguing that video VAEs should be group causal<d-cite key="wu2025improved"></d-cite>. The reason is that you can't really do a fully causal VAE that has non-zero time compression.
           Problem was, I didn’t like the authors’ code. So, as if the project wasn’t already time-consuming enough, I decided to write my own implementation from scratch.
         </p>
         <figure>
-            <svg id="VAE-svg"></svg>
-            <div class="vae-controls">
-                <button id="vae-toggle-button" class="colab-root">Switch to Causal</button>
-            </div>
-          
-            <figcaption>
-              An interactive visualization of the deep, group-causal VAE architecture. The encoder (bottom) compresses the input into a latent space, and the decoder (top) reconstructs it. Hover over any node to see its causal path.<br>
-              Even when the network tries to be fully causal it is unable to do so because of the time-compression. The group-causal VAE is causal in latent space and group-casual in pixel space. 
-            </figcaption>
-          </figure>
+          <svg id="VAE-svg"></svg>
+          <div class="vae-controls">
+              <button id="vae-toggle-button" class="colab-root">Switch to Causal</button>
+          </div>
+          <figcaption>
+            An interactive visualization of the deep, group-causal VAE architecture. The encoder (bottom) compresses the input into a latent space, and the decoder (top) reconstructs it. Hover over any node to see its causal path.<br>
+            Even when the network tries to be fully causal it is unable to do so because of the time-compression. The group-causal VAE is causal in latent space and group-casual in pixel space. 
+          </figcaption>
+        </figure>
       </div>
     <div>
       <figure class="l-side">
@@ -241,12 +240,14 @@
     </figcaption>
     <p><br>
     Using this trick i was able to:
+    </p>
       <ul>
         <li>Make the model sample-efficient during training</li>
         <li>Squeeze every drop of compute out of the GPU during training thanks to Flex-Attention</li>
         <li>During Inference use a generalized KV-caching to substantially speed up the generation time</li>
       </ul>
-    But did it work? YES!
+    <p>
+    But did it work? <b>YES!</b>
     </p>
     <figure style="width: 70%; margin-left: auto; margin-right: auto;">
       <img src="website/images/lander-world.png">
@@ -425,7 +426,7 @@
       $$
     </p>
     <figure class="l-side">
-      <img src="website/images/GNLLL.png">
+      <img src="website/images/GNLLL.svg">
       <figcaption>
         Dummy dataset where I tested this loss function. As you can see the model manages to predict perfectly the mean and variance of the datapoints.<br>
         <a href="https://colab.research.google.com/drive/1PNxZEpsl9OtpUM9nT56ZAEh7bNVtkQiq?usp=sharing">I've written a colab if you want to check it out.</a> Be careful, there are several local minima, so you might need to run the training several times
