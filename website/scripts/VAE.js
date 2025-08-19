@@ -164,10 +164,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 });
             }
             
-            svg.selectAll('rect.box').filter(node => pathIds.has(node.id))
-                .classed('dimmed', false).classed('highlighted', true);
+            const pathNodes = svg.selectAll('rect.box').filter(node => pathIds.has(node.id));
+            pathNodes.classed('dimmed', false);
+            pathNodes.filter(node => node.type === 'e0' || node.type === 'd0').classed('highlighted', true);
+
             linksGroup.selectAll('line.connection').filter(l => pathIds.has(l.source.id) && pathIds.has(l.target.id))
-                .classed('dimmed', false).classed('highlighted', true).classed('cross-group', l => l.source.type === 'e0' && l.source.group !== l.target.group);
+                .classed('dimmed', false).classed('cross-group', l => l.source.type === 'e0' && l.source.group !== l.target.group);
         });
 
         boxesGroup.selectAll('rect.box').on('mouseleave', () => svg.selectAll('.dimmed, .highlighted, .cross-group').classed('dimmed highlighted cross-group', false));

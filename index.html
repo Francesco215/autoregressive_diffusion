@@ -169,10 +169,10 @@
       </p>
       <figure>
         <img src="website/images/old-lander.png">
+        <figcaption>
+          The fuzzines of the lander seemed impossible to remove. It was present no matter che choice of hyperparameters or the choice of $L_1$ vs $L_2$ loss. It was so frustrating
+        </figcaption>
       </figure>
-      <figcaption>
-        The fuzzines of the lander seemed impossible to remove. It was present no matter che choice of hyperparameters or the choice of $L_1$ vs $L_2$ loss. It was so frustrating
-      </figcaption>
       <p>
         Turns out when your dataset is 98% black background and a white floor, you can get a tiny loss and a bad reconstruction at the same time.
       </p>
@@ -430,6 +430,7 @@
        L = \log \sigma_\phi + \frac{(y-\mu_\theta)^2}{2\sigma_\phi^2} + \textrm{const}
       $$
       As a sanity check, you can see that if we consider $\sigma_\phi$ to be a constant, we recover the $L_2$ loss.
+      <d-footnote>Small footnote about computational stability:<br><br>The loss function as written like this $$L = \log \sigma_\phi + \frac{(y-\mu_\theta)^2}{2\sigma_\phi^2}$$ can have stability issues because of $\log\sigma_\phi$ and $\sigma^{-2}_\phi$ terms.<br> This goes away by making the network predict the logvar $l_\phi$ $$l_\phi = \log \sigma^2_\phi$$ Substituiting this into the loss equation we get $$L = l_\phi + (y-\mu_\theta)^2e^{-l_\phi}$$ This is stable both numerically and during training </d-footnote>
     </p>
     <d-subsection>Properties of this Loss</d-subsection>
     <p>
@@ -459,7 +460,15 @@
     </figure> 
     <p>
       This means that the gradient to find the expected value of $y$ is exactly the same as the one of the $L_2$ loss, but here each sample is weighted by the expect sample error $\sigma_\phi$ — Which is exactly what you want!
-      <d-footnote>Small footnote about computational stability:<br><br>The loss function as written like this $$L = \log \sigma_\phi + \frac{(y-\mu_\theta)^2}{2\sigma_\phi^2}$$ can have stability issues because of $\log\sigma$ and $\sigma^{-2}$ terms. This goes away by making the network predict the logvar $l_\phi$ $$l_\phi = \log \sigma^2_\phi$$ Substituiting this into the loss equation we get $$L = l_\phi + (y-\mu_\theta)^2e^{-l_\phi}$$ This is stable both numerically and during training </d-footnote>
+      <d-footnote>
+        This also solves the $L_1$ vs $L_2$ debate.<br><br>
+        In short, people shy away form using $L_2$ loss in VAEs because it penalizes large errors more than $L_1$. Thus, using $L_2$ leads to blurry images and makes it harder for the auxiliary losses such as LPIPS and GAN losses to do their job.<br>
+        This lead people to use the $L_1$ loss because it's more "kind".<br><br>
+        That's not math, that's bro-sciece.<br><br>
+        The loss I've just introduced fixes it!<br><br>
+        As you'll see in a later section the adaptive uncertainty estimation allows the model to follow the $L_2$ loss where it's more confident in his prediction, and follows more the auxiliary losses where it's less confident.<br><br>
+        Problem solved.
+      </d-footnote>
     </p>
     <d-subsection>Sanity check</d-subsection>
     <p>
