@@ -48,7 +48,7 @@
         
           <p class="author">
             
-              <a class="name" href="https://github.com/Francesco215">Francesco Sacco</a> (narrator)
+              <a class="name" href="https://github.com/Francesco215">Francesco Sacco</a> (POV)
           </p>
           <p class="affiliation">
           None
@@ -89,7 +89,7 @@
       <d-section id="abs">Where it all started: The Humble Bee</d-section>
 
       <p>
-        After leaving my job, I was officially unemployed — but don’t worry, that just gave me more time to train models. I’m already training to be a disappointment, so I figured I might as well train something useful too.
+        After leaving my job, I was officially unemployed, but don't worry, I had plenty of time to train some models since I'm already training to be a disappointment.
       </p>
        <figure class="l-side">
           <img src="website/images/vr-bee.png">
@@ -105,7 +105,7 @@
       <p>
         But I needed an environment to train the RL policy in. Smashing real drones wasn’t an option, and there were no good off-the-shelf world models to train in. So I had to make one.<br><br><br>
 
-        In this blog post, I’ll talk about building that virtual environment. There won’t be any RL yet — the Bee AI has to wait for now.
+        In this blog post, I’ll talk about building that virtual environment. There won’t be any RL yet- the Bee AI has to wait for now.
       </p>
     </div>
 
@@ -129,7 +129,7 @@
         <p>
           When I started this project (around February), the hottest world modeling papers were DIAMOND<d-cite key="alonso2024diffusion"></d-cite> and GameNGen<d-cite key="valevski2024diffusion"></d-cite>. But both suffered from extreme amnesia, so I decided to try something better.<br><br>
 
-          It wasn’t going to be easy. I knew Google was working on the same problem. I knew I was entering a strength competition against a titan. I knew I would lose — but I also knew I’d come out stronger than when I started.<br><br>
+          It wasn’t going to be easy. I knew Google was working on the same problem. I knew I was entering a strength competition against a titan. I knew I would lose- but I also knew I’d come out stronger than when I started.<br><br>
 
           As a foundation, I chose EDM2<d-cite key="karras2024analyzing"></d-cite>, my favorite image diffusion paper. It dominated the Pareto frontier at the time, and I set out to generalize it into an autoregressive video generator.<br><br>
 
@@ -156,11 +156,16 @@
         <svg id="VAE-svg"></svg>
       </figure>
       <figcaption class="l-gutter" style="width: 150%;">
+        An interactive visualization of the group-causal VAE architecture.<br>
+        The encoder (left) compresses the input into a latent space with 4x time compression, and the decoder (right) reconstructs it.<br><br>
+        Even when the network tries to be fully causal it is unable to do so because of the time-compression. 
         <div class="vae-controls">
             <button id="vae-toggle-button" class="colab-root">Switch to Causal</button>
         </div>
-        An interactive visualization of the deep, group-causal VAE architecture. The encoder (bottom) compresses the input into a latent space, and the decoder (top) reconstructs it. Hover over any node to see its causal path.<br>
-        Even when the network tries to be fully causal it is unable to do so because of the time-compression. The group-causal VAE is causal in latent space and group-casual in pixel space. 
+        <br>
+        As you can see, even when all the causal connection go from past frames to more recent ones, it is impossible to be causal within each group.<br><br>
+
+        The group-causal VAE is fully causal in latent space and group-casual in pixel space.
       </figcaption>
       <d-subsection>Nothing is Ever Simple</d-subsection>
       <p>
@@ -185,14 +190,14 @@
       <blockquote>
         “What if we only calculate the loss on the top 0.5% of pixels with the highest error?”
       </blockquote>
-      At first, I hesitated — it felt like smuggling knowledge into the loss function. But in the end, the one who needed convincing wasn’t me, it was the computer. So he tried it.<br><br>
+      At first, I hesitated- it felt like smuggling knowledge into the loss function. But in the end, the one who needed convincing wasn’t me, it was the computer. So he tried it.<br><br>
 
       And it worked! Beautifully so!<br>
     </p>
     <figure>
       <img src="website/images/working-VAE.png">
       <figcaption>
-        Quality of the VAE reconstruction if we only calculate the loss on the top 0.5% of pixels with the highest error
+        Quality of the VAE reconstruction if we only calculate the loss on the top 0.5% of pixels with the highest error. It even works in different environments!
       </figcaption>
     </figure>
       <p>
@@ -231,15 +236,15 @@
           </figcaption>
         </figure>
       <p>
-        The real challenge wasn’t just building the model — it was training it in a sample-efficient way. Without that, there was no chance of scaling to long sequences.<br><br>
+        The real challenge wasn’t just building the model- it was training it in a sample-efficient way. Without that, there was no chance of scaling to long sequences.<br><br>
 
         But why does sample efficiency matter?<br><br>
 
         When I first learned about language modeling, I made a rookie mistake: I trained a model to predict only the last token in a sentence. The result? It was shit. The model didn’t learn a thing.<br><br>
 
-        Why? Because transformers don’t make just one prediction per forward pass — they make one prediction per token. If your sequence has 128 tokens, that’s 128 supervised training signals, not just one. That efficiency is the difference between a working model and a random number generator.<br><br>
+        Why? Because transformers don’t make just one prediction per forward pass- they make one prediction per token. If your sequence has 128 tokens, that’s 128 supervised training signals, not just one. That efficiency is the difference between a working model and a random number generator.<br><br>
 
-        So for Oniris, sample efficiency wasn’t optional — it was non-negotiable.<br><br>
+        So for Oniris, sample efficiency wasn’t optional- it was non-negotiable.<br><br>
 
         After some thinking, I figured out "<i>the trick</i>":
         <ul>
@@ -459,12 +464,12 @@
       </figcaption>
     </figure> 
     <p>
-      This means that the gradient to find the expected value of $y$ is exactly the same as the one of the $L_2$ loss, but here each sample is weighted by the expect sample error $\sigma_\phi$ — Which is exactly what you want!
+      This means that the gradient to find the expected value of $y$ is exactly the same as the one of the $L_2$ loss, but here each sample is weighted by the expect sample error $\sigma_\phi$- Which is exactly what you want!
       <d-footnote>
         This also solves the $L_1$ vs $L_2$ debate.<br><br>
         In short, people shy away form using $L_2$ loss in VAEs because it penalizes large errors more than $L_1$. Thus, using $L_2$ leads to blurry images and makes it harder for the auxiliary losses such as LPIPS and GAN losses to do their job.<br>
         This lead people to use the $L_1$ loss because it's more "kind".<br><br>
-        That's not math, that's bro-sciece.<br><br>
+        That's not math, that's bro-science.<br><br>
         The loss I've just introduced fixes it!<br><br>
         As you'll see in a later section the adaptive uncertainty estimation allows the model to follow the $L_2$ loss where it's more confident in his prediction, and follows more the auxiliary losses where it's less confident.<br><br>
         Problem solved.
@@ -508,10 +513,13 @@
       </figcaption>
     </figure> 
     <p>
-      Even with the improved latents, it wouldn’t work correctly. I'm still trying to figure out where the problem lies, but for now, the story pauses here. No flashy interactive demo — just lessons learned.<br><br>
-      In the meantime, Google revealed <a href="https://deepmind.google/discover/blog/genie-3-a-new-frontier-for-world-models/">Genie 3</a>. The titan won the strength contest. Their demo is breathtaking — and in many ways, exactly what I wanted to build.<br><br>
-      But this doesn’t discourage me. It only shows what’s possible. If Genie3 proves anything, it’s that this approach is viable. There’s still space to innovate — to build efficient world models that run on consumer hardware.<br><br>
-      So if you’ve got spare GPU hours, a knack for coding, or just a wild idea you want to test — come help.<br>
+      Even with the improved latents, it wouldn’t work correctly. I'm still trying to figure out where the problem lies, but for now, the story pauses here. No flashy interactive demo- just lessons learned.
+    </p>
+    <d-section>Where are we now</d-section>
+    <p>
+      While we were working on this, Google revealed <a href="https://deepmind.google/discover/blog/genie-3-a-new-frontier-for-world-models/">Genie 3</a>. The titan won the strength contest. Their demo is breathtaking- and in many ways, exactly what I wanted to build.<br><br>
+      But this doesn’t discourage me. It only shows what’s possible. If Genie3 proves anything, it’s that this approach is viable. There’s still space to innovate- to build efficient world models that run on consumer hardware.<br><br>
+      So if you’ve got spare GPU hours, a knack for coding, or just a wild idea you want to test- come help.<br>
       Me and Matteo are building this one piece at a time, and it’s way more fun with company.<br>
       After all, even bees work best in swarms. 🐝
 

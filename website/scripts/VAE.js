@@ -42,38 +42,38 @@ document.addEventListener('DOMContentLoaded', function() {
     function drawVisualization() {
         svg.html('');
         
-        const rowSpacings = [50, 20, 15, 10, 8, 8, 10, 15, 20, 50].reverse();
-        const layerY = {};
-        let currentY = PADDING;
-        const layerNames = ['d0', 'd1', 'd2', 'd3', 'd4', 'e5', 'e4', 'e3', 'e2', 'e1', 'e0'];
+        const colSpacings = [50, 45, 33, 23, 50, 50, 23, 33, 45, 50].reverse();
+        const layerX = {};
+        let currentX = PADDING;
+        const layerNames = ['d0', 'd1', 'd2', 'd3', 'd4', 'e5', 'e4', 'e3', 'e2', 'e1', 'e0'].reverse();
         layerNames.forEach((name, i) => {
-            layerY[name] = currentY;
-            if(i < rowSpacings.length) currentY += BOX_SIZE + rowSpacings[i];
+            layerX[name] = currentX;
+            if(i < colSpacings.length) currentX += BOX_SIZE + colSpacings[i];
         });
 
-        const svgWidth = PADDING * 2 + N_FRAMES * BOX_SIZE + (N_FRAMES - 1) * BOX_SPACING;
-        const svgHeight = currentY + BOX_SIZE;
+        const svgHeight = PADDING * 2 + N_FRAMES * BOX_SIZE + (N_FRAMES - 1) * BOX_SPACING;
+        const svgWidth = currentX + BOX_SIZE + PADDING;
         svg.attr('viewBox', `0 0 ${svgWidth} ${svgHeight}`);
 
         let nodes = [];
-        const addNodes = (count, type, group_size, y_pos, x_provider) => {
+        const addNodes = (count, type, group_size, x_pos, y_provider) => {
             for (let i = 1; i <= count; i++) {
-                nodes.push({ id: `${type}-${i}`, type, index: i, group: Math.floor((i-1)/group_size), x: x_provider(i), y: y_pos});
+                nodes.push({ id: `${type}-${i}`, type, index: i, group: Math.floor((i-1)/group_size), x: x_pos, y: y_provider(i)});
             }
         };
         
-        addNodes(N_FRAMES, 'e0', E1_PARAMS.GROUP_SIZE, layerY.e0, i => PADDING + (i - 1) * (BOX_SIZE + BOX_SPACING));
-        addNodes(N_FRAMES, 'e1', E1_PARAMS.GROUP_SIZE, layerY.e1, i => nodes.find(n => n.id === `e0-${i}`).x);
-        addNodes(N_FRAMES / 2, 'e2', 2, layerY.e2, i => (nodes.find(n => n.id === `e1-${2 * i - 1}`).x + nodes.find(n => n.id === `e1-${2 * i}`).x) / 2);
-        addNodes(N_FRAMES / 2, 'e3', E3_PARAMS.GROUP_SIZE, layerY.e3, i => nodes.find(n => n.id === `e2-${i}`).x);
-        addNodes(N_FRAMES / 4, 'e4', 1, layerY.e4, i => (nodes.find(n => n.id === `e3-${2 * i - 1}`).x + nodes.find(n => n.id === `e3-${2 * i}`).x) / 2);
-        addNodes(N_FRAMES / 4, 'e5', E5_PARAMS.GROUP_SIZE, layerY.e5, i => nodes.find(n => n.id === `e4-${i}`).x);
+        addNodes(N_FRAMES, 'e0', E1_PARAMS.GROUP_SIZE, layerX.e0, i => PADDING + (i - 1) * (BOX_SIZE + BOX_SPACING));
+        addNodes(N_FRAMES, 'e1', E1_PARAMS.GROUP_SIZE, layerX.e1, i => nodes.find(n => n.id === `e0-${i}`).y);
+        addNodes(N_FRAMES / 2, 'e2', 2, layerX.e2, i => (nodes.find(n => n.id === `e1-${2 * i - 1}`).y + nodes.find(n => n.id === `e1-${2 * i}`).y) / 2);
+        addNodes(N_FRAMES / 2, 'e3', E3_PARAMS.GROUP_SIZE, layerX.e3, i => nodes.find(n => n.id === `e2-${i}`).y);
+        addNodes(N_FRAMES / 4, 'e4', 1, layerX.e4, i => (nodes.find(n => n.id === `e3-${2 * i - 1}`).y + nodes.find(n => n.id === `e3-${2 * i}`).y) / 2);
+        addNodes(N_FRAMES / 4, 'e5', E5_PARAMS.GROUP_SIZE, layerX.e5, i => nodes.find(n => n.id === `e4-${i}`).y);
         
         ['e4', 'e3', 'e2', 'e1', 'e0'].forEach(encoderLayer => {
             const decoderLayer = encoderLayer.replace('e', 'd');
             const encoderNodes = nodes.filter(n => n.type === encoderLayer);
             encoderNodes.forEach(en => {
-                nodes.push({ ...en, id: en.id.replace('e', 'd'), type: decoderLayer, y: layerY[decoderLayer] });
+                nodes.push({ ...en, id: en.id.replace('e', 'd'), type: decoderLayer, x: layerX[decoderLayer] });
             });
         });
 
@@ -118,8 +118,8 @@ document.addEventListener('DOMContentLoaded', function() {
         linksGroup.selectAll('line.connection')
             .data(allLinks, d => `${d.sourceId}-${d.targetId}`).join('line')
             .attr('class', 'connection')
-            .attr('x1', d => d.source.x + BOX_SIZE / 2).attr('y1', d => d.source.y)
-            .attr('x2', d => d.target.x + BOX_SIZE / 2).attr('y2', d => d.target.y + BOX_SIZE);
+            .attr('x1', d => d.source.x + BOX_SIZE).attr('y1', d => d.source.y + BOX_SIZE / 2)
+            .attr('x2', d => d.target.x).attr('y2', d => d.target.y + BOX_SIZE / 2);
 
         boxesGroup.selectAll('rect.box')
             .data(nodes, d => d.id).join('rect')
@@ -135,8 +135,8 @@ document.addEventListener('DOMContentLoaded', function() {
         decorationsGroup.append('rect')
             .attr('x', e5Nodes[0].x - latentBoxPadding)
             .attr('y', e5Nodes[0].y - latentBoxPadding)
-            .attr('width', (e5Nodes[3].x + BOX_SIZE) - e5Nodes[0].x + latentBoxPadding * 2)
-            .attr('height', BOX_SIZE + latentBoxPadding * 2)
+            .attr('width', BOX_SIZE + latentBoxPadding * 2)
+            .attr('height', (e5Nodes[3].y + BOX_SIZE) - e5Nodes[0].y + latentBoxPadding * 2)
             .attr('rx', 4).attr('ry', 4)
             .attr('fill', 'none').attr('stroke', '#9ca3af').attr('stroke-width', 1.5).attr('stroke-dasharray', '6 4');
 
@@ -176,6 +176,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // --- Initializer ---
-    toggleButton.on('click', () => { isGroupCausal = !isGroupCausal; toggleButton.text(isGroupCausal ? 'Switch to Causal' : 'Switch to Group-Causal'); drawVisualization(); });
+    toggleButton.on('click', (event) => { event.preventDefault(); isGroupCausal = !isGroupCausal; toggleButton.text(isGroupCausal ? 'Switch to Causal' : 'Switch to Group-Causal'); drawVisualization(); });
     drawVisualization();
 });
