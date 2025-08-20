@@ -36,7 +36,7 @@
   <d-title> 
     <h1>Oniris</h1>
     <p>
-        A small story of a big dream<br>
+      A small story about building a long-context World Model with no money
     </p>
     
   </d-title>
@@ -95,17 +95,17 @@
           <img src="website/images/vr-bee.png">
           <figcaption>
             Apis mellifera, commonly known as honey bee, with a custom made VR headset. It allows our little user to learn how to fly without bumping around.<br><br>
-            A bee brain has less compute than modern smarphone chips. Bees also don’t need extended periods of training. Even if you assume that part of their ability is encoded in their DNA, it's worth noting that a bee’s genome is equivalent to 1.2 Gb data. That’s not a lot of data.
+            A bee brain has less compute than modern smarphone chips. Bees also don't need extended periods of training. Even if you assume that part of their ability is encoded in their DNA, it's worth noting that a bee's genome is equivalent to 1.2 Gb data. That's not a lot of data.
           </figcaption>
         </figure>
       <p>
-        Originally, I wanted to build an AI for drones that’s as smart as a bee. From first principles, this seemed doable: bees have tiny brains, yet after just a brief exposure to the real world they can navigate reliably without ever getting lost.<br>
+        Originally, I wanted to build an AI for drones that's as smart as a bee. From first principles, this seemed doable: bees have tiny brains, and with just a brief exposure to the real world they can navigate reliably without ever getting lost.<br>
         In ML terms, this problem should require little compute and little data (in principle!).
       </p>
       <p>
-        But I needed an environment to train the RL policy in. Smashing real drones wasn’t an option, and there were no good off-the-shelf world models to train in. So I had to make one.<br><br><br>
+        But I needed an environment to train the RL policy in. Smashing real drones wasn't an option, and there were no good off-the-shelf long-context world models to train in. So I had to make one myself.<br><br><br>
 
-        In this blog post, I’ll talk about building that virtual environment. There won’t be any RL yet- the Bee AI has to wait for now.
+        In this blog post, I'll talk about building that virtual environment. There won't be any RL yet- the Bee AI has to wait for now.
       </p>
     </div>
 
@@ -129,9 +129,9 @@
         <p>
           When I started this project (around February), the hottest world modeling papers were DIAMOND<d-cite key="alonso2024diffusion"></d-cite> and GameNGen<d-cite key="valevski2024diffusion"></d-cite>. But both suffered from extreme amnesia, so I decided to try something better.<br><br>
 
-          It wasn’t going to be easy. I knew Google was working on the same problem. I knew I was entering a strength competition against a titan. I knew I would lose- but I also knew I’d come out stronger than when I started.<br><br>
+          It wasn't going to be easy. I knew Google was working on the same problem. I knew I was entering a strength competition against a titan. I knew I would lose- but I also knew I'd come out stronger than when I started.<br><br>
 
-          As a foundation, I chose EDM2<d-cite key="karras2024analyzing"></d-cite>, my favorite image diffusion paper. It dominated the Pareto frontier at the time, and I set out to generalize it into an autoregressive video generator.<br><br>
+          As a foundation, I chose EDM2<d-cite key="karras2024analyzing"></d-cite>, my favorite image diffusion paper. It dominated the Pareto frontier at the time, and I set out to generalize it into an autoregressive long-context video generator.<br><br>
 
           Oh, and I needed a name for the project. I called it Oniris.
         </p>
@@ -139,7 +139,7 @@
 
     <d-section>The first version of the VAE</d-section>
       <p>
-        I didn’t really want to train a VAE. Ideally, I’d just use an off-the-shelf one and focus on the diffusion part. But most video VAEs I found were… weird. None of them did exactly what I needed.<br><br>
+        I didn't really want to train a VAE. Ideally, I'd just use an off-the-shelf one and focus on the diffusion part. But most video VAEs I found were… weird. None of them did exactly what I needed.<br><br>
 
         I needed a VAE that:
       </p>
@@ -150,7 +150,7 @@
         </ul>
       <p>
         I also came across a paper arguing that video VAEs should be group causal<d-cite key="wu2025improved"></d-cite>. The reason is that you can't really do a fully causal VAE that has non-zero time compression.<br>
-        Problem was, I didn’t like the authors’ code. So, as if the project wasn’t already time-consuming enough, I decided to write my own implementation from scratch.
+        Problem was, I didn't like the authors' code. So, as if the project wasn't already time-consuming enough, I decided to write my own implementation from scratch.
       </p>
       <figure>
         <svg id="VAE-svg"></svg>
@@ -158,18 +158,21 @@
       <figcaption class="l-gutter" style="width: 150%;">
         An interactive visualization of the group-causal VAE architecture.<br>
         The encoder (left) compresses the input into a latent space with 4x time compression, and the decoder (right) reconstructs it.<br><br>
-        Even when the network tries to be fully causal it is unable to do so because of the time-compression. 
+        When you hover over one of the nodes you will see highlighted all of the nodes that causally affect or are causally affected by it.<br><br>
+        Now, try to see what's the difference between causal and group causal.
         <div class="vae-controls">
             <button id="vae-toggle-button" class="colab-root">Switch to Causal</button>
         </div>
         <br>
-        As you can see, even when all the causal connection go from past frames to more recent ones, it is impossible to be causal within each group.<br><br>
+        Even when the network tries to be fully causal it is unable to do so because of the time-compression. <br><br>
+
+        For example if you highlight the last node of a group on the encoder side, you will see that it affects the first node of the same group on the encoder side even if the VAE is fully causal<br><br>
 
         The group-causal VAE is fully causal in latent space and group-casual in pixel space.
       </figcaption>
       <d-subsection>Nothing is Ever Simple</d-subsection>
       <p>
-        I thought it’d be smart to test my world modeling approach on a “simple” environment. So I fired up Gymnasium and tried compressing Lunar Lander videos.<br><br>
+        I thought it'd be smart to test my world modeling approach on a “simple” environment. So I fired up Gymnasium and tried compressing Lunar Lander videos.<br><br>
         Yeah, not so simple.
       </p>
       <figure>
@@ -186,11 +189,11 @@
     <p>
       I spent weeks trying to get it working without any hacks, but the local minima were just too good.<br><br>
 
-      That’s when I met Matteo online. He loved the project and jumped in to help. Unlike me, he wasn’t too bothered the Bitter Lesson<d-cite key="sutton2019bitter"></d-cite>, instead, he suggested:
+      That's when I met Matteo online. He loved the project and jumped in to help. Unlike me, he wasn't too bothered the Bitter Lesson<d-cite key="sutton2019bitter"></d-cite>, instead, he suggested:
       <blockquote>
         “What if we only calculate the loss on the top 0.5% of pixels with the highest error?”
       </blockquote>
-      At first, I hesitated- it felt like smuggling knowledge into the loss function. But in the end, the one who needed convincing wasn’t me, it was the computer. So he tried it.<br><br>
+      At first, I hesitated- it felt like smuggling knowledge into the loss function. But in the end, the one who needed convincing wasn't me, it was the computer. So he tried it.<br><br>
 
       And it worked! Beautifully so!<br>
     </p>
@@ -220,7 +223,7 @@
           \textrm{LLM}(x_i,\dots,x_0)=-\log p(x_{i+1}|x_i,\dots,x_0)
         $$
 
-        So to generate videos autoregressively, you estimate the score conditioned on previous frames. It’s essentially image generation conditioned on history.
+        So to generate videos autoregressively, you estimate the score conditioned on previous frames. It's essentially image generation conditioned on history.
 
         $$
           \mathbb s(x_i,\sigma;x_{i-1},\dots,x_0)=-\mathbb\nabla_x \log p(x_i|\sigma;x_{i-1},\dots,x_0)
@@ -236,15 +239,15 @@
           </figcaption>
         </figure>
         <p>
-          The real challenge wasn’t just building the model- it was exploiting the transformer’s ability to train in a <i>parallelizable way across the sequence dimension</i>. Without that, there was no chance of scaling to long sequences.<br><br>
+          The real challenge wasn't just building the model- it was exploiting the transformer's ability to train in a <i>parallelizable way across the sequence dimension</i>. Without that, there was no chance of scaling to long sequences.<br><br>
 
           But why does sequence-parallel training matter?<br><br>
 
-          When I first learned about language modeling, I made a rookie mistake: I trained a model to predict only the last token in a sentence. The result? It was shit. The model didn’t learn a thing.<br><br>
+          When I first learned about language modeling, I made a rookie mistake: I trained a model to predict only the last token in a sentence. The result? It was shit. The model didn't learn a thing.<br><br>
 
-          Why? Because transformers don’t make just one prediction per forward pass— they make one prediction per token. If your sequence has 128 tokens, that’s 128 supervised training signals, not just one. That parallelism is the difference between a working model and a random number generator.<br><br>
+          Why? Because transformers don't make just one prediction per forward pass— <b>they make one prediction per token</b>. If your sequence has 128 tokens, that's 128 supervised training signals, not just one. That parallelism is the difference between a working model and a random number generator.<br><br>
 
-          So for Oniris, leveraging sequence-level parallelism wasn’t optional- it was non-negotiable.<br><br>
+          For Oniris, leveraging sequence-level parallelism wasn't optional- it was non-negotiable.<br><br>
 
           After some thinking, I figured out "<i>the trick</i>":
           <ul>
@@ -327,7 +330,7 @@
     </figure>
 
     <p>
-      I managed to run some jobs with 8×H100s for about two hours, but… things weren’t so straightforward. No matter what I tried, the diffusion model either refused to learn, or we simply didn’t have enough compute. It was impossible to tell which.
+      I managed to run some jobs with 8×H100s for about two hours, but… things weren't so straightforward. No matter what I tried, the diffusion model either refused to learn, or we simply didn't have enough compute. It was impossible to tell which.
     </p>
     <figure>
       <img src="website/images/first-cs-run.png">
@@ -371,7 +374,7 @@
     </table>
 
     <p>
-      So what was wrong? After a lot of head-scratching, I pinned the blame on the VAE. Its compression ratio was only 24×, and that probably wasn’t enough.<br><br>
+      So what was wrong? After a lot of head-scratching, I pinned the blame on the VAE. Its compression ratio was only 24×, and that probably wasn't enough.<br><br>
       Back to square one: retraining the VAE, this time aiming for a 96× compression ratio.
     </p>
 
@@ -385,7 +388,7 @@
       </figure>
       <p>
         This is where things take a dark turn folks. Everything was shit. I tried to debug the model for months to no avail. I tried everything.<br><br>
-        It’s hard to convey with words the sheer amount of things I tried and NONE of them worked. The model simply would not compress beyond 24x and I needed 4 times as much! I was wasting so much time, running out of energy and still nothing seemed to work.
+        It's hard to convey with words the sheer amount of things I tried and NONE of them worked. The model simply would not compress beyond 24x and I needed 4 times as much! I was wasting so much time, running out of energy and still nothing seemed to work.
       </p>
     </div>
     <figure class="l-screen" style="margin-bottom: 0em">
@@ -507,7 +510,7 @@
       </figcaption>
     </figure> 
     <p>
-      It’s really good! Moreover the because of the fact that the errors are weighted by the predicted confidence $\sigma_\phi$, the learning process pushes the model to follow more the auxiliary losses (LPIPS and GAN loss) in the areas where there is high uncertainty, and it forces the model to follow the $L_2$ loss when $\sigma_\phi$ is low.
+      It's really good! Moreover the because of the fact that the errors are weighted by the predicted confidence $\sigma_\phi$, the learning process pushes the model to follow more the auxiliary losses (LPIPS and GAN loss) in the areas where there is high uncertainty, and it forces the model to follow the $L_2$ loss when $\sigma_\phi$ is low.
     </p>
 
     <d-section>Back to the World Model</d-section>
@@ -523,14 +526,14 @@
       </figcaption>
     </figure> 
     <p>
-      Even with the improved latents, it wouldn’t work correctly. I'm still trying to figure out where the problem lies, but for now, the story pauses here. No flashy interactive demo- just lessons learned.
+      Even with the improved latents, it wouldn't work correctly. I'm still trying to figure out where the problem lies, but for now, the story pauses here. No flashy interactive demo- just lessons learned.
     </p>
     <d-section>Where are we now</d-section>
     <p>
       While we were working on this, Google revealed <a href="https://deepmind.google/discover/blog/genie-3-a-new-frontier-for-world-models/">Genie 3</a>. The titan won the strength contest. Their demo is breathtaking- and in many ways, exactly what I wanted to build.<br><br>
-      But this doesn’t discourage me. It only shows what’s possible. If Genie3 proves anything, it’s that this approach is viable. There’s still space to innovate- to build efficient world models that run on consumer hardware.<br><br>
-      So if you’ve got spare GPU hours, a knack for coding, or just a wild idea you want to test- come help.<br>
-      Me and Matteo are building this one piece at a time, and it’s way more fun with company.<br>
+      But this doesn't discourage me. It only shows what's possible. If Genie3 proves anything, it's that this approach is viable. There's still space to innovate- to build efficient world models that run on consumer hardware.<br><br>
+      So if you've got spare GPU hours, a knack for coding, or just a wild idea you want to test- come help.<br>
+      Me and Matteo are building this one piece at a time, and it's way more fun with company.<br>
       After all, even bees work best in swarms. 🐝
 
  
