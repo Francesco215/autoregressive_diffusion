@@ -178,7 +178,7 @@
       <figure>
         <img src="website/images/old-lander.png">
         <figcaption>
-          The fuzzines of the lander seemed impossible to remove. It was present no matter che choice of hyperparameters or the choice of $L_1$ vs $L_2$ loss. It was so frustrating
+          The fuzzines of the lander seemed impossible to remove. It was present no matter the choice of hyperparameters or the choice of $L_1$ vs $L_2$ loss. It was so frustrating
         </figcaption>
       </figure>
       <p>
@@ -232,31 +232,58 @@
 
       <d-subsection>The Real Challenge: Sequence-Level Parallelism</d-subsection>
       <div>
-        <figure class="l-side">
-          <img src="website/images/sequence-parallel-transformer.png">
+        <p>
+          The real challenge wasn't just building the model- it was exploiting the transformer's ability to train in a <i>parallelizable way across the sequence dimension</i>. Without that, there was no chance of scaling to long sequences.
+        </p>
+        <figure class="l-side" style="margin-top: 0em;">
+          <img src="website/images/llm.svg">
           <figcaption>
-            TODO: edit this image and write the caption
+            Unlike RNNs, transformers predict all tokens in parallel during training: each position in the sequence provides a supervised signal simultaneously. This sequence-level parallelism gives transformers far greater training efficiency.
           </figcaption>
         </figure>
         <p>
-          The real challenge wasn't just building the model- it was exploiting the transformer's ability to train in a <i>parallelizable way across the sequence dimension</i>. Without that, there was no chance of scaling to long sequences.<br><br>
-
           But why does sequence-parallel training matter?<br><br>
 
           When I first learned about language modeling, I made a rookie mistake: I trained a model to predict only the last token in a sentence. The result? It was shit. The model didn't learn a thing.<br><br>
 
-          Why? Because transformers don't make just one prediction per forward pass— <b>they make one prediction per token</b>. If your sequence has 128 tokens, that's 128 supervised training signals, not just one. That parallelism is the difference between a working model and a random number generator.<br><br>
+          Why? Because transformers don't make just one prediction per forward pass- <b>they make one prediction per token</b>. If your sequence has 128 tokens, that's 128 supervised training signals, not just one. That parallelism is the difference between a working model and a random number generator.<br><br>
 
-          For Oniris, leveraging sequence-level parallelism wasn't optional- it was non-negotiable.<br><br>
-
-          After some thinking, I figured out "<i>the trick</i>":
-          <ul>
-            <li>Duplicate the sequence.</li>
-            <li>Add noise to one copy.</li>
-            <li>Keep the other copy clean as context.</li>
-          </ul>
+          For Oniris, leveraging sequence-level parallelism wasn't optional- it was non-negotiable.
         </p>
+        <p>
+          However, there is a catch! One has to be careful on how to implement sequence-parallelism: naively inputting a sequence of noised frames in a causal transformer  will create a mismatch between training and inference
+        </p>
+        <figure>
+          <img src="website/images/wrong-model.svg">
+          <figcaption>
+            Wrong way of training the model. During training the model sees the entire sequence of frames noised, but during inference all the frames except the last are clean. This mismatch makes it the wrong way of doing autoregressive videogen
+          </figcaption>
+        </figure>
+        <p>
+          I needed a way to make sure that the information given to each noisy frame came from clean, past frames.
+        </p>
+
       </div>
+
+      <div>
+      <figure class="l-side" style="margin-top: 0em;">
+        <img src="website/images/dart.svg" style="width: 100%">
+        <figcaption>
+          DART:
+        </figcaption>
+      </figure>
+      <d-subsection>DART: Duplicate Augmented Replica Training</d-subsection>
+      <p>
+          After some thinking, I figured out "<i>the trick</i>":
+        <ul>
+          <li>Duplicate the sequence.</li>
+          <li>Add noise to one copy.</li>
+          <li>Keep the other copy clean as context.</li>
+          <!-- <li>Design a causal masking that connects </li> -->
+        </ul>
+      </p>
+      </div>
+      
 
       <figure class="l-page-outset">
         <svg id="attention-svg"></svg>
@@ -266,7 +293,7 @@
       </figcaption>
 
       <p><br>
-      Using this trick I was able to:
+      Using DART I was able to:
       </p>
       <ul>
         <li>Exploit sequence-level parallelism during training</li>
@@ -306,11 +333,15 @@
       So now, it was time to move onto the real deal. All I had to do was swap out the gymnasium environment for gameplay of counterstrike, increase the parameter count and everything would work fine. Then the project would be complete! Afterall we all know that scaling is fool proof and works 100% of the time without any hiccups whatsoever right? Right?<br><br>
 
       My first serious run of training a counterstrike VAE on a 4090 went pretty well, I was so excited!
-
     </p>
-
+    <figure>
+        <img src="website/images/old_vae_low_compression.png">
+        <figcaption>
+          Training run for the CounterStrike VAE. It has a compression of 24x <code>[t,h,w,3] -> [t/4,h/4,w/4,8]</code>
+        </figcaption>
+      </figure>
     <p>
-      We even secured compute credits:
+      For training the diffusion model we even secured compute credits:
     </p>
       <ul>
         <li>1000$ form <a href="lambda.ai">Lambda</a></li>
@@ -548,6 +579,7 @@
   <d-appendix>
     <h3>Acknowledgements</h3>
     <p>Thanks to Davide Locatelli for teaching us how to tell good stories with blog posts. <a href="https://derewah.dev/">Check out his blog!</a></p>
+    <p>Thanks to <a href="https://x.com/gisilvs">Gianluigi Silvestri</a> for the informal peer-review </p>
   </d-appendix>
   
   
