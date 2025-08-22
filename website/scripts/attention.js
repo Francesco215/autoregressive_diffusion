@@ -51,8 +51,34 @@ document.addEventListener('DOMContentLoaded', function() {
     const totalHeight = MASK_SVG_SIZE;
 
     svg.attr('viewBox', `0 0 ${totalWidth} ${totalHeight}`);
+    svg.append('text')
+        .attr('id', 'main-title')
+        .attr('x', totalWidth / 2)
+        .attr('y', 35)
+        .attr('text-anchor', 'middle')
+        .style('font-size', '28px')
+        .style('font-weight', 'bold')
+        .style('fill', '#1f2937');
+
     const animGroup = svg.append('g').attr('id', 'animation-group').attr('transform', `translate(0, ${(totalHeight - animHeight) / 2})`);
+    animGroup.append('text')
+        .attr('x', animWidth / 2)
+        .attr('y', 70)
+        .attr('text-anchor', 'middle')
+        .style('font-size', '24px')
+        .style('font-weight', 'bold')
+        .style('fill', '#374151')
+        .text('DART connectivity');
+
     const maskGroup = svg.append('g').attr('id', 'mask-group').attr('transform', `translate(${animWidth + GAP}, 0)`);
+    maskGroup.append('text')
+        .attr('x', MASK_SVG_SIZE / 2)
+        .attr('y', 70)
+        .attr('text-anchor', 'middle')
+        .style('font-size', '24px')
+        .style('font-weight', 'bold')
+        .style('fill', '#374151')
+        .text('DART masking');
 
     // --- State & SVG Groups ---
     let isAnimating = false, isAnimationComplete = false, lastAnimatedIndex = null, currentNFrames = -1, boxesData = [];
@@ -83,11 +109,17 @@ document.addEventListener('DOMContentLoaded', function() {
     const getColor = d3.scaleSequential(d3.interpolateCool).domain([0, N_FRAMES_DEFAULT]);
 
     // --- Drawing Functions ---
+    function updateMainTitle() {
+        const titleText = isAnimationComplete ? "DART during inference" : "DART during training";
+        svg.select('#main-title').text(titleText);
+    }
+
     function initializeVisualizations() {
         currentNFrames = N_FRAMES_DEFAULT;
         isAnimating = false; isAnimationComplete = false; lastAnimatedIndex = null;
         drawAttentionAnimation(currentNFrames);
         drawMaskVisualization('training', { n_frames: currentNFrames });
+        updateMainTitle();
         renderKatex();
     }
 
@@ -153,9 +185,12 @@ document.addEventListener('DOMContentLoaded', function() {
         .attr('width', cellSize).attr('height', cellSize).style('opacity', 1);
         maskLabelsGroup.selectAll('.mask-tick').data(labelData, d => `${d.type}-${d.index}`).join(
             e => e.append('foreignObject').attr('class', 'mask-tick').style('opacity', 0),
-            u => u.html(d => `<span class="math-host-span">${d.label}</span>`).attr('height', cellSize),
+            u => u,
             e => e.transition().duration(FADE_DURATION).style('opacity', 0).remove()
-        ).attr('width', MASK_LABEL_OFFSET)
+        )
+        .attr('width', MASK_LABEL_OFFSET)
+        .html(d => `<span class="math-host-span">${d.label}</span>`)
+        .attr('height', cellSize)
         .transition().duration(FADE_DURATION)
         .attr('x', d => d.type === 'k' ? MASK_PADDING + MASK_LABEL_OFFSET + d.index * cellSize + cellSize / 2 - MASK_LABEL_OFFSET / 2 : MASK_PADDING)
         .attr('y', d => d.type === 'q' ? MASK_PADDING + d.index * cellSize : MASK_SVG_SIZE - MASK_PADDING - MASK_LABEL_OFFSET / 1.5)
@@ -186,7 +221,7 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         d3.selectAll(`#q-${clickedNoisyIndex}, #k-${clickedNoisyIndex}, #label-q-${clickedNoisyIndex}, #label-k-${clickedNoisyIndex}`)
             .transition().duration(MOVE_DURATION).delay(FADE_DURATION + STAGGER_DELAY)
-            .attr('transform', `translate(${translateX}, 0)`).on('end', () => { isAnimating = false; isAnimationComplete = true; });
+            .attr('transform', `translate(${translateX}, 0)`).on('end', () => { isAnimating = false; isAnimationComplete = true; updateMainTitle(); });
         linesGroup.selectAll('line.connection').filter(d => d.from_q === clickedNoisyIndex || d.to_k === clickedNoisyIndex)
             .transition().duration(MOVE_DURATION).delay(FADE_DURATION + STAGGER_DELAY)
             .attrTween('x1', function(d) { return d.from_q !== clickedNoisyIndex ? null : d3.interpolate(parseFloat(d3.select(this).attr('x1')), parseFloat(d3.select(this).attr('x1')) + translateX); })
@@ -206,7 +241,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     .attr('width', newCellSize).attr('height', newCellSize);
                 maskLabelsGroup.selectAll('.mask-tick').filter(d => indicesToKeep.has(d.index)).transition().duration(MOVE_DURATION)
                     .attr('height', newCellSize)
-                    .attr('x', d => MASK_PADDING + MASK_LABEL_OFFSET + indexMap.get(d.index) * newCellSize + newCellSize / 2 - MASK_LABEL_OFFSET / 2)
+                    .attr('x', d => d.type === 'k' ? MASK_PADDING + MASK_LABEL_OFFSET + indexMap.get(d.index) * newCellSize + newCellSize / 2 - MASK_LABEL_OFFSET / 2 : MASK_PADDING)
                     .attr('y', d => d.type === 'q' ? MASK_PADDING + indexMap.get(d.index) * newCellSize : MASK_SVG_SIZE - MASK_PADDING - MASK_LABEL_OFFSET / 1.5);
             });
     }
@@ -214,6 +249,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function reverseTransitionAnimation() {
         if (isAnimating || lastAnimatedIndex === null) return;
         isAnimating = true; isAnimationComplete = false;
+        updateMainTitle();
         const currentLastAnimatedIndex = lastAnimatedIndex;
         d3.selectAll(`#q-${currentLastAnimatedIndex}, #k-${currentLastAnimatedIndex}, #label-q-${currentLastAnimatedIndex}, #label-k-${currentLastAnimatedIndex}`)
             .transition().duration(MOVE_DURATION).attr('transform', `translate(${BOX_SIZE/2}, 0)`).on('end', function() { d3.select(this).attr('transform', null); });
