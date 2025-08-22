@@ -80,23 +80,20 @@ span.value {
 
 /*this part is for the image on the side*/
 .l-side {
-  float: right;
-  position: relative;
-  left: 11em;
-  margin-left: -11em;
-  width: 450px;
-  padding-left: 1em;
+  width: 100%;
+  padding-left: 0;
   margin-bottom: 0em !important;
   padding-bottom: 1em;
 }
 
-@media (max-width: 1180px) {
+@media (min-width: 1180px) {
   .l-side {
-    float: none;
-    left: 0;
-    margin-left: none;
-    padding-left: none;
-    width: 100%;
+    float: right;
+    position: relative;
+    left: 11em;
+    margin-left: -11em;
+    width: 450px;
+    padding-left: 1em;
   }
 }
 
@@ -257,11 +254,16 @@ summary d-section {
 }
 
 
-p.affiliation{
-  width: 300px;
-}
-p.author{
-  width: 200px;
+@media (min-width: 1000px) {
+  .date-doi {
+    width: 200px;
+  }
+  p.affiliation{
+    width: 300px;
+  }
+  p.author{
+    width: 200px;
+  }
 }
 
 svg#graph {
@@ -332,3 +334,18 @@ d-article ul {
 d-article ul li {
   margin-bottom: 0.0em;
 }
+
+
+/* For l-gutter class */
+@media (max-width: 767px) {
+  .l-gutter {
+    width: 100%;
+  }
+}
+
+@media (min-width: 768px) {
+  figcaption.l-gutter {
+    width: 150%;
+  }
+}
+

@@ -1,7 +1,7 @@
 <!doctype html>
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=1200">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="website/scripts/distill.pub_template.v2.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <link rel="stylesheet" href="website/style.css">
@@ -50,7 +50,7 @@
     </p>
     
   </d-title>
-    <d-byline>
+  <d-byline>
     <div class="byline grid">
       <div class="authors-affiliations grid">
         <h3>Authors</h3>
@@ -83,7 +83,7 @@
         
       </div>
       <div></div>
-      <div style="width: 200px">
+      <div class="date-doi">
         <h3>Date</h3>
         <p>August 22th 2025</p>
         <h3>DOI</h3>
@@ -170,7 +170,7 @@
       <figure>
         <svg id="VAE-svg"></svg>
       </figure>
-      <figcaption class="l-gutter" style="width: 150%;">
+      <figcaption class="l-gutter">
         An interactive visualization of the group-causal VAE architecture.<br>
         The encoder (left) compresses the input into a latent space with 4x time compression, and the decoder (right) reconstructs it.<br><br>
         When you hover over one of the nodes you will see highlighted all of the nodes that causally affect or are causally affected by it.<br><br>
@@ -389,9 +389,9 @@
       It felt like swimming in money! We love you both ❤️
     </p>
     <figure>
-      <div style="display: flex; justify-content: center; align-items: center; gap: 2rem;">
-        <img src="website/images/sfcompute.png" alt="SF Compute Logo" style="height: 300px; width: auto;">
-        <img src="website/images/lambda.png" alt="Lambda Logo" style="height: 300px; width: auto;">
+      <div style="display: flex; justify-content: center; align-items: center; gap: 2rem; width: 100%;">
+        <img src="website/images/sfcompute.png" alt="SF Compute Logo" style="flex: 1; height: 15vw; max-height: 300px; width: 0; object-fit: contain;">
+        <img src="website/images/lambda.png" alt="Lambda Logo" style="flex: 1; height: 15vw; max-height: 300px; width: 0; object-fit: contain;">
       </div>
       <figcaption>
         Also the prices is SF Compute were really low! that meant that the 300$ were worth way more!
@@ -603,9 +603,7 @@
       But this doesn't discourage me. It only shows what's possible. If Genie3 proves anything, it's that this approach is viable. There's still space to innovate- to build efficient world models that run on consumer hardware.<br><br>
       So if you've got spare GPU hours, a knack for coding, or just a wild idea you want to test- come help.<br>
       Me and Matteo are building this one piece at a time, and it's way more fun with company.<br>
-      After all, even bees work best in swarms. 🐝
-
- 
+      After all, bees work best in swarms 🐝
     </p>
   </d-article>
 
@@ -616,8 +614,13 @@
   
   <d-appendix>
     <h3>Acknowledgements</h3>
-    <p>Thanks to Davide Locatelli for teaching us how to tell good stories with blog posts. <a href="https://derewah.dev/">Check out his blog!</a></p>
-    <p>Thanks to <a href="https://x.com/gisilvs">Gianluigi Silvestri</a> for the informal peer-review </p>
+    <p>Thanks to Davide Locatelli for teaching us how to tell good stories with blog posts. <a href="https://derewah.dev/">Check out his blog!</a>
+    <br>Thanks to <a href="https://x.com/gisilvs">Gianluigi Silvestri</a> for the informal peer-review and tips.
+    <br>We also want to thank Lambda and SF Compute for the free credits.</p>
+    <h3>
+      Constact
+    </h3>
+    <p> You can do so by sending an email to this address francesco215@live.it or by messaging on discord at sacco215</p>
     <h3>
       Citation
     </h3>
