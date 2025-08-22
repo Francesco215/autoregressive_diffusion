@@ -112,12 +112,12 @@
 
     <d-section>How to build a world model</d-section>
       <div>
-        <figure class="l-side">
+        <!-- <figure class="l-side">
           <img src="website/images/edm2.png">
           <figcaption>
             Graph showing the EDM2 models compared to other models. I didn't have a lot of money and I needed to be really resource efficient, this is why i chose this architecture. Image taken from <d-cite key="karras2024analyzing"></d-cite>
           </figcaption>
-        </figure>
+        </figure> -->
         <p>
           To build a world model you need:
           <ul>
@@ -129,9 +129,9 @@
         <p>
           When I started this project (around February), the hottest world modeling papers were DIAMOND<d-cite key="alonso2024diffusion"></d-cite> and GameNGen<d-cite key="valevski2024diffusion"></d-cite>. But both suffered from extreme amnesia, so I decided to try something better.<br><br>
 
-          It wasn't going to be easy. I knew Google was working on the same problem. I knew I was entering a strength competition against a titan. I knew I would lose- but I also knew I'd come out stronger than when I started.<br><br>
+          It wasn't going to be easy. I knew Google was working on the same problem. I knew I was entering a strength competition against a titan. I knew I would lose- but I also knew I'd come out stronger than when I started!<br><br>
 
-          As a foundation, I chose EDM2<d-cite key="karras2024analyzing"></d-cite>, my favorite image diffusion paper. It dominated the Pareto frontier at the time, and I set out to generalize it into an autoregressive long-context video generator.<br><br>
+          <!-- As a foundation, I chose EDM2<d-cite key="karras2024analyzing"></d-cite>, my favorite image diffusion paper. It dominated the Pareto frontier at the time, and I set out to generalize it into an autoregressive long-context video generator.<br><br> -->
 
           Oh, and I needed a name for the project. I called it Oniris.
         </p>
@@ -262,7 +262,7 @@
         <figure>
           <img src="website/images/wrong-model.svg">
           <figcaption>
-            Wrong approach: during training the model sees every frame noised, while during inference all but the last frame are clean. This mismatch leads to failure.
+            Wrong approach: during training the model sees every frame noised, while during inference all but the last frame are clean. This mismatch leads to poor performace.
           </figcaption>
         </figure>
         <p>
@@ -280,7 +280,8 @@
       </figure>
       <d-subsection>DART: Duplicate Augmented Replica Training</d-subsection>
       <p>
-          After some thinking, I figured out "<i>the trick</i>" for having sequence-parallelism during training:
+          After some thinking, I figured out "<i>the trick</i>" for having sequence-parallelism during training and named it DART (Duplicate Augmented Replica Training).<br><br>
+          Here is how it works:
       </p>
       <ul>
         <li>Duplicate the sequence.</li>
@@ -302,19 +303,30 @@
       <figcaption>
         This interactive visualization explains how attention masking in DART works. Hover over any box to see its connections. Click on a noisy query to see how one step of autoregressive inference works and how it relates with a step in the training mode.
       </figcaption>
-
+      <div>
+      <figure class="l-side" style="margin-top: 0em;">
+        <img src="website/images/edm-DART.svg" style="width: 100%">
+        <figcaption>
+          UNet-based DART architecture inspired from<d-cite key="karras2024analyzing"></d-cite>. The first layers in light gray are convolutional layers, then as you get closer to the bottleneck self-attention layers (in dark grey) are present, then in the bottleneck DART-layers (colored) are present. This way the information is compressed before getting passed to DART layers.
+        </figcaption>
+      </figure>
       <p><br>
+      One of the drawbacks of DART is the higher memory footprint. The size of the attention matrix becomes $2\times T \times H\times W$ where $T, H, W$ are respectively the number of frames, the height and the width of the frames.<br><br>
+      To improve performace I decided to use a UNet-like architecture<d-cite key="karras2024analyzing"></d-cite>. This allowed me to save lots and lots of memory by using DART only in the bottleneck of the UNet.
+
+      <d-subsection>Results:</d-subsection>
       Using DART I was able to:
       </p>
       <ul>
         <li>Exploit sequence-level parallelism during training</li>
-        <li>Squeeze every drop of compute out of the GPU during training thanks to Flex-Attention</li>
+        <li>Squeeze every drop of compute out of the GPU during training thanks to Flex-Attention <d-cite key="dong2024flex"></d-cite></li>
         <li>During inference use a generalized KV-caching to substantially speed up the generation time</li>
       </ul>
 
       <p>
       But did it work? <b>YES!</b>
       </p>
+      </div>
 
       <figure style="width: 70%; margin-left: auto; margin-right: auto;">
         <img src="website/images/lander-world.png">
