@@ -206,6 +206,13 @@
       <p>
       For the first time, the VAE produced meaningful reconstructions. With that solved, I could finally move on to building the world model.
       </p>
+      
+
+
+
+
+
+
       <d-section>The World Model</d-section>
       <p>
         With frame compression solved, I needed next-frame generation.<br><br>
@@ -251,16 +258,15 @@
           For Oniris, leveraging sequence-level parallelism wasn't optional- it was non-negotiable.
         </p>
         <p>
-          However, there is a catch! One has to be careful on how to implement sequence-parallelism: naively inputting a sequence of noised frames in a causal transformer  will create a mismatch between training and inference
-        </p>
+          But there’s a catch: implementing this naively creates a mismatch. If you feed an entire noised sequence into a causal transformer during training, the model sees noisy context everywhere. At inference time, however, past frames are clean while only the current frame is noised. This mismatch breaks autoregressive video generation.
         <figure>
           <img src="website/images/wrong-model.svg">
           <figcaption>
-            Wrong way of training the model. During training the model sees the entire sequence of frames noised, but during inference all the frames except the last are clean. This mismatch makes it the wrong way of doing autoregressive videogen
+            Wrong approach: during training the model sees every frame noised, while during inference all but the last frame are clean. This mismatch leads to failure.
           </figcaption>
         </figure>
         <p>
-          I needed a way to make sure that the information given to each noisy frame came from clean, past frames.
+          I needed a way to make sure that the information given to each noisy frame came from <i>clean-past frames</i>.
         </p>
 
       </div>
@@ -269,18 +275,23 @@
       <figure class="l-side" style="margin-top: 0em;">
         <img src="website/images/dart.svg" style="width: 100%">
         <figcaption>
-          DART:
+          DART: Duplicate the sequence. One copy is noised, where the loss is evaluated. The other copy stays clean and provides context. Information flows only from past clean frames into the noised ones. See the next image to see in detail how information flows.
         </figcaption>
       </figure>
       <d-subsection>DART: Duplicate Augmented Replica Training</d-subsection>
       <p>
-          After some thinking, I figured out "<i>the trick</i>":
-        <ul>
-          <li>Duplicate the sequence.</li>
-          <li>Add noise to one copy.</li>
-          <li>Keep the other copy clean as context.</li>
-          <!-- <li>Design a causal masking that connects </li> -->
-        </ul>
+          After some thinking, I figured out "<i>the trick</i>" for having sequence-parallelism during training:
+      </p>
+      <ul>
+        <li>Duplicate the sequence.</li>
+        <li>Add noise to one copy.</li>
+        <li>Keep the other copy clean as context.</li>
+        <li>Ensure information flows only from clean past frames into the noisy ones.</li>
+      </ul>
+      <p>
+        This way, each noisy frame can still learn from past clean frames, while preserving causal information flow. A carefully designed masking scheme enforces this.<br><br>
+
+        At inference time things are simpler: standard causal masking suffices, and the model generates video autoregressively without mismatch.
       </p>
       </div>
       
@@ -289,7 +300,7 @@
         <svg id="attention-svg"></svg>
       </figure>
       <figcaption>
-        This interactive visualization explains the sequence-parallel training strategy used in Oniris. Hover over any box to see its connections. Click on a noisy query to see how one step of autoregressive inference works and how it relates with a step in the training mode.
+        This interactive visualization explains how attention masking in DART works. Hover over any box to see its connections. Click on a noisy query to see how one step of autoregressive inference works and how it relates with a step in the training mode.
       </figcaption>
 
       <p><br>
