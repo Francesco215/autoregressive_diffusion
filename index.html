@@ -119,12 +119,17 @@
           </figcaption>
         </figure> -->
         <p>
-          To build a world model you need:
+          <blockquote>
+          A world model is a model that predict the future state of a (simulated) world given the past states and external inputs<d-cite key="ha2018worldmodels"></d-cite><br>
+          </blockquote>
+          There are many ways of building a world model<d-cite key="taiuti2024worldmodels"></d-cite>, but to me the most natural way of doing so is predicting future frames based on past frames.<br><br>
+          To build this type of world model you need:
           <ul>
             <li>A variational autoencoder (VAE)</li>
             <li>An autoregressive video diffusion model</li>
           </ul>
-          The VAE compresses video into a smaller representation, and the autoregressive diffusion model generates the actual video.</p>
+          The VAE compresses video into a smaller representation, and the autoregressive diffusion model generates the actual video.
+        </p>
 
         <p>
           When I started this project (around February), the hottest world modeling papers were DIAMOND<d-cite key="alonso2024diffusion"></d-cite> and GameNGen<d-cite key="valevski2024diffusion"></d-cite>. But both suffered from extreme amnesia, so I decided to try something better.<br><br>
