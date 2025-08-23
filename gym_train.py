@@ -63,7 +63,7 @@ if __name__=="__main__":
     # sigma_data = 0.434
     sigma_data = 1.
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
-    loss_fn = KLLoss(P_mean=1.2,P_std=1., sigma_data=sigma_data, context_noise_reduction=0.5)
+    loss_fn = KLLoss(P_mean=0.4,P_std=1.4, sigma_data=sigma_data, context_noise_reduction=0.5)
 
     ref_lr = 1e-2
     current_lr = ref_lr
@@ -113,7 +113,7 @@ if __name__=="__main__":
 
         # Save model checkpoint (optional)
         if i % 500 * accumulation_steps == 0 and i!=0 :
-            # precond.noise_weight.fit_loss_curve()
+            precond.noise_weight.fit_loss_curve()
             print(f"\nGenerating dashboard at step {i}")
             # Pass the necessary arguments, including the current batch's latents
             plot_training_dashboard(

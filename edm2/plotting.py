@@ -59,16 +59,16 @@ def plot_training_dashboard(
         if min_sigma_plot >= max_sigma_plot:
              min_sigma_plot = 1e-2
              max_sigma_plot = 1e2
-        # sigma_values_plot = torch.logspace(np.log10(min_sigma_plot), np.log10(max_sigma_plot), num_points)
-        # if hasattr(noise_weight_module, 'calculate_mean_loss'):
-        #     mean_loss_plot = noise_weight_module.calculate_mean_loss(sigma_values_plot.to(noise_weight_module.sigmas.device))
-        #     ax1.plot(sigma_values_plot.cpu(), mean_loss_plot.cpu(), label='Best Fit', color='red', linewidth=2)
-        # else:
-        #      print("Warning: calculate_mean_loss not found on noise_weight_module.")
+        sigma_values_plot = torch.logspace(np.log10(min_sigma_plot), np.log10(max_sigma_plot), num_points)
+        if hasattr(noise_weight_module, 'calculate_mean_loss'):
+            mean_loss_plot = noise_weight_module.calculate_mean_loss(sigma_values_plot.to(noise_weight_module.sigmas.device))
+            ax1.plot(sigma_values_plot.cpu(), mean_loss_plot.cpu(), label='Best Fit', color='red', linewidth=2)
+        else:
+             print("Warning: calculate_mean_loss not found on noise_weight_module.")
         ax1.set_xscale('log')
         ax1.set_xlabel('σ (sigma)')
         ax1.set_ylabel('Loss')
-        # ax1.set_yscale('log')
+        ax1.set_yscale('log')
         ax1.set_title('Loss vs. σ')
         ax1.legend()
         ax1.grid(True, which="both", ls="--", alpha=0.5)

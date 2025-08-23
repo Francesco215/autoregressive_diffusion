@@ -109,17 +109,12 @@ class KLLoss:
         sigma, noise = sigma[:,-n_frames:], noise[:, -n_frames:]
 
         error = F - (images*sigma - noise*self.sigma_data**2)/(self.sigma_data*(sigma**2 + self.sigma_data**2).sqrt())
-        error = (error**2-1)*self.sigma_data**2/(sigma**2 + 2*self.sigma_data**2) + 1 
-        losses = G + error*torch.exp(-G)
-
-        losses = losses.mean(dim=(-1,-2,-3))
-        # losses = top_losses(errors, fraction=3e-3)
+        error = error**2
+        losses = (error-1)*self.sigma_data**2/(sigma**2 + 2*self.sigma_data**2) + 1 
+        losses = G + losses*torch.exp(-G)
 
         with torch.no_grad():
-            un_weighted_avg_loss = error.mean().detach().cpu().item()
+            un_weighted_avg_loss = losses.mean().detach().cpu().item()
+            net.noise_weight.add_data(sigma, error.mean(dim=(-1,-2,-3)))
 
-        net.noise_weight.add_data(sigma, losses)
-        # mean_loss = net.noise_weight.calculate_mean_loss(sigma)
-        # mean_loss = torch.clamp(mean_loss, min=1e-4, max=1)
-        # losses = losses / mean_loss
         return losses.mean(), un_weighted_avg_loss
