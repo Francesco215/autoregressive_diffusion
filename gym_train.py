@@ -10,6 +10,7 @@ from torch.optim import AdamW
 from torch.nn.utils import clip_grad_norm_
 import torch._dynamo.config
 
+import einops
 import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -30,15 +31,13 @@ if __name__=="__main__":
     original_env = "LunarLander-v3"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    autoencoder = VAE.from_pretrained("s3://autoregressive-diffusion/saved_models/vae_lunar_lander.pt").to(device).requires_grad_(False)
-    autoencoder.std = 1.45
 
-    resume_training = True
-    unet = UNet(img_resolution=256//autoencoder.spatial_compression, # Match your latent resolution
-                img_channels=autoencoder.latent_channels, # Match your latent channels
+    resume_training = False
+    unet = UNet(img_resolution=32, # Match your latent resolution
+                img_channels=3, # Match your latent channels
                 label_dim = 4, #this should be equal to the action space of the gym environment
                 model_channels=32,
-                channel_mult=[1,2,4,8],
+                channel_mult=[1,2,4],
                 channel_mult_noise=None,
                 channel_mult_emb=None,
                 num_blocks=2,
@@ -58,7 +57,7 @@ if __name__=="__main__":
     state_size = 32 
     total_number_of_steps = 80_000
     training_steps = total_number_of_steps * batch_size
-    dataset = GymDataGenerator(state_size, original_env, total_number_of_steps, autoencoder_time_compression = autoencoder.time_compression, return_anyways=False)
+    dataset = GymDataGenerator(state_size, original_env, total_number_of_steps, autoencoder_time_compression = 1, return_anyways=False, resolution=32)
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=micro_batch_size, prefetch_factor=4)
 
     # sigma_data = 0.434
@@ -90,7 +89,8 @@ if __name__=="__main__":
             frames, actions, _ = batch
             frames = torch.tensor(frames, device=device)
             actions = torch.tensor(actions, device = device)
-            latents = autoencoder.frames_to_latents(frames)
+            latents = einops.rearrange(frames, 'b t h w c -> b t c h w')/127.5-1
+            # latents = autoencoder.frames_to_latents(frames)
 
         # Calculate loss    
         loss, un_weighted_loss = loss_fn(precond, latents, actions, just_2d = i%4==0)
@@ -119,7 +119,7 @@ if __name__=="__main__":
             plot_training_dashboard(
                 save_path=f'images_training/dashboard_step_{i}.png', # Dynamic filename
                 precond=precond,
-                autoencoder=autoencoder,
+                autoencoder=None,
                 losses_history=losses, # Pass the list of scalar losses
                 current_step=i,
                 micro_batch_size=micro_batch_size,

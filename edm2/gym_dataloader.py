@@ -11,7 +11,7 @@ import gc
 
 
 class GymDataGenerator(IterableDataset):
-    def __init__(self, state_size=32, environment_name="LunarLander-v3", training_examples=10_000, autoencoder_time_compression=4, return_anyways=True):
+    def __init__(self, state_size=32, environment_name="LunarLander-v3", training_examples=10_000, autoencoder_time_compression=4, return_anyways=True, resolution=256):
         self.state_size = state_size
         self.environment_name = environment_name
         self.evolution_time = 10
@@ -20,6 +20,7 @@ class GymDataGenerator(IterableDataset):
         self.autoencoder_time_compression = autoencoder_time_compression
         self.frame_collection_interval = 2
         self.return_anyways=return_anyways
+        self.resolution = resolution
 
         assert state_size % autoencoder_time_compression == 0
 
@@ -61,7 +62,7 @@ class GymDataGenerator(IterableDataset):
             
             if step_count >= 0 and step_count % self.frame_collection_interval == 0:
                 frame = env.render()
-                frame = resize_image(frame)
+                frame = resize_image(frame, self.resolution)
                 frame_history.append(np.array(frame))
                 state_history.append(state)  # Store the state for this frame
             
@@ -76,13 +77,13 @@ class GymDataGenerator(IterableDataset):
 
 
 
-def resize_image(image_array):
+def resize_image(image_array, final_resolution = 256):
     # Check if the input array has the correct shape
     if image_array.shape != (400, 600, 3):
         raise ValueError("Input array must have shape (400, 600, 3)")
     
     # Resize the image using OpenCV
-    resized_image = cv2.resize(image_array, (256, 256), interpolation=cv2.INTER_AREA)
+    resized_image = cv2.resize(image_array, (final_resolution, final_resolution), interpolation=cv2.INTER_AREA)
     
     return resized_image 
 def gym_collate_function(batch):
