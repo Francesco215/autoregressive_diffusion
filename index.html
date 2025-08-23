@@ -1,0 +1,656 @@
+<!doctype html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="website/scripts/distill.pub_template.v2.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <link rel="stylesheet" href="website/style.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.13.18/dist/katex.min.css" integrity="sha384-zTROYFVGOfTw7JV7KUu8udsvW2fx4lWOsCEDqhBreBwlHI4ioVRtmIvEThzJHGET" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.13.18/dist/katex.min.js" integrity="sha384-GxNFqL3r9uRJQhR+47eDxuPoNE7yLftQM8LcxzgS4HT73tp970WS/wV5p8UzCOmb" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.13.18/dist/contrib/auto-render.min.js" integrity="sha384-vZTG03m+2yp6N6BNi5iM4rW4oIwk5DfcNdFfxkk9ZWpDriOkXX8voJBFrAO7MpVl" crossorigin="anonymous"></script>
+
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-D4Y143PXCS"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+
+      gtag('config', 'G-D4Y143PXCS');
+    </script>
+
+    <script >
+        document.addEventListener("DOMContentLoaded", function() {
+            renderMathInElement(document.body, {
+                // customised options
+                // • auto-render specific keys, e.g.:
+                delimiters: [
+                    {left: '$$', right: '$$', display: true},
+                    {left: '$', right: '$', display: false},
+                    {left: '\\(', right: '\\)', display: false},
+                    {left: '\\[', right: '\\]', display: true}
+                ],
+                // • rendering keys, e.g.:
+                throwOnError : false
+            });
+        });
+    </script>
+
+</head>
+
+
+  <d-front-matter>
+    <script type="text/json">{"authors": []}</script>
+  </d-front-matter>
+
+  <d-title> 
+    <h1>Oniris</h1>
+    <p>
+      A small story about building a long-context World Model with no money
+    </p>
+    
+  </d-title>
+  <d-byline>
+    <div class="byline grid">
+      <div class="authors-affiliations grid">
+        <h3>Authors</h3>
+        <h3>Affiliations</h3>
+        
+          <p class="author">
+            
+              <a class="name" href="https://github.com/Francesco215">Francesco Sacco</a> (POV)
+          </p>
+          <p class="affiliation">
+          None
+          </p>
+        
+          <p class="author">
+            
+              <a class="name" href="https://github.com/the-puzzler">Matteo Peluso</a>
+          </p>
+          <p class="affiliation">
+          <a class="affiliation" href="https://www.uzh.ch/en.html">University of Zurich</a>
+          </p>
+        
+        
+          <p class="author">
+            
+              <a class="name" href=" "> </a>
+          </p>
+          <p class="affiliation">
+          <a class="affiliation" href=""></a>
+          </p>
+        
+      </div>
+      <div></div>
+      <div class="date-doi">
+        <h3>Date</h3>
+        <p>August 22th 2025</p>
+        <h3>DOI</h3>
+        <p>10.5281/zenodo.16927467</p>
+      </div>
+    </div>
+  </d-byline>
+
+
+  <d-article>
+  
+    <div>
+      <d-section id="abs">Where it all started: The Humble Bee</d-section>
+
+      <p>
+        After leaving my job, I was officially unemployed, but don't worry, I had plenty of time to train some models since I'm already training to be a disappointment.
+      </p>
+       <figure class="l-side">
+          <img src="website/images/vr-bee.png">
+          <figcaption>
+            Apis mellifera, commonly known as honey bee, with a custom made VR headset. It allows our little user to learn how to fly without bumping around.<br><br>
+            A bee brain has less compute than modern smarphone chips. Bees also don't need extended periods of training. Even if you assume that part of their ability is encoded in their DNA, it's worth noting that a bee's genome is equivalent to 1.2 Gb data. That's not a lot of data.
+          </figcaption>
+        </figure>
+      <p>
+        Originally, I wanted to build an AI for drones that's as smart as a bee. From first principles, this seemed doable: bees have tiny brains, and with just a brief exposure to the real world they can navigate reliably without ever getting lost.<br>
+        In ML terms, this problem should require little compute and little data (in principle!).
+      </p>
+      <p>
+        But I needed an environment to train the RL policy in. Smashing real drones wasn't an option, and there were no good off-the-shelf long-context world models to train in. So I had to make one myself.<br><br><br>
+
+        In this blog post, I'll talk about building that virtual environment. There won't be any RL yet- the Bee AI has to wait for now.
+      </p>
+    </div>
+
+
+    <d-section>How to build a world model</d-section>
+      <div>
+        <!-- <figure class="l-side">
+          <img src="website/images/edm2.png">
+          <figcaption>
+            Graph showing the EDM2 models compared to other models. I didn't have a lot of money and I needed to be really resource efficient, this is why i chose this architecture. Image taken from <d-cite key="karras2024analyzing"></d-cite>
+          </figcaption>
+        </figure> -->
+        <p>
+          <blockquote>
+          A world model is a model that predict the future state of a (simulated) world given the past states and external inputs<d-cite key="ha2018worldmodels"></d-cite><br>
+          </blockquote>
+          There are many ways of building a world model<d-cite key="taiuti2024worldmodels"></d-cite>, but to me the most natural way of doing so is predicting future frames based on past frames.<br><br>
+          To build this type of world model you need:
+          <ul>
+            <li>A variational autoencoder (VAE)</li>
+            <li>An autoregressive video diffusion model</li>
+          </ul>
+          The VAE compresses video into a smaller representation, and the autoregressive diffusion model generates the actual video.
+        </p>
+
+        <p>
+          When I started this project (around February), the hottest world modeling papers were DIAMOND<d-cite key="alonso2024diffusion"></d-cite> and GameNGen<d-cite key="valevski2024diffusion"></d-cite>. But both suffered from extreme amnesia, so I decided to try something better.<br><br>
+
+          It wasn't going to be easy. I knew Google was working on the same problem. I knew I was entering a strength competition against a titan. I knew I would lose- but I also knew I'd come out stronger than when I started!<br><br>
+
+          <!-- As a foundation, I chose EDM2<d-cite key="karras2024analyzing"></d-cite>, my favorite image diffusion paper. It dominated the Pareto frontier at the time, and I set out to generalize it into an autoregressive long-context video generator.<br><br> -->
+
+          Oh, and I needed a name for the project. I called it Oniris.
+        </p>
+      </div>
+
+    <d-section>The first version of the VAE</d-section>
+      <p>
+        I didn't really want to train a VAE. Ideally, I'd just use an off-the-shelf one and focus on the diffusion part. But most video VAEs I found were… weird. None of them did exactly what I needed.<br><br>
+
+        I needed a VAE that:
+      </p>
+        <ul>
+        <li>Compressed spatially and across channels, similar to the Stable Diffusion VAE</li>
+        <li>Compressed temporally as well</li>
+        <li>Supported activation caching to handle arbitrarily long videos</li>
+        </ul>
+      <p>
+        I also came across a paper arguing that video VAEs should be group causal<d-cite key="wu2025improved"></d-cite>. The reason is that you can't really do a fully causal VAE that has non-zero time compression.<br>
+        Problem was, I didn't like the authors' code. So, as if the project wasn't already time-consuming enough, I decided to write my own implementation from scratch.
+      </p>
+      <figure>
+        <svg id="VAE-svg"></svg>
+      </figure>
+      <figcaption class="l-gutter">
+        An interactive visualization of the group-causal VAE architecture.<br>
+        The encoder (left) compresses the input into a latent space with 4x time compression, and the decoder (right) reconstructs it.<br><br>
+        When you hover over one of the nodes you will see highlighted all of the nodes that causally affect or are causally affected by it.<br><br>
+        Now, try to see what's the difference between causal and group causal.
+        <div class="vae-controls">
+            <button id="vae-toggle-button" class="colab-root">Switch to Causal</button>
+        </div>
+        <br>
+        Even when the network tries to be fully causal it is unable to do so because of the time-compression. <br><br>
+
+        For example if you highlight the last node of a group on the encoder side, you will see that it affects the first node of the same group on the decoder side even if the VAE is fully causal<br><br>
+
+        The group-causal VAE is fully causal in latent space and group-casual in pixel space.
+      </figcaption>
+      <d-subsection>Nothing is Ever Simple</d-subsection>
+      <p>
+        I thought it'd be smart to test my world modeling approach on a “simple” environment. So I fired up Gymnasium and tried compressing Lunar Lander videos.<br><br>
+        Yeah, not so simple.
+      </p>
+      <figure>
+        <img src="website/images/old-lander.png">
+        <figcaption>
+          The fuzzines of the lander seemed impossible to remove. It was present no matter the choice of hyperparameters or the choice of $L_1$ vs $L_2$ loss. It was so frustrating
+        </figcaption>
+      </figure>
+      <p>
+        Turns out when your dataset is 98% black background and a white floor, you can get a tiny loss and a bad reconstruction at the same time.
+      </p>
+
+    <d-subsection>The Trick</d-subsection>
+    <p>
+      I spent weeks trying to get it working without any hacks, but the local minima were just too good.<br><br>
+
+      That's when I met Matteo online. He loved the project and jumped in to help. Unlike me, he wasn't too bothered the Bitter Lesson<d-cite key="sutton2019bitter"></d-cite>, instead, he suggested:
+      <blockquote>
+        “What if we only calculate the loss on the top 0.5% of pixels with the highest error?”
+      </blockquote>
+      At first, I hesitated- it felt like smuggling knowledge into the loss function. But in the end, the one who needed convincing wasn't me, it was the computer. So he tried it.<br><br>
+
+      And it worked! Beautifully so!<br>
+    </p>
+    <figure>
+      <img src="website/images/working-VAE.png">
+      <figcaption>
+        Quality of the VAE reconstruction if we only calculate the loss on the top 0.5% of pixels with the highest error. It even works in different environments!
+      </figcaption>
+    </figure>
+      <p>
+      For the first time, the VAE produced meaningful reconstructions. With that solved, I could finally move on to building the world model.
+      </p>
+      
+
+
+
+
+
+
+      <d-section>The World Model</d-section>
+      <p>
+        With frame compression solved, I needed next-frame generation.<br><br>
+
+        To do next-frame generation I math-ed out what would happen if next-token prediction and diffusion modelling had a child.
+
+        Basically, Diffusion models estimate the score function
+
+        $$
+          \mathbb s(x,\sigma)=-\mathbb\nabla_x \log p(x,\sigma)
+        $$
+
+        and LLMs work estimate the probability of the next token given the past.
+        $$
+          \textrm{LLM}(x_i,\dots,x_0)=-\log p(x_{i+1}|x_i,\dots,x_0)
+        $$
+
+        So to generate videos autoregressively, you estimate the score conditioned on previous frames. It's essentially image generation conditioned on history.
+
+        $$
+          \mathbb s(x_i,\sigma;x_{i-1},\dots,x_0)=-\mathbb\nabla_x \log p(x_i|\sigma;x_{i-1},\dots,x_0)
+        $$
+      </p>
+
+      <d-subsection>The Real Challenge: Sequence-Level Parallelism</d-subsection>
+      <div>
+        <p>
+          The real challenge wasn't just building the model- it was exploiting the transformer's ability to train in a <i>parallelizable way across the sequence dimension</i>. Without that, there was no chance of scaling to long sequences.
+        </p>
+        <figure class="l-side" style="margin-top: 0em;">
+          <img src="website/images/llm.svg">
+          <figcaption>
+            Unlike RNNs, transformers predict all tokens in parallel during training: each position in the sequence provides a supervised signal simultaneously. This sequence-level parallelism gives transformers far greater training efficiency.
+          </figcaption>
+        </figure>
+        <p>
+          But why does sequence-parallel training matter?<br><br>
+
+          When I first learned about language modeling, I made a rookie mistake: I trained a model to predict only the last token in a sentence. The result? It was shit. The model didn't learn a thing.<br><br>
+
+          Why? Because transformers don't make just one prediction per forward pass- <b>they make one prediction per token</b>. If your sequence has 128 tokens, that's 128 supervised training signals, not just one. That parallelism is the difference between a working model and a random number generator.<br><br>
+
+          For Oniris, leveraging sequence-level parallelism wasn't optional- it was non-negotiable.
+        </p>
+        <p>
+          But there’s a catch: implementing this naively creates a mismatch. If you feed an entire noised sequence into a causal transformer during training, the model sees noisy context everywhere. At inference time, however, past frames are clean while only the current frame is noised. This mismatch breaks autoregressive video generation.
+        <figure>
+          <img src="website/images/wrong-model.svg">
+          <figcaption>
+            Wrong approach: during training the model sees every frame noised, while during inference all but the last frame are clean. This mismatch leads to poor performace.
+          </figcaption>
+        </figure>
+        <p>
+          I needed a way to make sure that the information given to each noisy frame came from <i>clean-past frames</i>.
+        </p>
+
+      </div>
+
+      <div>
+      <figure class="l-side" style="margin-top: 0em;">
+        <img src="website/images/dart.svg" style="width: 100%">
+        <figcaption>
+          DART: Duplicate the sequence. One copy is noised, where the loss is evaluated. The other copy stays clean and provides context. Information flows only from past clean frames into the noised ones. See the next image to see in detail how information flows.
+        </figcaption>
+      </figure>
+      <d-subsection>DART: Duplicate Augmented Replica Training</d-subsection>
+      <p>
+          After some thinking, I figured out "<i>the trick</i>" for having sequence-parallelism during training and named it DART (Duplicate Augmented Replica Training).<br><br>
+          Here is how it works:
+      </p>
+      <ul>
+        <li>Duplicate the sequence.</li>
+        <li>Add noise to one copy.</li>
+        <li>Keep the other copy clean as context.</li>
+        <li>Ensure information flows only from clean past frames into the noisy ones.</li>
+      </ul>
+      <p>
+        This way, each noisy frame can still learn from past clean frames, while preserving causal information flow. A carefully designed masking scheme enforces this.<br><br>
+
+        At inference time things are simpler: standard causal masking suffices, and the model generates video autoregressively without mismatch.
+      </p>
+      </div>
+      
+
+      <figure class="l-page-outset">
+        <svg id="attention-svg"></svg>
+      </figure>
+      <figcaption>
+        This interactive visualization explains how attention masking in DART works. Hover over any box to see its connections. Click on a noisy query to see how one step of autoregressive inference works and how it relates with a step in the training mode.
+      </figcaption>
+      <div>
+      <figure class="l-side" style="margin-top: 0em;">
+        <img src="website/images/edm-DART.svg" style="width: 100%">
+        <figcaption>
+          UNet-based DART architecture inspired from<d-cite key="karras2024analyzing"></d-cite>. The first layers in light gray are convolutional layers, then as you get closer to the bottleneck self-attention layers (in dark grey) are present, then in the bottleneck DART-layers (colored) are present. This way the information is compressed before getting passed to DART layers.
+        </figcaption>
+      </figure>
+      <p><br>
+      One of the drawbacks of DART is the higher memory footprint. The size of the attention matrix becomes $2\times T \times H\times W$ where $T, H, W$ are respectively the number of frames, the height and the width of the frames.<br><br>
+      To improve performace I decided to use a UNet-like architecture<d-cite key="karras2024analyzing"></d-cite>. This allowed me to save lots and lots of memory by using DART only in the bottleneck of the UNet.
+
+      <d-subsection>Results:</d-subsection>
+      Using DART I was able to:
+      </p>
+      <ul>
+        <li>Exploit sequence-level parallelism during training</li>
+        <li>Squeeze every drop of compute out of the GPU during training thanks to Flex-Attention <d-cite key="dong2024flex"></d-cite></li>
+        <li>During inference use a generalized KV-caching to substantially speed up the generation time</li>
+      </ul>
+
+      <p>
+      But did it work? <b>YES!</b>
+      </p>
+      </div>
+
+      <figure style="width: 70%; margin-left: auto; margin-right: auto;">
+        <img src="website/images/lander-world.png">
+        <figcaption>
+          In the image above the first three rows are given as context, the next 3 rows are generated by Oniris. As you can see the model works pretty well!
+        </figcaption>
+      </figure>
+
+      <p>
+        After ~4h of training I got the model to simulate the lunar lander gym environment!<br><br>
+        And with that the Oniris architecture was now ready and tested! I was so excited! I was ready to scale up!<br><br>
+        If you want to know more on how it works, check out <a href="https://github.com/Francesco215/autoregressive_diffusion/">the repository</a>
+      </p>
+
+
+
+
+
+
+
+
+
+
+
+    <d-section>Scaling Up</d-section>
+    <p>
+      So now, it was time to move onto the real deal. All I had to do was swap out the gymnasium environment for gameplay of counterstrike, increase the parameter count and everything would work fine. Then the project would be complete! Afterall we all know that scaling is fool proof and works 100% of the time without any hiccups whatsoever right? Right?<br><br>
+
+      My first serious run of training a counterstrike VAE on a 4090 went pretty well, I was so excited!
+    </p>
+    <figure>
+        <img src="website/images/old_vae_low_compression.png">
+        <figcaption>
+          Training run for the CounterStrike VAE. It has a compression of 24x <code>[t,h,w,3] -> [t/4,h/4,w/4,8]</code>
+        </figcaption>
+      </figure>
+    <p>
+      For training the diffusion model we even secured compute credits:
+    </p>
+      <ul>
+        <li>1000$ form <a href="lambda.ai">Lambda</a></li>
+        <li>300$ from <a href="https://sfcompute.com/">SF Compute</a></li>
+      </ul>
+    <p>
+      It felt like swimming in money! We love you both ❤️
+    </p>
+    <figure>
+      <div style="display: flex; justify-content: center; align-items: center; gap: 2rem; width: 100%;">
+        <img src="website/images/sfcompute.png" alt="SF Compute Logo" style="flex: 1; height: 15vw; max-height: 300px; width: 0; object-fit: contain;">
+        <img src="website/images/lambda.png" alt="Lambda Logo" style="flex: 1; height: 15vw; max-height: 300px; width: 0; object-fit: contain;">
+      </div>
+      <figcaption>
+        Also the prices is SF Compute were really low! that meant that the 300$ were worth way more!
+      </figcaption>
+    </figure>
+
+    <p>
+      I managed to run some jobs with 8×H100s for about two hours, but… things weren't so straightforward. No matter what I tried, the diffusion model either refused to learn, or we simply didn't have enough compute. It was impossible to tell which.
+    </p>
+    <figure>
+      <img src="website/images/first-cs-run.png">
+      <figcaption>
+        Training dashboard for one of my compute heavy counterstrike runs. As you can see the average loss plataus and the generated images are very fuzzy
+      </figcaption>
+    </figure>
+    <p>
+      By then, we had burned through about 10% of our credits. I considered going full YOLO, but something told me it would fail. So I checked the numbers from DIAMOND and GameNGen:
+    </p>
+
+    <table style="border-collapse: collapse; margin: 1em 0; width: 100%; text-align: left;">
+      <thead>
+        <tr>
+          <th style="border-bottom: 2px solid #ccc; padding: 8px;">Model</th>
+          <th style="border-bottom: 2px solid #ccc; padding: 8px;">Compute Used</th>
+          <th style="border-bottom: 2px solid #ccc; padding: 8px;">Equivalent (H100, bf16)</th>
+          <th style="border-bottom: 2px solid #ccc; padding: 8px;">Works?</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding: 8px;">DIAMOND <d-cite key="alonso2024diffusion"></d-cite></td>
+          <td style="padding: 8px;">12 RTX 4090-days</td>
+          <td style="padding: 8px;">≈ 3 H100-days</td>
+          <td style="padding: 8px;">✅</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px;">GameNGen <d-cite key="valevski2024diffusion"></d-cite></td>
+          <td style="padding: 8px;">180 TPUv5e-days</td>
+          <td style="padding: 8px;">≈ 3 H100-days</td>
+          <td style="padding: 8px;">✅</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px;">Oniris (mine)</td>
+          <td style="padding: 8px;">16 H100-hours</td>
+          <td style="padding: 8px;">≈ 0.7 H100-days</td>
+          <td style="padding: 8px;">❌</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      So what was wrong? After a lot of head-scratching, I pinned the blame on the VAE. Its compression ratio was only 24×, and that probably wasn't enough.<br><br>
+      Back to square one: retraining the VAE, this time aiming for a 96× compression ratio.
+    </p>
+
+    <d-section>The Valley of Despair</d-section>
+    <div>
+      <figure class="l-side">
+        <img src="website/images/shit-vae.png">
+        <figcaption>
+          Training results of the VAE with 96x compression. Pure garbage.
+        </figcaption>
+      </figure>
+      <p>
+        This is where things take a dark turn folks. Everything was shit. I tried to debug the model for months to no avail. I tried everything.<br><br>
+        It's hard to convey with words the sheer amount of things I tried and NONE of them worked. The model simply would not compress beyond 24x and I needed 4 times as much! I was wasting so much time, running out of energy and still nothing seemed to work.
+      </p>
+    </div>
+    <figure class="l-screen" style="margin-bottom: 0em">
+      <img src="website/images/valley-of-despair.png">
+    </figure>
+    <figcaption>
+      The commit graph during <b>The Valley of Despair</b>. The sheer amount of dead ends is, frankly, defeating.
+    </figcaption>
+    <div style="margin-bottom: 20em"></div>
+
+
+
+
+
+
+
+
+
+    <d-subsection>Taking a break</d-subsection>
+    <p>
+      I realised I was going nowhere, and so I chose to take a month of break to reset.<br><br>
+      During that time, Matteo and I started a small business called <a href="https://noteician.com/" style="color: teal; font-weight: bold;">Noteician</a>. We even got our first customers (check it out!).<br><br>
+
+      I tried to resist the urge to go back to work on Oniris, but then, one night something surreal pulled me back to the project…
+    </p>
+    <div style="margin-bottom: 20em"></div>
+
+    <d-section>The Dream</d-section>
+    <p>
+      One night, I dreamt of deriving the Mean Squared Error (MSE) loss.<br>
+      In the dream, I saw that its derivation hinged on the assumption of constant data uncertainty, where the only goal is to estimate the mean.<br>
+      Isn't this too restrictive? Why shouldn't our model also account for the uncertainty itself? Surely, there had to be a way.<br><br>
+      Then I remembered that for classification tasks the cross-entropy loss implicitly handles uncertainty. This sparked an idea:
+    </p>
+      <blockquote>
+        Could I achieve the same for regression by calculating the negative log-likelihood of a Gaussian distribution, but with a non-constant standard deviation?
+      </blockquote>
+    <p>
+      When I woke up I jumped to my desk, took pen and paper, wrote the gaussian probability distribution, and calculated the loss function.
+    </p>
+    <d-subsection>The Theory</d-subsection>
+    <p>
+      Suppose we have some datapoints $X_i$ and $Y_i$ we want to predict the ground truth probability $p(y|x)$.<br><br>
+
+      We don't have direct access to $p$, so we are going to approximate $p(y|x)$ with $q(y|x)$ where is a gaussian where the mean and the variance are learned functions $\mu_\theta(x)$ and $\sigma_\phi(x)$
+      $$
+        q(y|x) = \frac {1}{\sqrt{2 \pi \sigma_\phi^2}} \exp  -\frac{(y-\mu_\theta)^2}{2\sigma_\phi^2}
+      $$
+      The loss is simply going to be the negative log likelyhood of $q(y|x)$
+      $$
+        L = -\log q(y|x)  = -\log\left[\frac {1}{\sqrt{2 \pi \sigma_\phi^2}} \exp  -\frac{(y-\mu_\theta)^2}{2\sigma_\phi^2}\right]
+      $$
+
+      Doing some simple calculations, get that the loss is equal to
+
+      $$
+       L = \log \sigma_\phi + \frac{(y-\mu_\theta)^2}{2\sigma_\phi^2} + \textrm{const}
+      $$
+      As a sanity check, you can see that if we consider $\sigma_\phi$ to be a constant, we recover the $L_2$ loss.
+      <d-footnote>Small footnote about computational stability:<br><br>The loss function as written like this $$L = \log \sigma_\phi + \frac{(y-\mu_\theta)^2}{2\sigma_\phi^2}$$ can have stability issues because of $\log\sigma_\phi$ and $\sigma^{-2}_\phi$ terms.<br> This goes away by making the network predict the logvar $l_\phi$ $$l_\phi = \log \sigma^2_\phi$$ Substituiting this into the loss equation we get $$L = l_\phi + (y-\mu_\theta)^2e^{-l_\phi}$$ This is stable both numerically and during training </d-footnote>
+    </p>
+    <d-subsection>Properties of this Loss</d-subsection>
+    <p>
+      Now it comes the interesting part:<br>
+      If we want to find the minimum with respect to $\sigma_\phi$ we just set it's derivative to zero
+      $$
+        \frac{\partial L}{\partial \sigma_\phi} = \frac 1{\sigma_\phi} - \frac {(y-\mu_\theta)^2}{\sigma_\phi^3}=0
+      $$
+      And we get that the loss is at the minimum when
+      $$
+        \sigma_\phi^2 = (y-\mu_\theta)^2
+      $$
+      This means that $\sigma_\phi$ learns to estimate the expected prediction error!
+    <div>
+      On the other end, if we calculate the gradient with respect to $\mu_\theta$ we get
+      $$
+        \frac{\partial L}{\partial \mu_\theta} = \frac{y-\mu_\theta}{\sigma_\phi^2}
+      $$
+    </p>
+    <figure class="l-side">
+      <img src="website/images/GNLLL.svg">
+      <figcaption>
+        Dummy dataset where I tested this loss function. As you can see the model manages to predict perfectly the mean and variance of the datapoints.<br>
+        <a href="https://colab.research.google.com/drive/1PNxZEpsl9OtpUM9nT56ZAEh7bNVtkQiq?usp=sharing">I've written a colab if you want to check it out.</a> Be careful, there are several local minima, so you might need to run the training several times
+
+      </figcaption>
+    </figure> 
+    <p>
+      This means that the gradient to find the expected value of $y$ is exactly the same as the one of the $L_2$ loss, but here each sample is weighted by the expect sample error $\sigma_\phi$- Which is exactly what you want!
+      <d-footnote>
+        This also solves the $L_1$ vs $L_2$ debate.<br><br>
+        In short, people shy away form using $L_2$ loss in VAEs because it penalizes large errors more than $L_1$. Thus, using $L_2$ leads to blurry images and makes it harder for the auxiliary losses such as LPIPS and GAN losses to do their job.<br>
+        This lead people to use the $L_1$ loss because it's more "kind".<br><br>
+        That's not math, that's bro-science.<br><br>
+        The loss I've just introduced fixes it!<br><br>
+        As you'll see in a later section the adaptive uncertainty estimation allows the model to follow the $L_2$ loss where it's more confident in his prediction, and follows more the auxiliary losses where it's less confident.<br><br>
+        Problem solved.
+      </d-footnote>
+    </p>
+    <d-subsection>Sanity check</d-subsection>
+    <p>
+      To perform a sanity check, I ran a quick linear regression where the standard deviation of the samples was not constant. My goal was to see if a model trained with this new loss function could correctly infer the changing error band. And it did it!<br><br>
+      After some research, it seems that this method was already discovered<d-cite key="nix1994estimating"></d-cite> and it even had a <a href="https://docs.pytorch.org/docs/stable/generated/torch.nn.GaussianNLLLoss.html">Pytorch page</a>.<br><br>
+      Curiously, this approach doesn't seem to be used in the image generation literature. I think I'm the first one to try it! With this renewed sense of purpose, I was ready to dive back in.<br><br>
+    </p>
+    <d-section>Back to the VAE</d-section>
+    <p>
+      I started reading again tons and tons and tons of stuff. At some point I found <a href="https://wayfarerlabs.ai/blog/training-diffusable-autoencoders">this amazing blog post</a> by <a href="https://wayfarerlabs.ai/">OpenWorldLabs</a> that explained how to train diffusable autoencoders.<br>
+      It was a gold mine of information, so I implemented lots of stuff that was in there as well!<d-cite key="chen2024deep, hacohen2024ltx"></d-cite> <br><br>
+      Finally, after blood sweat and tears, I now have a 96x compression VAE and just look at the results: <i>*dramatic music*</i>
+    </p>
+    </div>
+
+    <figure>
+      <img src="website/images/logvar-VAE.png">
+      <figcaption>
+        The first row represents the original frames $y$, the second row the reconstructed image $\mu_\theta$ and the third row the uncertainty $\sigma_\phi$.<br>
+        The quality of this new VAE is substantially better! As you can see the areas where the model is less precise (mainly some edges and tree leafs) are highlighed in the uncertanty heatmap
+      </figcaption>
+    </figure> 
+    <p>
+      It's really good! Moreover the because of the fact that the errors are weighted by the predicted confidence $\sigma_\phi$, the learning process pushes the model to follow more the auxiliary losses (LPIPS and GAN loss) in the areas where there is high uncertainty, and it forces the model to follow the $L_2$ loss when $\sigma_\phi$ is low.
+    </p>
+
+    <d-section>Back to the World Model</d-section>
+    <p>
+      Now that I had a decent VAE I was able to train the world model much faster and more efficiently, however...<br><br>
+
+      It was still shit.
+    </p>
+    <figure>
+      <img src="website/images/training_new_VAE.png">
+      <figcaption>
+        Training dashboard of the world model with the new VAE. The model doesn't seem to learn effectively. It's not pure noise, but clearly something is not working correctly
+      </figcaption>
+    </figure> 
+    <p>
+      Even with the improved latents, it wouldn't work correctly. I'm still trying to figure out where the problem lies, but for now, the story pauses here. No flashy interactive demo- just lessons learned.
+    </p>
+    <d-section>Where are we now</d-section>
+    <p>
+      While we were working on this, Google revealed <a href="https://deepmind.google/discover/blog/genie-3-a-new-frontier-for-world-models/">Genie 3</a>. The titan won the strength contest. Their demo is breathtaking- and in many ways, exactly what I wanted to build.<br><br>
+      But this doesn't discourage me. It only shows what's possible. If Genie3 proves anything, it's that this approach is viable. There's still space to innovate- to build efficient world models that run on consumer hardware.<br><br>
+      So if you've got spare GPU hours, a knack for coding, or just a wild idea you want to test- come help.<br>
+      Me and Matteo are building this one piece at a time, and it's way more fun with company.<br>
+      After all, bees work best in swarms 🐝
+    </p>
+  </d-article>
+
+  
+  
+  
+  
+  
+  <d-appendix>
+    <h3>Acknowledgements</h3>
+    <p>Thanks to Davide Locatelli for teaching us how to tell good stories with blog posts. <a href="https://derewah.dev/">Check out his blog!</a>
+    <br>Thanks to <a href="https://x.com/gisilvs">Gianluigi Silvestri</a> for the informal peer-review and tips.
+    <br>We also want to thank Lambda and SF Compute for the free credits.</p>
+    <h3>
+      Constact
+    </h3>
+    <p> You can do so by sending an email to this address francesco215@live.it or by messaging on discord at sacco215</p>
+    <h3>
+      Citation
+    </h3>
+    <p>For attribution in academic contexts, please cite this work as</p>
+    <pre class="citation-short">
+      Sacco, et al., "Oniris", zenodo, 2025
+    </pre>
+    <p>
+      BibTeX citation
+    </p>
+    <pre class="citation-short">
+      @article{sacco2025Oniris
+        author = {Sacco, Francesco and Peluso, Matteo},
+        title= {Oniris},
+        journal = {Zenodo},
+        year = {2025},
+        doi = {10.5281/zenodo.16927467},
+        url = {francesco215.github.io/autoregressive_diffusion/}
+      }
+    </pre> 
+  </d-appendix>
+  
+  
+  
+  
+  <d-bibliography src="website/bibliography.bib"></d-bibliography>
+  <script src="website/scripts/VAE.js"></script>
+  <script src="website/scripts/attention.js"></script>
+
+  
+  <script rel="text/javascript" src="website/sourcecode.js"> </script>
+
+</body>

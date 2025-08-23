@@ -1,0 +1,351 @@
+#colab-hero {
+  margin-right: 20px;
+  display: block;
+  align-self: center;
+  text-align: center;
+  width: 170px;
+  height: 16px;
+  cursor: pointer
+}
+#colab-hero:hover {
+  background-color: rgb(231, 237, 244);
+}
+.colab-root {
+  display: inline-block;
+  background: rgba(255, 255, 255, 0.75);
+  padding: 15px 8px;
+  border-radius: 4px;
+  font-size: 12px !important;
+  text-decoration: none;
+  color: rgb(87, 87, 87);
+  border: none;
+  font-weight: 300;
+  border: solid 1px rgba(0, 0, 0, 0.08);
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+  border-bottom-color: rgba(0, 0, 0, 0.15);
+  text-transform: uppercase;
+  line-height: 16px;
+}
+span.colab-span {
+  background-image: url(https://distill.pub/2020/growing-ca/images/colab.svg);
+  background-repeat: no-repeat;
+  background-size: 20px;
+  background-position-y: 2px;
+  display: inline-block;
+  padding-left: 24px;
+  border-radius: 4px;
+  text-decoration: none;
+}
+
+span.git-span {
+  background-image: url(https://upload.wikimedia.org/wikipedia/commons/9/91/Octicons-mark-github.svg);
+  background-repeat: no-repeat;
+  background-size: 15px;
+  background-position-y: 0px;
+  display: inline-block;
+  padding-left: 18px;
+  border-radius: 4px;
+  text-decoration: none;
+}
+span.mail-span {
+  background-image: url(website/other/email.svg);
+  background-repeat: no-repeat;
+  background-size: 15px;
+  background-position-y: 0px;
+  display: inline-block;
+  padding-left: 18px;
+  border-radius: 4px;
+  text-decoration: none;
+}
+
+p.definition_text {
+  border-left: 6px solid #ccc;
+  padding: 0.01em 16px;
+}
+
+p.theorem_text {
+  border-left: 6px solid #ccc;
+  padding: 0.01em 16px;
+}
+
+div.proof_text {
+  border-left: 3px solid #ccc;
+  padding: 0.01em 16px;
+}
+
+span.value {
+  display: inline-block;
+  width: 25px;
+}
+
+/*this part is for the image on the side*/
+.l-side {
+  width: 100%;
+  padding-left: 0;
+  margin-bottom: 0em !important;
+  padding-bottom: 1em;
+}
+
+@media (min-width: 1180px) {
+  .l-side {
+    float: right;
+    position: relative;
+    left: 11em;
+    margin-left: -11em;
+    width: 450px;
+    padding-left: 1em;
+  }
+}
+
+d-article p {
+  clear: left;
+}
+
+/* table of contents */
+@media (max-width: 1000px) {
+  d-contents {
+    justify-self: start;
+    align-self: start;
+    grid-column-start: 2;
+    grid-column-end: 6;
+    padding-bottom: 0.5em;
+    margin-bottom: 1em;
+    padding-left: 0.25em;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+    border-bottom-width: 1px;
+    border-bottom-style: solid;
+    border-bottom-color: rgba(0, 0, 0, 0.1);
+  }
+}
+
+@media (min-width: 1000px) {
+  d-contents {
+    align-self: start;
+    grid-column-start: 1;
+    grid-column-end: 4;
+    justify-self: end;
+    padding-right: 3em;
+    padding-left: 2em;
+    border-right: 1px solid rgba(0, 0, 0, 0.1);
+    border-right-width: 1px;
+    border-right-style: solid;
+    border-right-color: rgba(0, 0, 0, 0.1);
+  }
+}
+
+@media (min-width: 1180px) {
+  d-contents {
+    grid-column-start: 1;
+    grid-column-end: 4;
+    justify-self: end;
+    padding-right: 3em;
+    padding-left: 2em;
+    border-right: 1px solid rgba(0, 0, 0, 0.1);
+    border-right-width: 1px;
+    border-right-style: solid;
+    border-right-color: rgba(0, 0, 0, 0.1);
+  }
+}
+
+d-contents nav h3 {
+  margin-top: 0;
+  margin-bottom: 1em;
+}
+
+d-contents nav a {
+  color: rgba(0, 0, 0, 0.8);
+  border-bottom: none;
+  text-decoration: none;
+}
+
+d-contents li {
+  list-style-type: none;
+}
+
+d-contents ul {
+  padding-left: 1em;
+}
+
+d-contents nav ul li {
+  margin-bottom: 0.25em;
+}
+
+d-contents nav a:hover {
+  text-decoration: underline solid rgba(0, 0, 0, 0.6);
+}
+
+d-contents nav ul {
+  margin-top: 0;
+  margin-bottom: 6px;
+}
+
+d-contents nav > div {
+  display: block;
+  outline: none;
+  margin-bottom: 0.5em;
+}
+
+d-contents nav > div > a {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+d-contents nav > div > a:hover,
+d-contents nav > ul > li > a:hover {
+  text-decoration: none;
+}
+
+canvas {
+  margin-right: auto;
+  margin-left: auto;
+  display: block;
+}
+
+.graph-container {
+  display: flex;
+  align-items: center;
+}
+.squar {
+  background-color: #6db4e2; /* Blue color */
+  width: 40px;
+  height: 40px;
+}
+.highlight {
+  stroke: #fe6100;
+  stroke-width: 2px;
+  fill: none;
+}
+
+figure {
+  margin-bottom: 1em;
+}
+
+details h2::before {
+  content: '▶ ';
+  display: inline-block;
+  width: 40px;
+}
+
+details[open] h2::before {
+  content: '▼ ';
+}
+
+details summary.custom_spoiler::-webkit-details-marker {
+  display:none;
+}
+
+details h3.topo::before{
+  content:'▶ ';
+  display: 'block-inline';
+  position: 'absolute';
+  width: '40px';
+}
+details[open] h3.topo::before{
+  content:'▼ ';
+  display: 'block-inline';
+  position: 'absolute';
+}
+
+/* this makes sure that the style of the d-section when inside a sumary doesn't fuck up */
+summary d-section {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+
+@media (min-width: 1000px) {
+  .date-doi {
+    width: 200px;
+  }
+  p.affiliation{
+    width: 300px;
+  }
+  p.author{
+    width: 200px;
+  }
+}
+
+svg#graph {
+  overflow: visible !important;
+}
+
+.citation-short{
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px solid rgba(0,0,0,0.1);
+  padding-top: 20px ;
+  border-radius: 3px;
+}
+
+
+/* Styles for VAE Visualization */
+#VAE-svg {
+    background-color: white;
+    width: 100%;
+    height: auto;
+    display: block; /* Ensures proper layout */
+}
+
+.vae-controls {
+    display: flex;
+    justify-content: center;
+    margin-top: 1rem;
+}
+
+/* Scoped D3 styles */
+#VAE-svg .box {
+    stroke: #9CA3AF;
+    stroke-width: 1;
+    cursor: pointer;
+    transition: filter 0.2s ease-in-out, stroke 0.2s ease-in-out, stroke-width 0.2s ease-in-out;
+}
+
+#VAE-svg .box.highlighted {
+    filter: brightness(1.15);
+    stroke: #ef4444 !important;
+    stroke-width: 2 !important;
+}
+
+#VAE-svg .connection {
+    stroke-width: 1.5;
+    transition: opacity 0.2s ease-in-out, stroke 0.2s ease-in-out, stroke-width 0.2s ease-in-out;
+    opacity: 0.5;
+}
+
+#VAE-svg .dimmed {
+    opacity: 0.05 !important;
+}
+
+#VAE-svg .connection.highlighted {
+    opacity: 1 !important;
+    stroke-width: 2.5 !important;
+    stroke: #ef4444 !important;
+}
+
+#VAE-svg .connection.highlighted.cross-group {
+    stroke: #F97316 !important;
+}
+
+d-article ul {
+  margin-top: 0.0em;
+  margin-bottom: 1.em;
+}
+
+d-article ul li {
+  margin-bottom: 0.0em;
+}
+
+
+/* For l-gutter class */
+@media (max-width: 767px) {
+  .l-gutter {
+    width: 100%;
+  }
+}
+
+@media (min-width: 768px) {
+  figcaption.l-gutter {
+    width: 150%;
+  }
+}
+
