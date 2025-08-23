@@ -181,7 +181,7 @@ class UNet(BetterModule):
                 cout = channels
                 attention = 'video' if res in video_attn_resolutions else 'frame' if res in frame_attn_resolutions else False
                 self.dec[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=attention, **block_kwargs)
-        self.out_conv = MPCausal3DGatedConv(cout, img_channels, kernel=[3,3,3])
+        self.out_conv = MPCausal3DGatedConv(cout, img_channels*2, kernel=[3,3,3])
 
         # Saves the kwargs
         frame = inspect.currentframe()
@@ -190,21 +190,21 @@ class UNet(BetterModule):
 
     def forward(self, x, c_noise, conditioning = None, cache:dict=None, update_cache=False, just_2d=False):
         if cache == None: cache={}
-        batch_size, time_dimention = x.shape[:2]
+        batch_size, time_dimention, channels = x.shape[:3]
         n_context_frames = cache.get('n_context_frames', 0)
 
-        res = x.clone()
-        out_res, updated_n_context_frames = self.out_res(c_noise, n_context_frames, just_2d)
-        if update_cache: cache['n_context_frames']=updated_n_context_frames
+        # res = x.clone()
+        # out_res, updated_n_context_frames = self.out_res(c_noise, n_context_frames, just_2d)
+        # if update_cache: cache['n_context_frames']=updated_n_context_frames
 
         # Reshaping
         x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
         c_noise = einops.rearrange(c_noise, 'b t -> (b t)')
 
         # Time embedding
-        frame_labels = torch.arange(time_dimention, device=x.device).repeat(batch_size) + n_context_frames
-        frame_labels = frame_labels.log1p().to(c_noise.dtype) / 4 
-        frame_embeddings = self.emb_time(self.emb_fourier_time(frame_labels))
+        # frame_labels = torch.arange(time_dimention, device=x.device).repeat(batch_size) + n_context_frames
+        # frame_labels = frame_labels.log1p().to(c_noise.dtype) / 4 
+        # frame_embeddings = self.emb_time(self.emb_fourier_time(frame_labels))
 
         emb = self.emb_noise(self.emb_fourier_sigma(c_noise))
         # emb = mp_sum(emb, frame_embeddings, t=0.5)
@@ -232,8 +232,9 @@ class UNet(BetterModule):
         x, cache['out_conv'] = self.out_conv(x, emb, batch_size, c_noise, cache=cache.get('out_conv', None), update_cache=update_cache, just_2d=just_2d)
 
         x = einops.rearrange(x, '(b t) c h w -> b t c h w', b=batch_size)*self.out_gain
+        F_x, G_x = x.split(channels,dim=2)
         # x = mp_sum(x, res, out_res)
-        return x, cache
+        return F_x, G_x, cache
 
     @torch.no_grad()
     def load_from_2d(self, unet):
@@ -274,6 +275,7 @@ class Precond(BetterModule):
         self.use_fp16 = use_fp16
         self.sigma_data = sigma_data
         self.noise_weight = MultiNoiseLoss()
+    
 
     def forward(self, x:Tensor, sigma:Tensor, conditioning:Tensor=None, force_fp32:bool=False, cache:dict=None, update_cache=False, just_2d=False):
         if cache is None: cache = {}
@@ -292,8 +294,8 @@ class Precond(BetterModule):
  
         # Run the model.
         x_in = (c_in * x).to(dtype)
-        F_x, cache = self.unet.forward(x_in, c_noise, conditioning, cache, update_cache, just_2d)
-        F_x = c_skip * x + c_out * F_x.to(torch.float32)
+        F_x, _, cache = self.unet(x_in, c_noise, conditioning, cache, update_cache, just_2d)
+        F_x = c_skip * x + c_out * F_x[:,:,:x.shape[2]].to(torch.float32)
         return F_x, cache
     
 

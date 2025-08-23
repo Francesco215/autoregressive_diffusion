@@ -53,7 +53,7 @@ class VideoAttention(nn.Module):
                 # TODO: check if we need to clone the tensors to avoid modification of the cache
                 # TODO: check if it's better to load x and eval the QK matrices (it could reduce the bandwidth required)
                 cached_k, cached_v = cache 
-                k, v = torch.cat((cached_k.clone(), k), dim=-3), torch.cat((cached_v.clone(), v), dim=-3)
+                k, v = torch.cat((cached_k, k), dim=-3), torch.cat((cached_v, v), dim=-3)
             if update_cache: cache = (k, v)
 
         q, k = self.rope(q, k)
