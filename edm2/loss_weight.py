@@ -32,7 +32,8 @@ class MultiNoiseLoss(nn.Module):
         # Assuming sigmas and losses are 2D tensors.
         dist_on = dist.is_available() and dist.is_initialized()
         if dist_on and dist.get_rank()!=0: return
-        positions = torch.arange(sigmas.numel()) % sigmas.shape[1]
+
+        positions = torch.arange(losses.shape[1]).repeat(losses.shape[0],1).flatten()+1
         # Flatten and flip the data.
         self.sigmas = torch.cat((self.sigmas, sigmas.flatten().detach().cpu()))[-self.history_size:]
         self.losses = torch.cat((self.losses, losses.flatten().detach().cpu()))[-self.history_size:]
