@@ -171,15 +171,15 @@ class UNet(BetterModule):
         skips = [block.out_channels for block in self.enc.values()]
         for level, channels in reversed(list(enumerate(cblock))):
             res = img_resolution >> level
+            attention = 'video' if res in video_attn_resolutions else 'frame' if res in frame_attn_resolutions else False
             if level == len(cblock) - 1:
-                self.dec[f'{res}x{res}_in0'] = Block(cout, cout, cemb, flavor='dec', attention='video', **block_kwargs)
+                self.dec[f'{res}x{res}_in0'] = Block(cout, cout, cemb, flavor='dec', attention=attention, **block_kwargs)
                 self.dec[f'{res}x{res}_in1'] = Block(cout, cout, cemb, flavor='dec', **block_kwargs)
             else:
                 self.dec[f'{res}x{res}_up'] = Block(cout, cout, cemb, flavor='dec', resample_mode='up', **block_kwargs)
             for idx in range(num_blocks + 1):
                 cin = cout + skips.pop()
                 cout = channels
-                attention = 'video' if res in video_attn_resolutions else 'frame' if res in frame_attn_resolutions else False
                 self.dec[f'{res}x{res}_block{idx}'] = Block(cin, cout, cemb, flavor='dec', attention=attention, **block_kwargs)
         self.out_conv = MPCausal3DGatedConv(cout, img_channels*2, kernel=[3,3,3])
 

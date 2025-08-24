@@ -49,15 +49,21 @@ class MPConv(torch.nn.Module):
 class MPCausal3DGatedConv(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel):
         super().__init__()
+        self.in_channels = in_channels
         self.out_channels = out_channels
         assert len(kernel)==3
         self.last_frame_conv = MPConv(in_channels, out_channels, kernel[1:])
-        kernel = (kernel[0]-1,kernel[1],kernel[2])
-        self.weight = NormalizedWeight(in_channels, out_channels, kernel)
-        self.gating = Gating()
+        if kernel[0]==1: self.weight = None
+        else:
+            kernel = (kernel[0]-1,kernel[1],kernel[2])
+            self.weight = NormalizedWeight(in_channels, out_channels, kernel)
+            self.gating = Gating()
 
     def forward(self, x, emb, batch_size, c_noise, cache=None, update_cache=False, just_2d=False):
-        if just_2d: return self.last_frame_conv.forward(x), cache
+
+        # we do the 2d convolutions over the last frames
+        last_frame_conv = self.last_frame_conv(x)
+        if just_2d or self.weight is None: return last_frame_conv, None
 
         if cache is None: cache = {}
         w = self.weight().to(x.dtype)
@@ -65,13 +71,12 @@ class MPCausal3DGatedConv(torch.nn.Module):
         image_padding = (0, w.shape[-2]//2, w.shape[-1]//2)
 
         # however variance preserving concatenatinon doesn't work because it will give different results depending if self.training is true
+        # CHECK
         causal_pad = torch.ones(batch_size, x.shape[1], w.shape[2], *x.shape[2:], device=x.device, dtype=x.dtype)
         causal_pad = cache.get('activations', causal_pad).clone()
         gating, updated_n_context_frames = self.gating(c_noise, cache.get('n_context_frames', 0)) # Change the context frames for inference
         if update_cache: cache['n_context_frames']=updated_n_context_frames
 
-        # we do the 2d convolutions over the last frames
-        last_frame_conv = self.last_frame_conv(x)
 
         if self.training:
             # we just take the context frames
@@ -83,16 +88,15 @@ class MPCausal3DGatedConv(torch.nn.Module):
         context = torch.cat((causal_pad, x), dim=-3)
         if update_cache: cache['activations'] = context[:,:,-w.shape[2]:].clone().detach()
         # now we do the 3d convolutions over the previous frames of the context
-        context = F.conv3d(context[:,:,:-1], w, padding=image_padding)
+        context_conv = F.conv3d(context[:,:,:-1], w, padding=image_padding)
 
         if self.training:
             # we concatenate the results and reshape them to sum them back to the 2d convolutions
-            context = torch.stack((context, context), dim=0)
-            context = einops.rearrange(context, 's b c t h w -> (b s t) c h w')
-        else:
-            context = einops.rearrange(context, 'b c t h w -> (b t) c h w')
+            context_conv = torch.cat((context_conv, context_conv), dim=2)
 
-        return mp_sum(last_frame_conv, context, gating.flatten()), cache
+        context_conv = einops.rearrange(context_conv, 'b c t h w -> (b t) c h w')
+
+        return mp_sum(last_frame_conv, context_conv, gating.flatten()), cache
 
     @torch.no_grad()
     def load_from_2d(self, weight):
