@@ -20,7 +20,7 @@ from edm2.utils import mp_sum, normalize
 torch._logging.set_logs(dynamo=logging.INFO)
 
 # Constants
-IMG_RESOLUTION = 8
+IMG_RESOLUTION = 32
 BATCH_SIZE = 4
 IMG_CHANNELS = 3
 N_FRAMES = 32
@@ -227,6 +227,8 @@ class TestAttention(unittest.TestCase):
         # TODO: CHECK THIS INFORMATION BOTTLENECK
         self.assertGreaterEqual(  y[:, N_FRAMES + CUT_FRAME+1:].std(dim=2).mean().item(), 0.01, f"Test failed: post-CUT_FRAME frames in second sequence did not respond to perturbation")
 
+        
+
 
 class TestUNet(unittest.TestCase):
     @classmethod
@@ -235,18 +237,18 @@ class TestUNet(unittest.TestCase):
         torch.cuda.manual_seed_all(SEED)
 
         # Initialize UNet and Precond
-        cls.unet = UNet(img_resolution=32, # Match your latent resolution
-            img_channels=3, # Match your latent channels
-            label_dim = 4, #this should be equal to the action space of the gym environment
-            model_channels=32,
-            channel_mult=[1,2,4],
-            channel_mult_noise=None,
-            channel_mult_emb=None,
-            num_blocks=2,
-            video_attn_resolutions=[8],
-            frame_attn_resolutions=[16]
-            ).to("cuda").to(dtype)
-        # cls.unet = UNet.from_pretrained('saved_models/unet_11.0M.pt').to("cuda").to(dtype)
+        # cls.unet = UNet(img_resolution=32, # Match your latent resolution
+        #     img_channels=3, # Match your latent channels
+        #     label_dim = 4, #this should be equal to the action space of the gym environment
+        #     model_channels=32,
+        #     channel_mult=[1,2,4],
+        #     channel_mult_noise=None,
+        #     channel_mult_emb=None,
+        #     num_blocks=2,
+        #     video_attn_resolutions=[8],
+        #     frame_attn_resolutions=[16]
+        #     ).to("cuda").to(dtype)
+        cls.unet = UNet.from_pretrained('saved_models/unet_11.0M.pt').to("cuda").to(dtype)
         print(f"Number of UNet parameters: {sum(p.numel() for p in cls.unet.parameters()) // 1e6}M")
 
     ## from this point onward the tests are obsolete so they might 
@@ -270,7 +272,7 @@ class TestUNet(unittest.TestCase):
         self.assertLessEqual(std_diff_2, error_bound, f"Test failed: std deviation {std_diff_2} exceeded {error_bound}")
 
 
-    def test_unet_causality(self):
+    def test_unet_causality_with_nan(self):
         # make sure that during training the network is fully causal
         self.unet.train()
         x = torch.zeros(2, 4*N_FRAMES, IMG_CHANNELS, IMG_RESOLUTION, IMG_RESOLUTION, device="cuda", dtype=dtype)
@@ -291,6 +293,27 @@ class TestUNet(unittest.TestCase):
         self.assertLessEqual( yc[:CUT_FRAME+1].mean().item(), error_bound, f"Test failed: std deviation {yc[:CUT_FRAME+1].std()} exceeded {error_bound} in second sequence before CUT_FRAME")
         # TODO: CHECK THIS INFORMATION BOTTLENECK
         self.assertTrue( torch.isnan(yc[CUT_FRAME+1:].mean()).item(), f"Test failed: post-CUT_FRAME frames in second sequence did not respond to perturbation, got {y[:CUT_FRAME+1].std().item()}")
+
+    def test_unet_causality(self):
+        # make sure that during training the network is fully causal
+        self.unet.train()
+        img_resolution = 8
+        img_channels = 3
+        x = torch.zeros(2, N_FRAMES, img_channels, img_resolution, img_resolution, device="cuda", dtype=dtype)
+        r = torch.randn(2, N_FRAMES, img_channels, img_resolution, img_resolution, device="cuda", dtype=dtype)
+        a = torch.cat((x, r), dim=1)
+        x[:, CUT_FRAME] = torch.randn(x.shape[0], img_channels, img_resolution, img_resolution, device="cuda", dtype=dtype)
+        x = torch.cat((x, r), dim=1)
+        noise_level = torch.zeros(x.shape[:2], device="cuda", dtype=dtype)
+        y = self.unet(x, noise_level, None)[0] - self.unet(a, noise_level, None)[0]
+
+        self.assertLessEqual(y[:, :CUT_FRAME].std().item(), error_bound, f"Test failed: std deviation {y[:, :CUT_FRAME].std()} exceeded {error_bound} before CUT_FRAME")
+        self.assertLessEqual(y[:, N_FRAMES:N_FRAMES + CUT_FRAME+1].std().item(), error_bound, f"Test failed: std deviation {y[:, N_FRAMES:N_FRAMES + CUT_FRAME+1].std()} exceeded {error_bound} in second sequence before CUT_FRAME")
+        # TODO: CHECK THIS INFORMATION BOTTLENECK
+        self.assertGreaterEqual(y[:, CUT_FRAME:CUT_FRAME+1].std().item(), 0.3, f"Test failed: perturbation at CUT_FRAME did not affect output as expected, got {y[:, CUT_FRAME:CUT_FRAME+1].std().item()}")
+        self.assertGreaterEqual(y[:, CUT_FRAME+1:N_FRAMES].std(dim=2).mean().item(), 0.05, f"Test failed: post-CUT_FRAME frames did not respond to perturbation")
+        self.assertGreaterEqual(y[:, N_FRAMES + CUT_FRAME+1:].std(dim=2).mean().item(), 0.05, f"Test failed: post-CUT_FRAME frames in second sequence did not respond to perturbation, got {y[:, CUT_FRAME:CUT_FRAME+1].std().item()}")
+
 
 
         

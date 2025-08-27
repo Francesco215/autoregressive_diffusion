@@ -32,7 +32,7 @@ if __name__=="__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-    resume_training = False
+    resume_training = True
     unet = UNet(img_resolution=32, # Match your latent resolution
                 img_channels=3, # Match your latent channels
                 label_dim = 4, #this should be equal to the action space of the gym environment
@@ -58,12 +58,12 @@ if __name__=="__main__":
     total_number_of_steps = 80_000
     training_steps = total_number_of_steps * batch_size
     dataset = GymDataGenerator(state_size, original_env, total_number_of_steps, autoencoder_time_compression = 1, return_anyways=False, resolution=32)
-    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=micro_batch_size, prefetch_factor=4)
+    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=32, prefetch_factor=4)
 
     # sigma_data = 0.434
     sigma_data = 1.
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
-    loss_fn = KLLoss(P_mean=0.4,P_std=1.4, sigma_data=sigma_data, context_noise_reduction=0.5)
+    loss_fn = KLLoss(P_mean=0.0,P_std=2, sigma_data=sigma_data, context_noise_reduction=0.5)
 
     ref_lr = 1e-2
     current_lr = ref_lr
@@ -126,7 +126,7 @@ if __name__=="__main__":
                 unet_params=n_params,
                 latents=latents, # Pass the latents from the current batch
                 actions=actions,
-                guidance = 2,
+                guidance = 1,
             )
 
         if i % (total_number_of_steps//40) == 0 and i!=0:  # save every 10% of epochs

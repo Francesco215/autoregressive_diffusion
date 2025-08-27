@@ -42,3 +42,8 @@ y = torch.randn(3, batch_size, n_frames, num_heads, image_size, channels)
 y[:,:,-1]/=0
 y=einops.rearrange(y, 's b t m n c -> s b m (t n) c').to("cuda")
 q, k, v = y.unbind(0)
+
+
+
+
+#%%

@@ -80,7 +80,6 @@ def make_infer_mask(batch_size, num_heads, n_frames, image_size):
             sequence_length = n_frames*image_size
             warnings.warn(f"\nThe image size must be a divisor of the default block size ({_DEFAULT_SPARSE_BLOCK_SIZE})\ngot image_size:{image_size} and n_frames:{n_frames}\n using {(sequence_length**2 * batch_size * num_heads)/1e6}M of memory")
             return score_mod, create_block_mask(diagonal_diffusion_mask, B=batch_size, H=num_heads, Q_LEN=sequence_length, KV_LEN=sequence_length)
-        print('aaa')
         n_frames = n_frames*image_size//_DEFAULT_SPARSE_BLOCK_SIZE
         image_size = _DEFAULT_SPARSE_BLOCK_SIZE 
 
