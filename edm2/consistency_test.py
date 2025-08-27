@@ -63,8 +63,8 @@ class TestAttention(unittest.TestCase):
     def setUpClass(cls):
         torch.manual_seed(SEED)
         torch.cuda.manual_seed_all(SEED)
-        cls.unet = UNet.from_pretrained('saved_models/unet_11.0M_asd.pt').to("cuda").to(dtype)
-        cls.attention = cls.unet.enc['16x16_block0'].attn 
+        cls.unet = UNet.from_pretrained('saved_models/unet_11.0M.pt').to("cuda").to(dtype)
+        cls.attention = cls.unet.enc['8x8_block0'].attn 
         assert isinstance(cls.attention, VideoAttention)
 
 
@@ -204,6 +204,29 @@ class TestAttention(unittest.TestCase):
         # TODO: CHECK THIS INFORMATION BOTTLENECK
         self.assertGreaterEqual(  y[:, N_FRAMES + CUT_FRAME+1:].std(dim=2).mean().item(), 0.01, f"Test failed: post-CUT_FRAME frames in second sequence did not respond to perturbation")
 
+    def test_attention_casusality_with_nan(self):
+        # make sure that during training the network is fully causal
+        self.attention.train()
+        img_resolution=8
+        x = torch.zeros(BATCH_SIZE, N_FRAMES, self.attention.attn_qkv.weight.weight.shape[1], img_resolution, img_resolution, device="cuda", dtype=dtype)
+        r = torch.ones(BATCH_SIZE, N_FRAMES, self.attention.attn_qkv.weight.weight.shape[1], img_resolution, img_resolution, device="cuda", dtype=dtype)
+        a = torch.cat((x, r), dim=1)
+        x[:, CUT_FRAME] = torch.ones(BATCH_SIZE, self.attention.attn_qkv.weight.weight.shape[1], img_resolution, img_resolution, device="cuda", dtype=dtype)/0
+        x = torch.cat((x, r), dim=1)
+        a = einops.rearrange(a, 'b t c h w -> (b t) c h w')
+        x = einops.rearrange(x, 'b t c h w -> (b t) c h w')
+
+        y = self.attention(x, BATCH_SIZE)[0] - self.attention(a, BATCH_SIZE)[0]
+
+        y = einops.rearrange(y, '(b t) c h w -> b t c h w', b = BATCH_SIZE)
+        self.assertLessEqual( y[:, :CUT_FRAME].std().item(), error_bound, f"Test failed: std deviation {y[:, :CUT_FRAME].std()} exceeded {error_bound} before CUT_FRAME")
+        self.assertGreaterEqual( y[:, CUT_FRAME:CUT_FRAME+1].std().item(), 0.1, f"Test failed: perturbation at CUT_FRAME did not affect output as expected")
+        # TODO: CHECK THIS INFORMATION BOTTLENECK
+        self.assertGreaterEqual(  y[:, CUT_FRAME+1:N_FRAMES].std(dim=2).mean().item(), 0.01, f"Test failed: post-CUT_FRAME frames did not respond to perturbation")
+        self.assertLessEqual( y[:, N_FRAMES:N_FRAMES + CUT_FRAME+1].std().item(), error_bound, f"Test failed: std deviation {y[:, N_FRAMES:N_FRAMES + CUT_FRAME+1].std()} exceeded {error_bound} in second sequence before CUT_FRAME")
+        # TODO: CHECK THIS INFORMATION BOTTLENECK
+        self.assertGreaterEqual(  y[:, N_FRAMES + CUT_FRAME+1:].std(dim=2).mean().item(), 0.01, f"Test failed: post-CUT_FRAME frames in second sequence did not respond to perturbation")
+
 
 class TestUNet(unittest.TestCase):
     @classmethod
@@ -220,8 +243,8 @@ class TestUNet(unittest.TestCase):
             channel_mult_noise=None,
             channel_mult_emb=None,
             num_blocks=2,
-            video_attn_resolutions=[],
-            frame_attn_resolutions=[16, 8]
+            video_attn_resolutions=[8],
+            frame_attn_resolutions=[16]
             ).to("cuda").to(dtype)
         # cls.unet = UNet.from_pretrained('saved_models/unet_11.0M.pt').to("cuda").to(dtype)
         print(f"Number of UNet parameters: {sum(p.numel() for p in cls.unet.parameters()) // 1e6}M")
@@ -277,7 +300,7 @@ class TestMPCausal3DGatedConv(unittest.TestCase):
         torch.manual_seed(SEED)
         torch.cuda.manual_seed_all(SEED)
 
-        cls.unet = UNet.from_pretrained('saved_models/unet_11.0M_asd.pt').to("cuda").to(dtype)
+        cls.unet = UNet.from_pretrained('saved_models/unet_11.0M.pt').to("cuda").to(dtype)
         cls.conv3d = cls.unet.enc['32x32_block0'].conv_res0
     
     def test_conv_consistency_between_train_and_eval(self):
