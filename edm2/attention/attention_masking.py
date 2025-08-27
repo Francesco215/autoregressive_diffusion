@@ -68,17 +68,19 @@ def make_infer_mask(batch_size, num_heads, n_frames, image_size):
     # image size is the number of pixels (height x width)
 
     diagonal_diffusion_mask = InferenceMask(image_size)
+    def score_mod(score, b, h, q_idx, kv_idx):
+        return torch.where(diagonal_diffusion_mask(b, h, q_idx, kv_idx), score, torch.full_like(score, -float('inf')))
 
     if n_frames*image_size<_DEFAULT_SPARSE_BLOCK_SIZE:
         warnings.warn(f"The masking matrix must be at least the size of the default block size,\ngot {n_frames*image_size} and the default block size is {_DEFAULT_SPARSE_BLOCK_SIZE}\n returning None")
-        def score_mod(score, b, h, q_idx, kv_idx):
-            return torch.where(diagonal_diffusion_mask(b, h, q_idx, kv_idx), score, torch.full_like(score, -float('inf')))
+
         return score_mod, None
     if image_size<_DEFAULT_SPARSE_BLOCK_SIZE:
         if n_frames*image_size%_DEFAULT_SPARSE_BLOCK_SIZE!=0:
             sequence_length = n_frames*image_size
             warnings.warn(f"\nThe image size must be a divisor of the default block size ({_DEFAULT_SPARSE_BLOCK_SIZE})\ngot image_size:{image_size} and n_frames:{n_frames}\n using {(sequence_length**2 * batch_size * num_heads)/1e6}M of memory")
-            return None, create_block_mask(diagonal_diffusion_mask, B=batch_size, H=num_heads, Q_LEN=sequence_length, KV_LEN=sequence_length)
+            return score_mod, create_block_mask(diagonal_diffusion_mask, B=batch_size, H=num_heads, Q_LEN=sequence_length, KV_LEN=sequence_length)
+        print('aaa')
         n_frames = n_frames*image_size//_DEFAULT_SPARSE_BLOCK_SIZE
         image_size = _DEFAULT_SPARSE_BLOCK_SIZE 
 
@@ -89,6 +91,6 @@ def make_infer_mask(batch_size, num_heads, n_frames, image_size):
     col_indices = torch.arange(n_frames).expand(n_frames,n_frames) * causal_mask
     col_indices = einops.repeat(col_indices, '... -> b h ...', b=batch_size, h=num_heads).cuda().to(torch.int32)
 
-    return None, BlockMask.from_kv_blocks(num_blocks_in_row, col_indices, BLOCK_SIZE=image_size, mask_mod=diagonal_diffusion_mask)
+    return score_mod, BlockMask.from_kv_blocks(num_blocks_in_row, col_indices, BLOCK_SIZE=image_size, mask_mod=diagonal_diffusion_mask)
     
     
