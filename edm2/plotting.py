@@ -112,7 +112,8 @@ def plot_training_dashboard(
     # (Code remains the same as the previous corrected version)
     # Uses latents_viz_orig
     ax3 = axes[1, 0]
-    latents = latents[:,:8+1]
+    total_frames = latents.shape[1]
+    latents = latents[:,:total_frames//2+1]
     # latents = batch["latents"][start:start+num_samples].to(device)
     # text_embeddings = batch["text_embeddings"][start:start+num_samples].to(device)
     context = latents[:, :-1]  # First frames (context)
@@ -159,7 +160,7 @@ def plot_training_dashboard(
     # --- Plot 4: Generated Frames (Bottom-Right) ---
     # Replicate the *exact* logic from sampler_training_callback
     ax4 = axes[1, 1]
-    for _ in tqdm(range(8)):
+    for _ in tqdm(range(total_frames//2)):
         actions = None if actions is None else torch.randint(0,3,(latents.shape[0],1), device=latents.device)
         x, _, _, cache= edm_sampler_with_mse(precond, cache=cache, conditioning = actions, sigma_max = 80, sigma_min=sigma_min, num_steps=16, rho=7, guidance=guidance)
         context = torch.cat((context,x),dim=1)
