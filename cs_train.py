@@ -19,7 +19,7 @@ from edm2.plotting import plot_training_dashboard
 from edm2.vae.stability import StabilityVAEEncoder
 from edm2.cs_dataloading import CsCollate, CsDataset, CsVaeCollate, CsVaeDataset
 from edm2.networks_edm2 import UNet, Precond
-from edm2.loss import EDM2Loss, learning_rate_schedule
+from edm2.loss import EDM2Loss, KLLoss, learning_rate_schedule
 from edm2.phema import PowerFunctionEMA
 from edm2.vae import VAE
 import torch._dynamo.config
@@ -29,19 +29,21 @@ torch._dynamo.config.cache_size_limit = 100
 
         
 def train(device, local_rank=0):
-    vae = VAE.from_pretrained('s3://autoregressive-diffusion/saved_models/vae_cs_102354.pt').to(device)
-    vae.mean=vae.mean.to(device)
-    vae.std=vae.std.to(device)
-    unet = UNet(img_resolution=32, # Match your latent resolution
-                img_channels=8, # Match your latent channels
+    # vae = VAE.from_pretrained('s3://autoregressive-diffusion/saved_models/vae_cs_102354.pt').to(device)
+    # vae.mean=vae.mean.to(device)
+    # vae.std=vae.std.to(device)
+    vae = None
+    img_resolution = 64
+    unet = UNet(img_resolution=img_resolution, # Match your latent resolution
+                img_channels=3, # Match your latent channels
                 label_dim = 4,
-                model_channels=128,
+                model_channels=256,
                 channel_mult=[1,2,4,4],
                 channel_mult_noise=None,
                 channel_mult_emb=None,
-                num_blocks=2,
-                video_attn_resolutions=[4],
-                frame_attn_resolutions=[8],
+                num_blocks=6,
+                video_attn_resolutions=[8],
+                frame_attn_resolutions=[16],
                 )
 
     resume_training=False
@@ -56,13 +58,13 @@ def train(device, local_rank=0):
     if local_rank==0:
         print(f"Number of UNet parameters: {unet_params//1e6}M")
 
-    micro_batch_size = 2
-    batch_size = 8
+    micro_batch_size = 1
+    batch_size = 4
     accumulation_steps = batch_size//micro_batch_size
-    clip_length = 16
+    clip_length = 32
     # training_steps = total_number_of_steps * batch_size
-    dataset = CsVaeDataset(clip_size=clip_length, remote='s3://counter-strike-data/vae_40M/', local = f'/data/streaming_dataset/cs_diff', batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
-    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsVaeCollate(), pin_memory=True, num_workers=4, shuffle=False)
+    dataset = CsDataset(clip_size=clip_length, resolution=img_resolution, remote='s3://counter-strike-data/original/', local = f'../data/streaming_dataset/cs_diff_orig', batch_size=micro_batch_size, shuffle=False, cache_limit = '500gb')
+    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(), pin_memory=True, num_workers=32, shuffle=False)
     steps_per_epoch = len(dataset)//micro_batch_size
     n_epochs = 10
     total_number_of_steps = n_epochs * steps_per_epoch
@@ -72,7 +74,7 @@ def train(device, local_rank=0):
     # sigma_data = 0.434
     sigma_data = 1.
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
-    loss_fn = EDM2Loss(P_mean=0.9,P_std=1.0, sigma_data=sigma_data, context_noise_reduction=0.1)
+    loss_fn = KLLoss(P_mean=0.0,P_std=2, sigma_data=sigma_data, context_noise_reduction=0.5)
 
     ref_lr = 1e-2
     current_lr = ref_lr
@@ -96,10 +98,10 @@ def train(device, local_rank=0):
         pbar = tqdm(enumerate(dataloader, start=steps_taken),total=steps_per_epoch) if local_rank==0 else enumerate(dataloader)
         for i, batch in pbar:
             with torch.no_grad():
-                means, _ = batch
-                means= means.to(device)
+                latents, _ = batch
+                latents= latents.to(device)
                 # print(means.shape)
-                latents = (means-vae.mean[:,None,None])/vae.std[:,None,None]
+                # latents = (means-vae.mean[:,None,None])/vae.std[:,None,None]
                 actions = None
 
             # Calculate loss    

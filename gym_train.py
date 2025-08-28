@@ -32,7 +32,7 @@ if __name__=="__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-    resume_training = True
+    resume_training = False
     unet = UNet(img_resolution=32, # Match your latent resolution
                 img_channels=3, # Match your latent channels
                 label_dim = 4, #this should be equal to the action space of the gym environment
