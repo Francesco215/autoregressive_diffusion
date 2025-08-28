@@ -79,6 +79,7 @@ class KLLoss:
         self.context_noise_reduction = context_noise_reduction
         assert context_noise_reduction >= 0 and context_noise_reduction <= 1, f"context_noise_reduction must be in [0,1], what are you doing? {context_noise_reduction}"
 
+    @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
     def __call__(self, net, images, conditioning=None, sigma=None, just_2d=False):
         batch_size, n_frames, channels, height, width = images.shape    
         assert net.training, "The model should be in training mode"

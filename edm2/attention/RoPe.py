@@ -21,11 +21,11 @@ class RotaryEmbedding(nn.Module):
     def make_rotary_embedding(self, seq_len):
         t = torch.arange(seq_len).type_as(self.inv_freq)
         freqs = torch.einsum('i , j -> i j', t, self.inv_freq)
-        freqs = torch.cat((freqs, freqs), dim = -1).to(torch.float16)
+        freqs = torch.cat((freqs, freqs), dim = -1)
 
         power = (t - (seq_len // 2)) / self.scale_base
         scale = self.scale ** einops.rearrange(power, 'n -> n 1')
-        scale = torch.cat((scale, scale), dim = -1).to(torch.float16)
+        scale = torch.cat((scale, scale), dim = -1)
 
         freqs, scale = freqs.unsqueeze(1), scale.unsqueeze(1) #this is to avoid the (h w) dim
 
@@ -36,8 +36,8 @@ class RotaryEmbedding(nn.Module):
             return self.pos_emb[:n], self.pos_emb_scale[:n]
 
         pos_emb, scale = self.make_rotary_embedding(n)
-        self.register_buffer("pos_emb", pos_emb.to(torch.float16), persistent=False)
-        self.register_buffer("pos_emb_scale", scale.to(torch.float16), persistent=False)
+        self.register_buffer("pos_emb", pos_emb, persistent=False)
+        self.register_buffer("pos_emb_scale", scale, persistent=False)
         return pos_emb, scale
 
     def forward(self, q:Tensor, k:Tensor):
@@ -50,6 +50,7 @@ class RotaryEmbedding(nn.Module):
 
         # pos, scale=self.get_rotary_embedding(k.shape[-3])
         pos, scale=self.make_rotary_embedding(k.shape[-3])
+        pos, scale = pos.to(dtype=q.dtype, device=q.device), scale.to(dtype=q.dtype, device=q.device)
 
         k = (k * pos.cos() + rotate_half(k) * pos.sin())/scale
         if not self.training:
