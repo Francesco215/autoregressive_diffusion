@@ -112,7 +112,9 @@ class KLLoss:
         error = F - (images*sigma - noise*self.sigma_data**2)/(self.sigma_data*(sigma**2 + self.sigma_data**2).sqrt())
         error = error**2
         losses = (error-1)*self.sigma_data**2/(sigma**2 + 2*self.sigma_data**2) + 1 
-        losses = G + losses*torch.exp(-G)
+        with torch.no_grad:
+            c_var = 1+self.sigma_data**2/(sigma**2+self.sigma_data**2)
+        losses = G + losses*torch.exp(-G)+torch.log(c_var)-1
 
         with torch.no_grad():
             un_weighted_avg_loss = losses.mean().detach().cpu().item()
