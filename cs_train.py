@@ -25,8 +25,7 @@ from edm2.vae import VAE
 import torch._dynamo.config
 
 torch._dynamo.config.cache_size_limit = 100
-        
-
+torch.set_float32_matmul_precision('high')
         
 def train(device, local_rank=0):
     # vae = VAE.from_pretrained('s3://autoregressive-diffusion/saved_models/vae_cs_102354.pt').to(device)
@@ -37,11 +36,11 @@ def train(device, local_rank=0):
     unet = UNet(img_resolution=img_resolution, # Match your latent resolution
                 img_channels=3, # Match your latent channels
                 label_dim = 4,
-                model_channels=256,
+                model_channels=128,
                 channel_mult=[1,2,4,4],
                 channel_mult_noise=None,
                 channel_mult_emb=None,
-                num_blocks=6,
+                num_blocks=4,
                 video_attn_resolutions=[8],
                 frame_attn_resolutions=[16],
                 )
@@ -58,25 +57,26 @@ def train(device, local_rank=0):
     if local_rank==0:
         print(f"Number of UNet parameters: {unet_params//1e6}M")
 
-    micro_batch_size = 1
+    micro_batch_size = 4
     batch_size = 4
     accumulation_steps = batch_size//micro_batch_size
     clip_length = 32
     # training_steps = total_number_of_steps * batch_size
-    dataset = CsDataset(clip_size=clip_length, resolution=img_resolution, remote='s3://counter-strike-data/original/', local = f'../data/streaming_dataset/cs_diff_orig', batch_size=micro_batch_size, shuffle=False, cache_limit = '500gb')
-    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(), pin_memory=True, num_workers=32, shuffle=False)
+    dataset = CsDataset(clip_size=clip_length, resolution=img_resolution, remote='s3://counter-strike-data/original/', local = f'../data/streaming_dataset/cs_diff_orig', batch_size=micro_batch_size, shuffle=False, cache_limit = '5000gb')
+    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(), pin_memory=True, num_workers=8, shuffle=False, prefetch_factor=32)
     steps_per_epoch = len(dataset)//micro_batch_size
     n_epochs = 10
     total_number_of_steps = n_epochs * steps_per_epoch
     # total_number_of_steps = 40_000
 
 
-    # sigma_data = 0.434
-    sigma_data = 1.
+    # sigma_data = 0.4
+    sigma_data=1
+    # sigma_data = .35
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
-    loss_fn = KLLoss(P_mean=0.0,P_std=2, sigma_data=sigma_data, context_noise_reduction=0.5)
+    loss_fn = KLLoss(P_mean=0.0,P_std=2, sigma_data=sigma_data, context_noise_reduction=1.)
 
-    ref_lr = 1e-2
+    ref_lr = 3e-2
     current_lr = ref_lr
     optimizer = AdamW(precond.parameters(), lr=ref_lr, eps = 1e-4)
     optimizer.zero_grad()
@@ -99,7 +99,7 @@ def train(device, local_rank=0):
         for i, batch in pbar:
             with torch.no_grad():
                 latents, _ = batch
-                latents= latents.to(device)
+                latents = latents.to(device)/.5
                 # print(means.shape)
                 # latents = (means-vae.mean[:,None,None])/vae.std[:,None,None]
                 actions = None
@@ -133,7 +133,7 @@ def train(device, local_rank=0):
                 precond.noise_weight.fit_loss_curve()
                 if local_rank==0:
                     plot_training_dashboard(
-                        save_path=f'images_training/dashboard_step_{i}.png', # Dynamic filename
+                        save_path=f'images_training/dashboard_step_{i}_{img_resolution}.png', # Dynamic filename
                         precond=precond,
                         autoencoder=vae,
                         losses_history=losses, # Pass the list of scalar losses
@@ -142,23 +142,24 @@ def train(device, local_rank=0):
                         unet_params=unet_params,
                         latents=latents, # Pass the latents from the current batch
                         actions=actions,
+                        guidance= 1,
                     )
 
-        # if i % (total_number_of_steps//100) == 0 and i!=0:  # save every 10% of epochs
-        if local_rank==0:
-            os.makedirs("saved_models", exist_ok=True)
-            if isinstance(unet, DDP):
-                unet.module.save_to_state_dict(f"saved_models/unet_{unet_params//1e6}M.pt")
-            else:
-                unet.save_to_state_dict(f"saved_models/unet_{unet_params//1e6}M.pt")
+            if i % (total_number_of_steps//10) == 0 and i!=0:  # save every 10% of epochs
+                if local_rank==0:
+                    os.makedirs("saved_models", exist_ok=True)
+                    if isinstance(unet, DDP):
+                        unet.module.save_to_state_dict(f"saved_models/unet_{unet_params//1e6}M_{img_resolution}.pt")
+                    else:
+                        unet.save_to_state_dict(f"saved_models/unet_{unet_params//1e6}M.pt")
 
-            torch.save({
-                'steps_taken': i,
-                'optimizer_state_dict': optimizer.state_dict(),
-                'ema_state_dict': ema_tracker.state_dict(),
-                'losses': losses,
-                'ref_lr': ref_lr
-            }, f"saved_models/optimizers_{unet_params//1e6}M.pt")
+                    torch.save({
+                        'steps_taken': i,
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'ema_state_dict': ema_tracker.state_dict(),
+                        'losses': losses,
+                        'ref_lr': ref_lr
+                    }, f"saved_models/optimizers_{unet_params//1e6}M.pt")
 
 # %%
         

@@ -93,7 +93,7 @@ def plot_training_dashboard(
         ax2.set_xscale('log')
         ax2.set_xlabel('N Frames Seen')
         ax2.set_ylabel('Loss')
-        # ax2.set_yscale('log')
+        ax2.set_yscale('log')
         ax2.set_title(f'Training Loss ({unet_params // 1e6:.1f}M params)')
         ax2.legend()
         ax2.grid(True, which="both", ls="--", alpha=0.5)
@@ -169,7 +169,7 @@ def plot_training_dashboard(
     if autoencoder:
         frames = autoencoder.latents_to_frames(context)
     else:
-        frames = (context.clip(-1,1)+1)*127.5
+        frames = ((context*0.5).clip(-1,1)+1)*127.5
         frames = einops.rearrange(frames.long(), 'b t c h w -> b t h w c').cpu()
 
 

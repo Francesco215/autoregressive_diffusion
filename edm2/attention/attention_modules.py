@@ -24,6 +24,7 @@ class VideoAttention(nn.Module):
         self.attn_qkv = MPConv(channels, channels * 3, kernel=[1,1]) 
         self.attn_proj = MPConv(channels, channels, kernel=[1,1]) 
         self.rope = RotaryEmbedding(channels//num_heads)
+        # self.alpha = nn.Parameter(torch.tensor(0.))
         self.train_mask = None
     
 
@@ -37,6 +38,7 @@ class VideoAttention(nn.Module):
         if just_2d: #just use the code from frame attention
             y = einops.rearrange(y, 'bt (m c s) h w -> s bt m (h w) c', s=3, m=self.num_heads)
             q, k, v =normalize(y, dim=-1).unbind(0)
+            # q = q * torch.exp(self.alpha) 
 
             y = F.scaled_dot_product_attention(q, k, v)
             y = einops.rearrange(y, 'bt m (h w) c -> bt (m c) h w', h=h, w=w)
@@ -57,6 +59,7 @@ class VideoAttention(nn.Module):
             if update_cache: cache = (k, v)
 
         q, k = self.rope(q, k)
+        # q = q * torch.exp(self.alpha) 
         # q, k = F.normalize(q, p=2, dim=-1), F.normalize(k, p=2, dim=-1)
         v = einops.rearrange(v, ' b m t hw c -> b m (t hw) c') # q and k are already rearranged inside of rope
 
