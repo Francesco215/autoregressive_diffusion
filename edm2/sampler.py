@@ -22,15 +22,14 @@ def edm_sampler_with_mse(
     device = net.device
     
     # Guided denoiser (same as original)
-    def denoise(x, t, cache, update_cache, guidance):
+    def denoise(x, t, cache, update_cache):
         t = torch.ones(batch_size, 1, device=device, dtype=dtype) * t
         
         Dx, cache = net(x, t, conditioning, cache=cache, update_cache=update_cache, just_2d=False)
         if guidance == 1: return Dx, cache
 
         ref_Dx, _ = net(x, t, conditioning, just_2d=True)
-        guidance = torch.tensor(guidance, dtype=torch.bfloat16)
-        return Dx*guidance - ref_Dx*(1-guidance), cache
+        return ref_Dx.lerp(Dx, guidance), cache
 
     # Time step discretization
     step_indices = torch.arange(num_steps, dtype=dtype, device=device)
@@ -64,14 +63,14 @@ def edm_sampler_with_mse(
             x_hat = x_cur
 
         # Euler step
-        x_pred, cache = denoise(x_hat, t_hat, cache, update_cache = (i==num_steps-1 and target is None), guidance=guidance)
+        x_pred, cache = denoise(x_hat, t_hat, cache, update_cache = (i==num_steps-1 and target is None))
         # x_pred, cache = denoise(x_hat, t_hat, cache, update_cache = (i==num_steps-1))
         d_cur = (x_hat - x_pred) / t_hat
         x_next = x_hat + (t_next - t_hat) * d_cur
 
         # 2nd order correction
         if i < num_steps-1:
-            x_pred, _ = denoise(x_next, t_next, cache, update_cache = False, guidance=guidance)
+            x_pred, _ = denoise(x_next, t_next, cache, update_cache = False)
             d_prime = (x_next - x_pred) / t_next
             x_next = x_hat + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)
 
