@@ -57,12 +57,12 @@ def train(device, local_rank=0):
     if local_rank==0:
         print(f"Number of UNet parameters: {unet_params//1e6}M")
 
-    micro_batch_size = 4
+    micro_batch_size = 1
     batch_size = 4
     accumulation_steps = batch_size//micro_batch_size
     clip_length = 32
     # training_steps = total_number_of_steps * batch_size
-    dataset = CsDataset(clip_size=clip_length, resolution=img_resolution, remote='s3://counter-strike-data/original/', local = f'../data/streaming_dataset/cs_diff_orig', batch_size=micro_batch_size, shuffle=False, cache_limit = '5000gb')
+    dataset = CsDataset(clip_size=clip_length, resolution=img_resolution, remote='s3://counter-strike-data/original/', local = f'../data/streaming_dataset/cs_diff_orig', batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(), pin_memory=True, num_workers=8, shuffle=False, prefetch_factor=32)
     steps_per_epoch = len(dataset)//micro_batch_size
     n_epochs = 10
@@ -76,7 +76,7 @@ def train(device, local_rank=0):
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
     loss_fn = KLLoss(P_mean=0.0,P_std=2, sigma_data=sigma_data, context_noise_reduction=1.)
 
-    ref_lr = 3e-2
+    ref_lr = 3e-3
     current_lr = ref_lr
     optimizer = AdamW(precond.parameters(), lr=ref_lr, eps = 1e-4)
     optimizer.zero_grad()
@@ -145,7 +145,7 @@ def train(device, local_rank=0):
                         guidance= 1,
                     )
 
-            if i % (total_number_of_steps//10) == 0 and i!=0:  # save every 10% of epochs
+            if i % 5000 == 0 and i!=0:  # save every 10% of epochs
                 if local_rank==0:
                     os.makedirs("saved_models", exist_ok=True)
                     if isinstance(unet, DDP):
