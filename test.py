@@ -47,3 +47,40 @@ q, k, v = y.unbind(0)
 
 
 #%%
+from datasets import load_dataset
+import h5py
+import io
+import numpy as np
+import matplotlib.pyplot as plt
+import cv2 
+# Load the dataset
+dere = load_dataset('DereWah/mk64-steering')
+
+# Get the HDF5 data as bytes from the first entry
+hdf5_bytes = dere['train'][0]['hdf5']
+
+# Use io.BytesIO to treat the bytes as a file
+hdf5_file = io.BytesIO(hdf5_bytes)
+
+# Open the in-memory file with h5py
+with h5py.File(hdf5_file, 'r') as f:
+    # --- To find the correct key for the pixel data ---
+    # You can list all the keys in the HDF5 file like this:
+    keys = list(f.keys())
+    print("Keys in the HDF5 file:", keys)
+    pixel_data=f[keys[0]]
+    frame = cv2.resize(pixel_data[:], (256, 256), interpolation=cv2.INTER_AREA)
+
+
+
+    # The pixel_data is now a NumPy array
+    print("Shape of the pixel data:", frame.shape)
+    print("Data type of pixel data:", pixel_data.dtype)
+
+#%%
+# --- Optional: Display the first frame to verify ---
+if len(pixel_data.shape) == 4: # Assuming shape is (frames, height, width, channels)
+    plt.imshow(pixel_data[0])
+    plt.title("First Frame")
+    plt.axis('off') # Hide axes
+    plt.show()# %%

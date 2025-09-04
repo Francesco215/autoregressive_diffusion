@@ -45,7 +45,7 @@ def train(device, local_rank=0):
                 frame_attn_resolutions=[16],
                 )
 
-    resume_training=False
+    resume_training=True
     unet_params = sum(p.numel() for p in unet.parameters())
     if resume_training:
         unet=UNet.from_pretrained(f'saved_models/unet_{unet_params//1e6}M.pt')
@@ -62,7 +62,7 @@ def train(device, local_rank=0):
     accumulation_steps = batch_size//micro_batch_size
     clip_length = 32
     # training_steps = total_number_of_steps * batch_size
-    dataset = CsDataset(clip_size=clip_length, resolution=img_resolution, remote='s3://counter-strike-data/original/', local = f'../data/streaming_dataset/cs_diff_orig', batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
+    dataset = CsDataset(clip_size=clip_length, resolution=img_resolution, remote='s3://mario-kart-data/raw/', local = f'../data/streaming_dataset/mario', batch_size=micro_batch_size, shuffle=False, cache_limit = '50gb')
     dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=CsCollate(), pin_memory=True, num_workers=8, shuffle=False, prefetch_factor=32)
     steps_per_epoch = len(dataset)//micro_batch_size
     n_epochs = 10
@@ -76,7 +76,7 @@ def train(device, local_rank=0):
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
     loss_fn = KLLoss(P_mean=0.0,P_std=2, sigma_data=sigma_data, context_noise_reduction=1.)
 
-    ref_lr = 3e-3
+    ref_lr = 5e-2
     current_lr = ref_lr
     optimizer = AdamW(precond.parameters(), lr=ref_lr, eps = 1e-4)
     optimizer.zero_grad()
@@ -100,8 +100,6 @@ def train(device, local_rank=0):
             with torch.no_grad():
                 latents, _ = batch
                 latents = latents.to(device)/.5
-                # print(means.shape)
-                # latents = (means-vae.mean[:,None,None])/vae.std[:,None,None]
                 actions = None
 
             # Calculate loss    
@@ -125,7 +123,7 @@ def train(device, local_rank=0):
                 ema_tracker.update(cur_nimg= i * batch_size, batch_size=batch_size)
 
                 for g in optimizer.param_groups:
-                    current_lr = learning_rate_schedule(i + epoch*steps_per_epoch, ref_lr, total_number_of_steps/500, total_number_of_steps/500)
+                    current_lr = learning_rate_schedule(i + epoch*steps_per_epoch, ref_lr, 10000, 10000)
                     g['lr'] = current_lr
 
             # Save model checkpoint (optional)
@@ -145,7 +143,7 @@ def train(device, local_rank=0):
                         guidance= 1,
                     )
 
-            if i % 5000 == 0 and i!=0:  # save every 10% of epochs
+            if i % 5000 == 0 and (i!=0 or epoch!=0):  # save every 10% of epochs
                 if local_rank==0:
                     os.makedirs("saved_models", exist_ok=True)
                     if isinstance(unet, DDP):

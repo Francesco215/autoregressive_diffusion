@@ -169,7 +169,7 @@ def plot_training_dashboard(
     if autoencoder:
         frames = autoencoder.latents_to_frames(context)
     else:
-        frames = ((context*0.5).clip(-1,1)+1)*127.5
+        frames = ((context*.5).clip(-1,1)+1)*127.5
         frames = einops.rearrange(frames.long(), 'b t c h w -> b t h w c').cpu()
 
 

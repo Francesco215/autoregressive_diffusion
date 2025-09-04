@@ -51,21 +51,21 @@ if __name__=="__main__":
     n_params = unet.n_params
     print(f"start training with {n_params//1e6}M parameters")
 
-    micro_batch_size = 8
+    micro_batch_size = 16
     batch_size = 16
     accumulation_steps = batch_size//micro_batch_size
     state_size = 32 
     total_number_of_steps = 80_000
     training_steps = total_number_of_steps * batch_size
     dataset = GymDataGenerator(state_size, original_env, total_number_of_steps, autoencoder_time_compression = 1, return_anyways=False, resolution=32)
-    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=32, prefetch_factor=4)
+    dataloader = DataLoader(dataset, batch_size=micro_batch_size, collate_fn=gym_collate_function, num_workers=24, prefetch_factor=4)
 
     # sigma_data = 0.434
     sigma_data = 1.
     precond = Precond(unet, use_fp16=True, sigma_data=sigma_data).to(device)
-    loss_fn = KLLoss(P_mean=0.0,P_std=2, sigma_data=sigma_data, context_noise_reduction=0.5)
+    loss_fn = KLLoss(P_mean=0.0,P_std=2, sigma_data=sigma_data, context_noise_reduction=0.2)
 
-    ref_lr = 1e-2
+    ref_lr = 3e-3
     current_lr = ref_lr
     optimizer = AdamW(precond.parameters(), lr=ref_lr, eps = 1e-8)
     optimizer.zero_grad()
@@ -126,10 +126,10 @@ if __name__=="__main__":
                 unet_params=n_params,
                 latents=latents, # Pass the latents from the current batch
                 actions=actions,
-                guidance = 1,
+                guidance = 1.,
             )
 
-        if i % (total_number_of_steps//40) == 0 and i!=0:  # save every 10% of epochs
+        if i % 5000 == 0 and i!=0:  # save every 5k steps
             os.makedirs("saved_models", exist_ok=True)
             unet.save_to_state_dict(f"saved_models/unet_{n_params//1e6}M.pt")
             torch.save({

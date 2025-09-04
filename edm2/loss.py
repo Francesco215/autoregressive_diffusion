@@ -95,7 +95,7 @@ class KLLoss:
         
         
         # Preconditioning weights.
-        x, sigma = x.to(torch.float32), sigma.to(torch.float32)
+        # x, sigma = x.to(torch.float32), sigma.to(torch.float32)
         c_noise = sigma.log() / 4
         sigma = einops.rearrange(sigma, 'b t -> b t 1 1 1')
         c_in = 1 / (self.sigma_data ** 2 + sigma ** 2).sqrt()
