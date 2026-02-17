@@ -1,0 +1,764 @@
+<!doctype html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="website/scripts/distill.pub_template.v2.js"></script>
+  <script src="website/sourcecode.js"></script>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <link rel="stylesheet" href="website/style.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.13.18/dist/katex.min.css" integrity="sha384-zTROYFVGOfTw7JV7KUu8udsvW2fx4lWOsCEDqhBreBwlHI4ioVRtmIvEThzJHGET" crossorigin="anonymous">
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.13.18/dist/katex.min.js" integrity="sha384-GxNFqL3r9uRJQhR+47eDxuPoNE7yLftQM8LcxzgS4HT73tp970WS/wV5p8UzCOmb" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.13.18/dist/contrib/auto-render.min.js" integrity="sha384-vZTG03m+2yp6N6BNi5iM4rW4oIwk5DfcNdFfxkk9ZWpDriOkXX8voJBFrAO7MpVl" crossorigin="anonymous"></script>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", function() {
+      renderMathInElement(document.body, {
+        delimiters: [
+          {left: '$$', right: '$$', display: true},
+          {left: '$', right: '$', display: false},
+          {left: '\\(', right: '\\)', display: false},
+          {left: '\\[', right: '\\]', display: true}
+        ],
+        throwOnError: false
+      });
+    });
+  </script>
+  <style>
+    .uncertainty-card {
+      border: none;
+      border-radius: 10px;
+      background: transparent;
+      box-shadow: none;
+    }
+    .uncertainty-chart-card {
+      padding: 18px 20px 16px;
+    }
+    .uncertainty-chart-title {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.15;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    #uncertainty-stats {
+      margin: 8px 0 6px;
+      font-size: 14px;
+      color: #121212;
+    }
+    #uncertainty-model-eq {
+      margin: 0 0 12px;
+      font-size: 13px;
+      color: #4a4f55;
+    }
+    .uncertainty-plot-wrap {
+      border-radius: 8px;
+      overflow: hidden;
+      background: transparent;
+    }
+    #uncertainty-svg {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+    .uncertainty-controls-card {
+      padding: 18px;
+      background: transparent;
+    }
+    #uncertainty-controls.l-gutter {
+      margin-top: 8px;
+      margin-bottom: 14px;
+      border-left: 1px solid #d8dde3;
+      padding-left: 22px;
+    }
+    #uncertainty-controls .uncertainty-controls-card {
+      max-width: 560px;
+    }
+    .controls-title {
+      margin: 0 0 14px;
+      font-size: 20px;
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+    }
+    .control-group-label {
+      margin: 18px 0 10px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .control-row {
+      display: grid;
+      grid-template-columns: max-content minmax(170px, 1fr) max-content;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 10px;
+      width: 100%;
+    }
+    .control-row label {
+      margin: 0;
+      font-size: 12px;
+      color: #151515;
+      white-space: nowrap;
+      justify-self: end;
+    }
+    .control-row input[type="range"] {
+      width: 100%;
+      margin: 0;
+      accent-color: #2a72be;
+    }
+    .value-chip {
+      display: inline-block;
+      text-align: right;
+      min-width: 48px;
+      font-variant-numeric: tabular-nums;
+      font-size: 12px;
+      color: rgb(55, 100, 230);
+      font-weight: 600;
+      padding: 0;
+    }
+    .value-wrap {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 5px;
+      justify-self: end;
+      white-space: nowrap;
+    }
+    .gt-chip {
+      font-size: 12px;
+      color: rgb(230, 120, 20);
+      font-variant-numeric: tabular-nums;
+    }
+    .divider {
+      height: 1px;
+      border: none;
+      margin: 16px 0 12px;
+      background: #cfd4d8;
+    }
+    .actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 10px;
+    }
+    .actions button {
+      width: 100%;
+      height: 60px;
+      border-radius: 10px;
+      border: 1px solid #a7afb5;
+      background: rgba(255, 255, 255, 0.46);
+      color: #444;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .actions button.primary {
+      grid-column: 1 / -1;
+      height: 86px;
+      border: 1px solid #2b6caf;
+      background: linear-gradient(135deg, #2f79cc 0%, #2979d8 100%);
+      color: #fff;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+      text-shadow: 0 1px 1px rgba(0, 0, 0, 0.28);
+    }
+    @media (max-width: 980px) {
+      #uncertainty-controls.l-gutter {
+        border-left: none;
+        padding-left: 0;
+      }
+      .uncertainty-chart-title,
+      .controls-title {
+        font-size: 18px;
+      }
+      #uncertainty-stats {
+        font-size: 13px;
+      }
+      #uncertainty-model-eq {
+        font-size: 12px;
+      }
+      .control-group-label {
+        font-size: 13px;
+      }
+      .control-row label {
+        font-size: 12px;
+      }
+      .value-chip {
+        font-size: 12px;
+      }
+      .actions button {
+        font-size: 12px;
+        height: 52px;
+      }
+      .actions button.primary {
+        height: 72px;
+      }
+    }
+    @media (max-width: 620px) {
+      #uncertainty-controls .control-row {
+        grid-template-columns: 1fr;
+        gap: 6px;
+      }
+      #uncertainty-controls .value-chip {
+        justify-self: start;
+        min-width: 62px;
+      }
+    }
+  </style>
+</head>
+
+<d-front-matter>
+  <script type="text/json">{"authors": []}</script>
+</d-front-matter>
+
+<d-title>
+  <h1>Uncertainty aware learning</h1>
+  <p>A small blog post on how to teach your model to output their prediction-confidence</p>
+</d-title>
+
+<d-byline>
+  <div class="byline grid">
+    <div class="authors-affiliations grid">
+      <h3>Authors</h3>
+      <h3>Affiliations</h3>
+
+        <p class="author">
+
+            <a class="name" href="https://github.com/Francesco215">Francesco Sacco</a>
+        </p>
+        <p class="affiliation">
+        None
+        </p>
+
+        <p class="author">
+            <a class="name" href=" "> </a>
+        </p>
+        <p class="affiliation">
+        <a class="affiliation" href=""></a>
+        </p>
+
+
+        <p class="author">
+            <a class="name" href=" "> </a>
+        </p>
+        <p class="affiliation">
+        <a class="affiliation" href=""></a>
+        </p>
+
+    </div>
+    <div></div>
+    <div class="date-doi">
+      <h3>Date</h3>
+      <p>TODO</p>
+      <h3>DOI</h3>
+      <p>TODO</p>
+    </div>
+  </div>
+</d-byline>
+<d-article>
+  <h2>Introduction</h2>
+  <p>
+    In classification, confidence is built into the output: the model predicts a probability distribution over classes.
+    When it is confident, the distribution becomes sharp (one class gets most of the mass). When it is uncertain,
+    the distribution becomes flatter.
+  </p>
+  <figure>
+    <svg viewBox="0 0 760 220" style="width: 100%; height: auto;">
+      <rect x="0" y="0" width="760" height="220" fill="white"></rect>
+
+      <text x="190" y="28" text-anchor="middle" font-size="18">Confident (Sharp)</text>
+      <text x="570" y="28" text-anchor="middle" font-size="18">Uncertain (Flat)</text>
+
+      <line x1="70" y1="180" x2="310" y2="180" stroke="#999"></line>
+      <line x1="450" y1="180" x2="690" y2="180" stroke="#999"></line>
+
+      <rect x="90"  y="150" width="40" height="30" fill="#7aa6ff"></rect>
+      <rect x="165" y="130" width="40" height="50" fill="#7aa6ff"></rect>
+      <rect x="240" y="60"  width="40" height="120" fill="#2f6fff"></rect>
+
+      <rect x="470" y="130" width="40" height="50" fill="#7aa6ff"></rect>
+      <rect x="545" y="120" width="40" height="60" fill="#5f8fff"></rect>
+      <rect x="620" y="110" width="40" height="70" fill="#4b80ff"></rect>
+
+      <text x="110" y="200" text-anchor="middle" font-size="13">A</text>
+      <text x="185" y="200" text-anchor="middle" font-size="13">B</text>
+      <text x="260" y="200" text-anchor="middle" font-size="13">C</text>
+      <text x="490" y="200" text-anchor="middle" font-size="13">A</text>
+      <text x="565" y="200" text-anchor="middle" font-size="13">B</text>
+      <text x="640" y="200" text-anchor="middle" font-size="13">C</text>
+    </svg>
+    <figcaption>
+      Figure 1: Same task, different confidence: sharp probabilities indicate certainty, flatter probabilities indicate ambiguity.
+    </figcaption>
+  </figure>
+  <p>
+    But what happens when the target is not a class, but a vector?
+    <br>
+    With plain MSE, the model outputs only a point estimate, so confidence is not explicit.
+  </p>
+  <blockquote>
+    Can a regression model predict both the target value and its uncertainty?
+  </blockquote>
+  <p>
+    The answer is yes! To recover that notion of confidence in regression, we make the model predict a full distribution,
+    not just its mean.
+  </p>
+
+  <h2>The Core Formulation</h2>
+  <p>
+    Suppose we have some datapoints and we want to predict the ground truth probability $p(y|x)$.<br><br>
+
+    We don't have direct access to $p$, so we are going to approximate $p(y|x)$ with $q(y|x)$ where is a gaussian where the mean and the variance are learned functions $\mu_\theta(x)$ and $\sigma_\phi(x)$
+    $$
+    q(y|x) = \frac {1}{\sqrt{2 \pi \sigma_\phi^2}} \exp  -\frac{(y-\mu_\theta)^2}{2\sigma_\phi^2}
+    $$
+    The loss is simply going to be the negative log likelyhood of $q(y|x)$
+    $$
+    L = -\log q(y|x)  = -\log\left[\frac {1}{\sqrt{2 \pi \sigma_\phi^2}} \exp  -\frac{(y-\mu_\theta)^2}{2\sigma_\phi^2}\right]
+    $$
+
+    Doing some simple calculations, get that the loss is equal to (up to some constant)
+
+    <d-equation id="loss-formula">
+    $$
+    L = \log \sigma_\phi + \frac{(y-\mu_\theta)^2}{2\sigma_\phi^2}
+    $$
+    </d-equation>
+    As a sanity check, you can see that if we consider $\sigma_\phi$ to be a constant, we recover the $L_2$ loss.<br><br>
+    Now let's train a model with this loss!
+  </p>
+  <h3>Toy model</h3>
+  <p>
+    Suppose that the average value of $y$ is linearly dependent on $x$, i.e., $\mu = a x + b$, and the dispersion around the mean is also linearly dependent on $x$, i.e., $\sigma = |c x + d|$.
+    This means that 
+    $$
+    p(y|x) = \mathcal{N}\!\left[a x + b, (c x + d)^2\right]
+    $$
+  </p>
+
+
+  <figure>
+    <div id="uncertainty-demo">
+      <div class="uncertainty-card uncertainty-chart-card">
+        <h3 class="uncertainty-chart-title">Linear Regression with Uncertainty</h3>
+        <div class="uncertainty-plot-wrap">
+          <svg id="uncertainty-svg" viewBox="0 0 1100 560"></svg>
+        </div>
+      </div>
+    </div>
+    <figcaption>
+      Figure 2: gray points are sampled data, orange is ground truth $p(y|x)$, blue is the model estimate $q(y|x)$.
+    </figcaption>
+  </figure>
+  <div id="uncertainty-controls" class="l-gutter l-gutter-large">
+    <aside class="uncertainty-card uncertainty-controls-card">
+
+        <div class="actions">
+          <button id="toggle-auto" class="primary" type="button">Start Training</button>
+          <button id="regen-data" type="button">Regenerate Data</button>
+          <button id="reset-params" type="button">Reset Params</button>
+        </div>
+        <p id="uncertainty-stats"></p>
+        <hr class="divider">
+      <h4 class="control-group-label">Mean Parameters</h4>
+      <div class="control-row">
+        <label for="mu-w">$a_\theta$:</label>
+        <input id="mu-w" type="range" min="-4" max="4" step="0.01" value="0.1">
+        <span class="value-wrap"><span id="value-mu-w" class="value-chip">0.10</span><span class="gt-chip">| 2.00</span></span>
+      </div>
+      <div class="control-row">
+        <label for="mu-b">$b_\theta$:</label>
+        <input id="mu-b" type="range" min="-2" max="2" step="0.01" value="0.0">
+        <span class="value-wrap"><span id="value-mu-b" class="value-chip">0.00</span><span class="gt-chip">| 0.00</span></span>
+      </div>
+
+      <h4 class="control-group-label">Sigma Parameters</h4>
+      <div class="control-row">
+        <label for="sig-w">$c_\phi$:</label>
+        <input id="sig-w" type="range" min="-4" max="4" step="0.01" value="0.4">
+        <span class="value-wrap"><span id="value-sig-w" class="value-chip">0.40</span><span class="gt-chip">| 1.00</span></span>
+      </div>
+      <div class="control-row">
+        <label for="sig-b">$d_\phi$:</label>
+        <input id="sig-b" type="range" min="-2" max="2" step="0.01" value="0.2">
+        <span class="value-wrap"><span id="value-sig-b" class="value-chip">0.20</span><span class="gt-chip">| 0.20</span></span>
+      </div>
+
+
+    </aside>
+  </div>
+  <p>
+      As you can see the model is able to describe perfectly the ground truth probability distribution by minimizing the loss. Now let's analyze the math to get a better insight on why this is the case.
+  </p>
+
+  <h2>Properties of this Loss</h2>
+  <p>
+    From the loss in equation <d-reference key="loss-formula"></d-reference>, the minimizer with respect to $\sigma_\phi$ is obtained by setting the derivative to zero:
+    $$
+      \frac{\partial L}{\partial \sigma_\phi} = \frac 1{\sigma_\phi} - \frac {(y-\mu_\theta)^2}{\sigma_\phi^3}=0
+    $$
+    And we get that the loss is at the minimum when
+    $$
+      \sigma_\phi^2 = (y-\mu_\theta)^2
+    $$
+    This means that $\sigma_\phi$ learns to estimate the expected prediction error!
+
+    On the other end, if we calculate the gradient with respect to $\mu_\theta$ we get
+    $$
+      \frac{\partial L}{\partial \mu_\theta} = \frac{y-\mu_\theta}{\sigma_\phi^2}
+    $$
+  </p>
+  <p>
+    This means that the gradient to find the expected value of $y$ is exactly the same as the one of the $L_2$ loss, but here each sample is weighted by the expect sample error $\sigma_\phi$- Which is exactly what you want!
+
+  <h3>Stable Implementation</h3>
+  <p>
+    The problem with equation <d-reference key="loss-formula"></d-reference> is numerical stability around $\sigma_\phi\approx 0$. To solve this we can predict log-variance instead of standard deviation directly.
+    Let $l_\phi = \log\sigma_\phi^2$. Then the trainable form of equation <d-reference key="loss-formula"></d-reference> becomes:
+    $$
+      L = l_\phi + (y-\mu_\theta)^2 e^{-l_\phi}
+    $$
+    This avoids numerical issues from explicit division and logarithms on small values.
+  </p>
+  <h2>Real-World problems</h2>
+  <p>
+      This theory has been around for quite a while <d-cite key="nix1994estimating"></d-cite>. Curiously, this approach doesn't seem to be used in the image processing literature, but actually it can be applied very easly!
+      Here is a Video-VAE that I've trained. As you can see it works pretty well!
+  </p>
+  <figure>
+    <img src="website/images/logvar-VAE.png">
+    <figcaption>
+      Figure 3: The first row represents the original frames $y$, the second row the reconstructed image $\mu_\theta$ and the third row the uncertainty $\sigma_\phi$.<br>
+      As you can see the areas where the model is less precise (mainly some edges and tree leafs) are highlighed in the uncertanty heatmap
+    </figcaption>
+  </figure> 
+  <h2>Conclusion</h2>
+  <p>
+    Uncertainty-aware regression gives the model two outputs that matter in practice: prediction and confidence.
+    This small change often produces more robust learning dynamics than plain pixel-wise losses,
+    especially when noise varies across samples.
+  </p>
+</d-article>
+
+<d-appendix>
+  <h3>Acknowledgements</h3>
+  <p>TODO</p>
+  <h3>
+    Contact
+  </h3>
+  <p> You can do so by sending an email to this address francesco215@live.it or by messaging on discord at sacco215</p>
+  <h3>
+    Citation
+  </h3>
+  <p>For attribution in academic contexts, please cite this work as</p>
+  <pre class="citation-short">
+    Sacco, et al., "Oniris", zenodo, 2025
+  </pre>
+  <p>
+    BibTeX citation
+  </p>
+  <pre class="citation-short">
+    @article{sacco2025Oniris
+      author = {Sacco, Francesco and Peluso, Matteo},
+      title= {Oniris},
+      journal = {Zenodo},
+      year = {2025},
+      doi = {10.5281/zenodo.16927467},
+      url = {francesco215.github.io/autoregressive_diffusion/}
+    }
+  </pre>
+</d-appendix>
+<d-bibliography src="website/bibliography.bib"></d-bibliography>
+
+<script>
+  (function () {
+    const N = 450;
+    const trueSlope = 2.0;
+    const trueIntercept = 0.0;
+    const trueNoiseSlope = 1.0;
+    const trueNoiseIntercept = 0.2;
+    const lr = 0.01;
+    const momentum = 0.9;
+    const eps = 1e-5;
+
+    const sliders = {
+      muW: document.getElementById("mu-w"),
+      muB: document.getElementById("mu-b"),
+      sigW: document.getElementById("sig-w"),
+      sigB: document.getElementById("sig-b")
+    };
+    const sliderValues = {
+      muW: document.getElementById("value-mu-w"),
+      muB: document.getElementById("value-mu-b"),
+      sigW: document.getElementById("value-sig-w"),
+      sigB: document.getElementById("value-sig-b")
+    };
+    const statsEl = document.getElementById("uncertainty-stats");
+
+    const svg = d3.select("#uncertainty-svg");
+    const width = 1100;
+    const height = 560;
+    const margin = { top: 18, right: 20, bottom: 42, left: 54 };
+    const innerW = width - margin.left - margin.right;
+    const innerH = height - margin.top - margin.bottom;
+
+    const g = svg.append("g").attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+    const xScale = d3.scaleLinear().domain([-1, 1]).range([0, innerW]);
+    const yScale = d3.scaleLinear().domain([-3.5, 3.5]).range([innerH, 0]);
+
+    g.append("g")
+      .attr("transform", "translate(0," + innerH + ")")
+      .call(d3.axisBottom(xScale));
+    g.append("g").call(d3.axisLeft(yScale));
+
+    const dataLayer = g.append("g");
+    const truthLayer = g.append("g");
+    const predLayer = g.append("g");
+
+    const trueBand = truthLayer.append("path").attr("fill", "rgba(255, 140, 0, 0.25)");
+    const trueMean = truthLayer.append("path").attr("stroke", "rgb(230, 120, 20)").attr("fill", "none").attr("stroke-width", 2);
+    const predBand = predLayer.append("path").attr("fill", "rgba(70, 130, 255, 0.22)");
+    const predMean = predLayer.append("path").attr("stroke", "rgb(55, 100, 230)").attr("fill", "none").attr("stroke-width", 2);
+    const legend = g.append("g")
+      .attr("transform", "translate(14,14)");
+
+    legend.append("circle")
+      .attr("cx", 15)
+      .attr("cy", 14)
+      .attr("r", 5.5)
+      .attr("fill", "rgb(230, 120, 20)");
+    legend.append("text")
+      .attr("x", 28)
+      .attr("y", 18)
+      .attr("font-size", 14)
+      .text("Ground truth p(y|x)");
+    legend.append("circle")
+      .attr("cx", 15)
+      .attr("cy", 35)
+      .attr("r", 5.5)
+      .attr("fill", "rgb(55, 100, 230)");
+    legend.append("text")
+      .attr("x", 28)
+      .attr("y", 39)
+      .attr("font-size", 14)
+      .text("Model estimate q(y|x)");
+    legend.append("circle")
+      .attr("cx", 15)
+      .attr("cy", 56)
+      .attr("r", 3)
+      .attr("fill", "rgba(80, 80, 80, 0.42)");
+    legend.append("text")
+      .attr("x", 28)
+      .attr("y", 60)
+      .attr("font-size", 14)
+      .text("Datapoints");
+
+    function softplus(z) {
+      if (z > 20) return z;
+      if (z < -20) return Math.exp(z);
+      return Math.log(1 + Math.exp(z));
+    }
+
+    function sigmoid(z) {
+      if (z >= 0) {
+        const ez = Math.exp(-z);
+        return 1 / (1 + ez);
+      }
+      const ez = Math.exp(z);
+      return ez / (1 + ez);
+    }
+
+    function softAbs(z) {
+      return (softplus(10 * z) + softplus(-10 * z)) / 10 + eps;
+    }
+
+    function dSoftAbsDz(z) {
+      return sigmoid(10 * z) - sigmoid(-10 * z);
+    }
+
+    function randn() {
+      let u = 0;
+      let v = 0;
+      while (u === 0) u = Math.random();
+      while (v === 0) v = Math.random();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    }
+
+    function makeDataset() {
+      const rows = [];
+      for (let i = 0; i < N; i += 1) {
+        const x = -1 + (2 * i) / (N - 1);
+        const trueMu = trueSlope * x + trueIntercept;
+        const trueSigma = Math.abs(trueNoiseSlope * x + trueNoiseIntercept);
+        const y = trueMu + trueSigma * randn();
+        rows.push({ x, y, trueMu, trueSigma });
+      }
+      return rows;
+    }
+
+    function muPred(x, p) {
+      return p.muW * x + p.muB;
+    }
+
+    function sigmaPred(x, p) {
+      return softAbs(p.sigW * x + p.sigB);
+    }
+
+    const params = { muW: 0.1, muB: 0.0, sigW: 0.4, sigB: 0.2 };
+    const velocity = { muW: 0, muB: 0, sigW: 0, sigB: 0 };
+    let data = makeDataset();
+    let stepCount = 0;
+    let autoTimer = null;
+
+    const line = d3.line().x(d => xScale(d.x)).y(d => yScale(d.y));
+    const area = d3.area().x(d => xScale(d.x)).y0(d => yScale(d.y0)).y1(d => yScale(d.y1));
+
+    function syncSlidersFromParams() {
+      sliders.muW.value = params.muW;
+      sliders.muB.value = params.muB;
+      sliders.sigW.value = params.sigW;
+      sliders.sigB.value = params.sigB;
+      sliderValues.muW.textContent = params.muW.toFixed(2);
+      sliderValues.muB.textContent = params.muB.toFixed(2);
+      sliderValues.sigW.textContent = params.sigW.toFixed(2);
+      sliderValues.sigB.textContent = params.sigB.toFixed(2);
+    }
+
+    function syncParamsFromSliders() {
+      params.muW = Number(sliders.muW.value);
+      params.muB = Number(sliders.muB.value);
+      params.sigW = Number(sliders.sigW.value);
+      params.sigB = Number(sliders.sigB.value);
+      sliderValues.muW.textContent = params.muW.toFixed(2);
+      sliderValues.muB.textContent = params.muB.toFixed(2);
+      sliderValues.sigW.textContent = params.sigW.toFixed(2);
+      sliderValues.sigB.textContent = params.sigB.toFixed(2);
+    }
+
+    function lossAndGrads() {
+      let loss = 0;
+      const grads = { muW: 0, muB: 0, sigW: 0, sigB: 0 };
+
+      for (const row of data) {
+        const x = row.x;
+        const y = row.y;
+        const mu = muPred(x, params);
+        const z = params.sigW * x + params.sigB;
+        const sigma = softAbs(z);
+        const err = mu - y;
+        const sigma2 = sigma * sigma;
+
+        loss += Math.log(sigma) + (err * err) / (2 * sigma2);
+
+        const dL_dMu = err / sigma2;
+        grads.muW += dL_dMu * x;
+        grads.muB += dL_dMu;
+
+        const dL_dSigma = 1 / sigma - (err * err) / (sigma * sigma2);
+        const dL_dZ = dL_dSigma * dSoftAbsDz(z);
+        grads.sigW += dL_dZ * x;
+        grads.sigB += dL_dZ;
+      }
+
+      const invN = 1 / data.length;
+      loss *= invN;
+      grads.muW *= invN;
+      grads.muB *= invN;
+      grads.sigW *= invN;
+      grads.sigB *= invN;
+
+      return { loss, grads };
+    }
+
+    function trainStep() {
+      const out = lossAndGrads();
+      for (const k of Object.keys(params)) {
+        velocity[k] = momentum * velocity[k] - lr * out.grads[k];
+        params[k] += velocity[k];
+      }
+      stepCount += 1;
+      return out.loss;
+    }
+
+    function draw() {
+      const truthBandRows = data.map(d => ({ x: d.x, y0: d.trueMu - d.trueSigma, y1: d.trueMu + d.trueSigma }));
+      const truthMeanRows = data.map(d => ({ x: d.x, y: d.trueMu }));
+      const predMeanRows = data.map(d => ({ x: d.x, y: muPred(d.x, params) }));
+      const predBandRows = data.map(d => {
+        const mu = muPred(d.x, params);
+        const s = sigmaPred(d.x, params);
+        return { x: d.x, y0: mu - s, y1: mu + s };
+      });
+
+      trueBand.attr("d", area(truthBandRows));
+      trueMean.attr("d", line(truthMeanRows));
+      predBand.attr("d", area(predBandRows));
+      predMean.attr("d", line(predMeanRows));
+
+      const points = dataLayer.selectAll("circle").data(data);
+      points.join("circle")
+        .attr("r", 3)
+        .attr("fill", "rgba(80, 80, 80, 0.42)")
+        .attr("cx", d => xScale(d.x))
+        .attr("cy", d => yScale(d.y));
+
+      const out = lossAndGrads();
+      statsEl.textContent =
+        "Loss: " + out.loss.toFixed(4) +
+        " | Steps: " + stepCount;
+    }
+
+    function stopAutoTrain() {
+      if (autoTimer !== null) {
+        clearInterval(autoTimer);
+        autoTimer = null;
+        document.getElementById("toggle-auto").textContent = "Start Training";
+      }
+    }
+
+    function setDefaultParams() {
+      params.muW = 0.1;
+      params.muB = 0.0;
+      params.sigW = 0.4;
+      params.sigB = 0.2;
+      velocity.muW = 0;
+      velocity.muB = 0;
+      velocity.sigW = 0;
+      velocity.sigB = 0;
+      stepCount = 0;
+      syncSlidersFromParams();
+    }
+
+    Object.values(sliders).forEach(slider => {
+      slider.addEventListener("input", function () {
+        stopAutoTrain();
+        syncParamsFromSliders();
+        draw();
+      });
+    });
+
+    document.getElementById("toggle-auto").addEventListener("click", function () {
+      if (autoTimer === null) {
+        autoTimer = setInterval(function () {
+          for (let i = 0; i < 5; i += 1) trainStep();
+          syncSlidersFromParams();
+          draw();
+        }, 50);
+        this.textContent = "Stop Training";
+      } else {
+        stopAutoTrain();
+      }
+    });
+
+    document.getElementById("reset-params").addEventListener("click", function () {
+      stopAutoTrain();
+      setDefaultParams();
+      draw();
+    });
+
+    document.getElementById("regen-data").addEventListener("click", function () {
+      stopAutoTrain();
+      data = makeDataset();
+      setDefaultParams();
+      draw();
+    });
+
+    setDefaultParams();
+    draw();
+  })();
+</script>

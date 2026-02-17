@@ -76,22 +76,32 @@ customElements.define('d-equation', Equation);
 class Ref extends HTMLElement {
     connectedCallback() {
         var key = this.getAttribute("key");
-        var element = document.getElementById(key)
+        var element = document.getElementById(key);
+        if (!element) { return; }
         var number = element.getAttribute('number');
 
         if (element.getAttribute('class') == "equation") { //this part is only valid if it is an equation
-            var equation = element;
-            for (i = 0; i < 10; i++) { //find the element with katex inside
-                if (equation.firstElementChild.getAttribute('class') == "katex") { break; }
-                equation = equation.firstElementChild;
-            }
-
             var hover_box = document.createElement("d-hover-box"); //create the hover box
-            hover_box.innerHTML = equation.innerHTML; //put the equation inside
-            hover_box.firstElementChild.style.padding = "10px"; //and add some padding
-
+            var update_hover_equation = function () {
+                var equation = element;
+                for (var i = 0; i < 10; i++) { //find the element with katex inside
+                    if (!equation || !equation.firstElementChild) { break; }
+                    if (equation.firstElementChild.getAttribute('class') == "katex") { break; }
+                    equation = equation.firstElementChild;
+                }
+                if (!equation) { return; }
+                // Keep the KaTeX display wrapper so centering styles are preserved.
+                hover_box.innerHTML = equation.outerHTML; //put the equation inside
+                if (hover_box.firstElementChild) {
+                    hover_box.firstElementChild.style.padding = "10px"; //and add some padding
+                }
+            }
+            setTimeout(update_hover_equation, 0);
             this.after(hover_box);
-            this.onmouseover = function () { hover_box.style.display = "block"; }
+            this.onmouseover = function () {
+                update_hover_equation();
+                hover_box.style.display = "block";
+            }
             this.onmouseout = function () { hover_box.style.display = "none"; }
         }
         this.appendChild(createCustomLink(number, "#" + key));

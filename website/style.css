@@ -341,11 +341,17 @@ d-article ul li {
   .l-gutter {
     width: 100%;
   }
+  .l-gutter-large {
+    width: 100%;
+  }
 }
 
 @media (min-width: 768px) {
   figcaption.l-gutter {
     width: 150%;
   }
+  .l-gutter-large {
+    width: 220%;
+    max-width: 560px;
+  }
 }
-
