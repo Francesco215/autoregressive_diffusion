@@ -9,8 +9,6 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.13.18/dist/katex.min.css" integrity="sha384-zTROYFVGOfTw7JV7KUu8udsvW2fx4lWOsCEDqhBreBwlHI4ioVRtmIvEThzJHGET" crossorigin="anonymous">
   <script src="https://cdn.jsdelivr.net/npm/katex@0.13.18/dist/katex.min.js" integrity="sha384-GxNFqL3r9uRJQhR+47eDxuPoNE7yLftQM8LcxzgS4HT73tp970WS/wV5p8UzCOmb" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/katex@0.13.18/dist/contrib/auto-render.min.js" integrity="sha384-vZTG03m+2yp6N6BNi5iM4rW4oIwk5DfcNdFfxkk9ZWpDriOkXX8voJBFrAO7MpVl" crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/powerglitch@2.5.0/dist/powerglitch.min.js"></script>
-
   <script>
     document.addEventListener("DOMContentLoaded", function() {
       renderMathInElement(document.body, {
@@ -24,62 +22,28 @@
       });
     });
 
-    window.addEventListener("load", function () {
-      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-
-      const affiliationLink = Array.from(
-        document.querySelectorAll("d-byline .affiliation a")
-      ).find((link) => link.textContent.trim().toLowerCase() === "fortuna");
-
-      if (!affiliationLink || affiliationLink.querySelector(".fortuna-affiliation-glitch")) return;
-
-      const glitchTarget = document.createElement("span");
-      glitchTarget.className = "fortuna-affiliation-glitch";
-      glitchTarget.setAttribute("aria-hidden", "true");
-      glitchTarget.textContent = "Fortuna";
-
-      affiliationLink.replaceChildren(glitchTarget);
-      affiliationLink.classList.add("fortuna-affiliation-link");
-      affiliationLink.setAttribute("aria-label", "Fortuna");
-
-      PowerGlitch.glitch(glitchTarget, {
-        playMode: "always",
-        optimizeSeo: true,
-        timing: { duration: 520, iterations: Infinity },
-        glitchTimeSpan: false,
-        shake: { velocity: 58, amplitudeX: 0.55, amplitudeY: 0.2 },
-        slice: {
-          count: 22,
-          velocity: 64,
-          minHeight: 0.006,
-          maxHeight: 0.42,
-          hueRotate: false,
-          cssFilters: "drop-shadow(7px 0 #00d9ff) drop-shadow(-7px 0 #ff174f) contrast(2)"
-        },
-        pulse: { scale: 1.22 }
-      });
-    });
   </script>
   <style>
-    d-byline p.author,
-    d-byline p.affiliation {
+    d-byline p.author {
       width: auto;
+    }
+    d-byline .authors-affiliations {
+      grid-template-columns: 1fr;
+    }
+    d-byline .authors-affiliations h3:nth-child(2),
+    d-byline p.affiliation {
+      display: none;
+    }
+    @media (min-width: 768px) {
+      d-byline .byline {
+        grid-template-columns: 1fr 1fr 1fr;
+      }
+      d-byline .authors-affiliations {
+        grid-column-end: span 1;
+      }
     }
     d-byline .byline > div:last-child p {
       white-space: nowrap;
-    }
-    .fortuna-affiliation-link {
-      color: #111;
-      display: inline-block;
-      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-      font-weight: 700;
-      letter-spacing: 0.11em;
-      line-height: 1;
-      text-decoration: none;
-      text-transform: lowercase;
-    }
-    .fortuna-affiliation-glitch {
-      display: inline-block;
     }
     .uncertainty-card {
       border: none;
@@ -267,9 +231,7 @@
       "authors": [
         {
           "author": "Francesco Sacco",
-          "authorURL": "https://github.com/Francesco215",
-          "affiliation": "Fortuna",
-          "affiliationURL": "https://francesco215.github.io/Scacchi/countdown.html"
+          "authorURL": "https://Francesco215.github.io"
         }
       ],
       "publishedDate": "September 2, 2026",
