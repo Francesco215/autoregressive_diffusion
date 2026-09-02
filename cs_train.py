@@ -83,7 +83,7 @@ def train(device, local_rank=0):
 
     steps_taken = 0
     if resume_training:
-        checkpoint = torch.load(f'saved_models/optimizers_{unet_params//1e6}M.pt', weights_only=False, map_location='cuda')
+        checkpoint = torch.load(f'saved_models/optimizers_{unet_params//1e6}M.pt', weights_only=True, map_location='cuda')
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         ema_tracker.load_state_dict(checkpoint['ema_state_dict'])
         losses = checkpoint['losses']
@@ -150,13 +150,14 @@ def train(device, local_rank=0):
             else:
                 unet.save_to_state_dict(f"saved_models/unet_{unet_params//1e6}M.pt")
 
-            torch.save({
+            optimizer_checkpoint = {
                 'steps_taken': i,
                 'optimizer_state_dict': optimizer.state_dict(),
                 'ema_state_dict': ema_tracker.state_dict(),
                 'losses': losses,
                 'ref_lr': ref_lr
-            }, f"saved_models/optimizers_{unet_params//1e6}M.pt")
+            }
+            torch.save(optimizer_checkpoint, f"saved_models/optimizers_{unet_params//1e6}M.pt")
 
 # %%
         
