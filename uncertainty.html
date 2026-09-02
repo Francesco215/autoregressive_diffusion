@@ -2,13 +2,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <script src="website/scripts/distill.pub_template.v2.js"></script>
+  <script src="https://distill.pub/template.v2.js"></script>
   <script src="website/sourcecode.js"></script>
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <link rel="stylesheet" href="website/style.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.13.18/dist/katex.min.css" integrity="sha384-zTROYFVGOfTw7JV7KUu8udsvW2fx4lWOsCEDqhBreBwlHI4ioVRtmIvEThzJHGET" crossorigin="anonymous">
   <script src="https://cdn.jsdelivr.net/npm/katex@0.13.18/dist/katex.min.js" integrity="sha384-GxNFqL3r9uRJQhR+47eDxuPoNE7yLftQM8LcxzgS4HT73tp970WS/wV5p8UzCOmb" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/katex@0.13.18/dist/contrib/auto-render.min.js" integrity="sha384-vZTG03m+2yp6N6BNi5iM4rW4oIwk5DfcNdFfxkk9ZWpDriOkXX8voJBFrAO7MpVl" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/powerglitch@2.5.0/dist/powerglitch.min.js"></script>
 
   <script>
     document.addEventListener("DOMContentLoaded", function() {
@@ -22,8 +23,64 @@
         throwOnError: false
       });
     });
+
+    window.addEventListener("load", function () {
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+      const affiliationLink = Array.from(
+        document.querySelectorAll("d-byline .affiliation a")
+      ).find((link) => link.textContent.trim().toLowerCase() === "fortuna");
+
+      if (!affiliationLink || affiliationLink.querySelector(".fortuna-affiliation-glitch")) return;
+
+      const glitchTarget = document.createElement("span");
+      glitchTarget.className = "fortuna-affiliation-glitch";
+      glitchTarget.setAttribute("aria-hidden", "true");
+      glitchTarget.textContent = "Fortuna";
+
+      affiliationLink.replaceChildren(glitchTarget);
+      affiliationLink.classList.add("fortuna-affiliation-link");
+      affiliationLink.setAttribute("aria-label", "Fortuna");
+
+      PowerGlitch.glitch(glitchTarget, {
+        playMode: "always",
+        optimizeSeo: true,
+        timing: { duration: 520, iterations: Infinity },
+        glitchTimeSpan: false,
+        shake: { velocity: 58, amplitudeX: 0.55, amplitudeY: 0.2 },
+        slice: {
+          count: 22,
+          velocity: 64,
+          minHeight: 0.006,
+          maxHeight: 0.42,
+          hueRotate: false,
+          cssFilters: "drop-shadow(7px 0 #00d9ff) drop-shadow(-7px 0 #ff174f) contrast(2)"
+        },
+        pulse: { scale: 1.22 }
+      });
+    });
   </script>
   <style>
+    d-byline p.author,
+    d-byline p.affiliation {
+      width: auto;
+    }
+    d-byline .byline > div:last-child p {
+      white-space: nowrap;
+    }
+    .fortuna-affiliation-link {
+      color: #111;
+      display: inline-block;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-weight: 700;
+      letter-spacing: 0.11em;
+      line-height: 1;
+      text-decoration: none;
+      text-transform: lowercase;
+    }
+    .fortuna-affiliation-glitch {
+      display: inline-block;
+    }
     .uncertainty-card {
       border: none;
       border-radius: 10px;
@@ -203,55 +260,31 @@
 </head>
 
 <d-front-matter>
-  <script type="text/json">{"authors": []}</script>
+  <script type="text/json">
+    {
+      "title": "How to Predict Uncertainty",
+      "description": "A small blog post on how to teach your model to output their prediction-confidence",
+      "authors": [
+        {
+          "author": "Francesco Sacco",
+          "authorURL": "https://github.com/Francesco215",
+          "affiliation": "Fortuna",
+          "affiliationURL": "https://francesco215.github.io/Scacchi/countdown.html"
+        }
+      ],
+      "publishedDate": "September 2, 2026",
+      "doi": "10.5281/zenodo.22261725"
+    }
+  </script>
 </d-front-matter>
 
 <d-title>
-  <h1>Uncertainty aware learning</h1>
+  <h1>How to Predict Uncertainty</h1>
   <p>A small blog post on how to teach your model to output their prediction-confidence</p>
 </d-title>
 
-<d-byline>
-  <div class="byline grid">
-    <div class="authors-affiliations grid">
-      <h3>Authors</h3>
-      <h3>Affiliations</h3>
-
-        <p class="author">
-
-            <a class="name" href="https://github.com/Francesco215">Francesco Sacco</a>
-        </p>
-        <p class="affiliation">
-        None
-        </p>
-
-        <p class="author">
-            <a class="name" href=" "> </a>
-        </p>
-        <p class="affiliation">
-        <a class="affiliation" href=""></a>
-        </p>
-
-
-        <p class="author">
-            <a class="name" href=" "> </a>
-        </p>
-        <p class="affiliation">
-        <a class="affiliation" href=""></a>
-        </p>
-
-    </div>
-    <div></div>
-    <div class="date-doi">
-      <h3>Date</h3>
-      <p>TODO</p>
-      <h3>DOI</h3>
-      <p>TODO</p>
-    </div>
-  </div>
-</d-byline>
+<d-byline></d-byline>
 <d-article>
-  <h2>Introduction</h2>
   <p>
     In classification, confidence is built into the output: the model predicts a probability distribution over classes.
     When it is confident, the distribution becomes sharp (one class gets most of the mass). When it is uncertain,
@@ -386,7 +419,7 @@
       As you can see the model is able to describe perfectly the ground truth probability distribution by minimizing the loss. Now let's analyze the math to get a better insight on why this is the case.
   </p>
 
-  <h2>Properties of this Loss</h2>
+  <h3>Properties of this Loss</h3>
   <p>
     From the loss in equation <d-reference key="loss-formula"></d-reference>, the minimizer with respect to $\sigma_\phi$ is obtained by setting the derivative to zero:
     $$
@@ -417,27 +450,29 @@
   </p>
   <h2>Real-World problems</h2>
   <p>
-      This theory has been around for quite a while <d-cite key="nix1994estimating"></d-cite>. Curiously, this approach doesn't seem to be used in the image processing literature, but actually it can be applied very easly!
+      This theory has been around for quite a while <d-cite key="nix1994estimating"></d-cite>. Curiously, there are very few example of such approach being used in the image processing literature <d-cite key="kendall2017uncertainties"></d-cite>, but actually it can be applied very easly!
       Here is a Video-VAE that I've trained. As you can see it works pretty well!
   </p>
   <figure>
     <img src="website/images/logvar-VAE.png">
     <figcaption>
       Figure 3: The first row represents the original frames $y$, the second row the reconstructed image $\mu_\theta$ and the third row the uncertainty $\sigma_\phi$.<br>
-      As you can see the areas where the model is less precise (mainly some edges and tree leafs) are highlighed in the uncertanty heatmap
     </figcaption>
   </figure> 
+  <p>
+      As you can see the areas where the model is less precise (mainly some edges and tree leafs) are highlighed in the uncertanty heatmap.
+  </p>
+  <p>The way this is done implementation-wise is super simple: you just output 6-channels per pixel: one for the RGB values and one for their uncertainty.</p>
   <h2>Conclusion</h2>
   <p>
     Uncertainty-aware regression gives the model two outputs that matter in practice: prediction and confidence.
-    This small change often produces more robust learning dynamics than plain pixel-wise losses,
-    especially when noise varies across samples.
+    This small change allows us to estimate pixel-wise uncertainty.
   </p>
 </d-article>
 
 <d-appendix>
   <h3>Acknowledgements</h3>
-  <p>TODO</p>
+  <p>This was originally part of a larger blog post <d-cite key="sacco2025Oniris"></d-cite>. I decided to make it into a standalone article because I felt it deserved its own page.</p>
   <h3>
     Contact
   </h3>
@@ -447,23 +482,52 @@
   </h3>
   <p>For attribution in academic contexts, please cite this work as</p>
   <pre class="citation-short">
-    Sacco, et al., "Oniris", zenodo, 2025
+    Sacco, "How to Predict Uncertainty", zenodo, 2026
   </pre>
   <p>
     BibTeX citation
   </p>
   <pre class="citation-short">
-    @article{sacco2025Oniris
-      author = {Sacco, Francesco and Peluso, Matteo},
-      title= {Oniris},
+    @article{sacco2026Uncertainty,
+      author = {Sacco, Francesco},
+      title= {How to Predict Uncertainty},
       journal = {Zenodo},
-      year = {2025},
-      doi = {10.5281/zenodo.16927467},
-      url = {francesco215.github.io/autoregressive_diffusion/}
+      year = {2026},
+      doi = {10.5281/zenodo.22261724},
+      url = {francesco215.github.io/autoregressive_diffusion/uncertainty.html}
     }
   </pre>
 </d-appendix>
-<d-bibliography src="website/bibliography.bib"></d-bibliography>
+<d-bibliography>
+  <script type="text/bibtex">
+    @inproceedings{nix1994estimating,
+      title={Estimating the mean and variance of the target probability distribution},
+      author={Nix, David A and Weigend, Andreas S},
+      booktitle={Proceedings of 1994 ieee international conference on neural networks (ICNN'94)},
+      volume={1},
+      pages={55--60},
+      year={1994},
+      organization={IEEE},
+      url={website/nix1994.pdf}
+    }
+
+    @misc{kendall2017uncertainties,
+      title={What Uncertainties Do We Need in Bayesian Deep Learning for Computer Vision?},
+      author={Alex Kendall and Yarin Gal},
+      year={2017},
+      url={https://arxiv.org/pdf/1703.04977}
+    }
+
+    @article{sacco2025Oniris,
+      author={Sacco, Francesco and Peluso, Matteo},
+      title={Oniris},
+      journal={Zenodo},
+      year={2025},
+      doi={10.5281/zenodo.16927467},
+      url={https://francesco215.github.io/autoregressive_diffusion/}
+    }
+  </script>
+</d-bibliography>
 
 <script>
   (function () {
